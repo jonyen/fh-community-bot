@@ -2,7 +2,7 @@ function stripMention(text) {
   return text.replace(/<@[A-Z0-9_]+>/g, "").trim();
 }
 
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelId }) {
+export function createMentionHandler({ sheetsService, ollamaService, dedupService, channelId }) {
   return async function handleMention({ event, say, client }) {
     if (event.channel !== channelId) return;
 
@@ -16,10 +16,33 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       return;
     }
 
+    // Check if user is asking for a list of requests
+    if (/\b(list|show|what are|open requests|open issues|status)\b/i.test(description)) {
+      try {
+        const openIssues = await sheetsService.getOpenIssues();
+        if (openIssues.length === 0) {
+          await say({ text: "No open requests right now.", thread_ts: event.ts });
+        } else {
+          const lines = openIssues.map(
+            (i) => `• *${i.description}* — submitted by ${i.submitter} on ${i.date} (Status: ${i.status})`
+          );
+          await say({
+            text: `*Open Requests (${openIssues.length}):*\n${lines.join("\n")}`,
+            thread_ts: event.ts,
+          });
+        }
+      } catch (err) {
+        console.error("Sheets error:", err.message);
+        await say({ text: "Couldn't fetch requests right now.", thread_ts: event.ts });
+      }
+      return;
+    }
+
     let openIssues;
     try {
       openIssues = await sheetsService.getOpenIssues();
-    } catch {
+    } catch (err) {
+      console.error("Sheets error:", err.message);
       await say({
         text: "Couldn't log this issue right now — please try again in a few minutes.",
         thread_ts: event.ts,
@@ -32,29 +55,19 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     if (duplicate && duplicate.confident) {
       const existing = openIssues.find((i) => i.id === duplicate.id);
       await say({
-        text: `This issue has already been logged (issue #${duplicate.id}, reported by <@${existing.reporter}> on ${existing.timestamp}). Current status: *${existing.status}*`,
+        text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*`,
         thread_ts: event.ts,
       });
       return;
     }
 
-    const suggestion = await groqService.suggestFix(description);
-
-    let permalink = "";
-    try {
-      const res = await client.chat.getPermalink({ channel: event.channel, message_ts: event.ts });
-      permalink = res.permalink;
-    } catch {
-      // non-critical
-    }
+    const suggestion = await ollamaService.suggestFix(description);
 
     let id;
     try {
       id = await sheetsService.appendIssue({
         reporter: event.user,
         description,
-        aiSuggestion: suggestion || "",
-        messageLink: permalink,
       });
     } catch {
       await say({

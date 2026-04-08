@@ -11,7 +11,6 @@ describe("SheetsService", () => {
         values: {
           get: vi.fn(),
           append: vi.fn(),
-          update: vi.fn(),
         },
       },
     };
@@ -23,9 +22,8 @@ describe("SheetsService", () => {
       mockSheets.spreadsheets.values.get.mockResolvedValue({
         data: {
           values: [
-            ["ID", "Timestamp", "Reporter", "Description", "Status", "AI Suggestion", "Message Link", "Resolved Date"],
-            ["1", "2026-04-01T10:00:00Z", "U123", "Lobby printer jammed", "open", "Try restarting", "https://slack.com/msg1", ""],
-            ["2", "2026-04-02T10:00:00Z", "U456", "AC broken in room 3", "resolved", "", "https://slack.com/msg2", "2026-04-03"],
+            ["4/1/2026", "Alice", "Lobby printer jammed", "High", "5", "Bob", "Open", ""],
+            ["4/2/2026", "Charlie", "AC broken in room 3", "Medium", "3", "Dave", "Completed", "Fixed"],
           ],
         },
       });
@@ -33,25 +31,22 @@ describe("SheetsService", () => {
       const issues = await service.getOpenIssues();
       expect(issues).toEqual([
         {
-          id: "1",
-          timestamp: "2026-04-01T10:00:00Z",
-          reporter: "U123",
+          id: "5",
+          date: "4/1/2026",
+          submitter: "Alice",
           description: "Lobby printer jammed",
-          status: "open",
-          aiSuggestion: "Try restarting",
-          messageLink: "https://slack.com/msg1",
-          resolvedDate: "",
+          priority: "High",
+          daysSinceFiled: "5",
+          inCharge: "Bob",
+          status: "Open",
+          notes: "",
         },
       ]);
     });
 
-    it("returns empty array when sheet has only headers", async () => {
+    it("returns empty array when sheet has no data rows", async () => {
       mockSheets.spreadsheets.values.get.mockResolvedValue({
-        data: {
-          values: [
-            ["ID", "Timestamp", "Reporter", "Description", "Status", "AI Suggestion", "Message Link", "Resolved Date"],
-          ],
-        },
+        data: { values: [] },
       });
 
       const issues = await service.getOpenIssues();
@@ -60,26 +55,24 @@ describe("SheetsService", () => {
   });
 
   describe("appendIssue", () => {
-    it("appends a new row and returns the assigned ID", async () => {
-      mockSheets.spreadsheets.values.get.mockResolvedValue({
-        data: { values: [["ID"], ["1"], ["2"]] },
-      });
+    it("appends a new row and returns the row number", async () => {
       mockSheets.spreadsheets.values.append.mockResolvedValue({});
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: { values: [["row1"], ["row2"], ["row3"]] },
+      });
 
       const id = await service.appendIssue({
         reporter: "U789",
         description: "Water leak in bathroom",
-        aiSuggestion: "Check the faucet",
-        messageLink: "https://slack.com/msg3",
       });
 
-      expect(id).toBe("3");
+      expect(id).toBe("7");
       expect(mockSheets.spreadsheets.values.append).toHaveBeenCalledWith({
         spreadsheetId: "sheet-id",
-        range: "Sheet1!A:H",
+        range: "'Maintenance Request'!A5:H",
         valueInputOption: "USER_ENTERED",
         requestBody: {
-          values: [["3", expect.any(String), "U789", "Water leak in bathroom", "open", "Check the faucet", "https://slack.com/msg3", ""]],
+          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "", "", "Open", ""]],
         },
       });
     });
@@ -90,9 +83,8 @@ describe("SheetsService", () => {
       mockSheets.spreadsheets.values.get.mockResolvedValue({
         data: {
           values: [
-            ["ID", "Timestamp", "Reporter", "Description", "Status", "AI Suggestion", "Message Link", "Resolved Date"],
-            ["1", "2026-04-01T10:00:00Z", "U123", "Printer jammed", "open", "", "", ""],
-            ["2", "2026-04-02T10:00:00Z", "U456", "AC broken", "resolved", "", "", "2026-04-03"],
+            ["4/1/2026", "Alice", "Printer jammed", "", "", "", "Open", ""],
+            ["4/2/2026", "Charlie", "AC broken", "", "", "", "Completed", ""],
           ],
         },
       });

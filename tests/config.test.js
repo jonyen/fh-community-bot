@@ -6,8 +6,9 @@ describe("loadConfig", () => {
     SLACK_APP_TOKEN: "xapp-test",
     SLACK_CHANNEL_ID: "C123",
     GOOGLE_SHEET_ID: "sheet-id",
-    GOOGLE_CREDENTIALS: Buffer.from(JSON.stringify({ type: "service_account" })).toString("base64"),
-    GROQ_API_KEY: "gsk_test",
+    GOOGLE_CLIENT_ID: "test-client-id",
+    GOOGLE_CLIENT_SECRET: "test-client-secret",
+    GOOGLE_REFRESH_TOKEN: "test-refresh-token",
   };
 
   let originalEnv;
@@ -28,8 +29,10 @@ describe("loadConfig", () => {
     expect(config.slackAppToken).toBe("xapp-test");
     expect(config.slackChannelId).toBe("C123");
     expect(config.googleSheetId).toBe("sheet-id");
-    expect(config.googleCredentials).toEqual({ type: "service_account" });
-    expect(config.groqApiKey).toBe("gsk_test");
+    expect(config.googleClientId).toBe("test-client-id");
+    expect(config.googleClientSecret).toBe("test-client-secret");
+    expect(config.googleRefreshToken).toBe("test-refresh-token");
+    expect(config.ollamaBaseUrl).toBe("http://localhost:11434/v1");
   });
 
   it("uses defaults for optional vars", async () => {

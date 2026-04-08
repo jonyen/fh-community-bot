@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import OpenAI from "openai";
 import { loadConfig } from "./config.js";
 import { createSheetsService } from "./services/sheets.js";
-import { createGroqService } from "./services/groq.js";
+import { createOllamaService } from "./services/ollama.js";
 import { createDedupService } from "./services/dedup.js";
 import { createMentionHandler } from "./events/mention.js";
 import { createWeeklyDigest } from "./jobs/weekly-digest.js";
@@ -18,28 +18,29 @@ const app = new App({
   socketMode: true,
 });
 
-// Google Sheets client
-const auth = new google.auth.GoogleAuth({
-  credentials: config.googleCredentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-const sheetsClient = google.sheets({ version: "v4", auth });
+// Google Sheets client (OAuth2)
+const oauth2Client = new google.auth.OAuth2(
+  config.googleClientId,
+  config.googleClientSecret
+);
+oauth2Client.setCredentials({ refresh_token: config.googleRefreshToken });
+const sheetsClient = google.sheets({ version: "v4", auth: oauth2Client });
 const sheetsService = createSheetsService(sheetsClient, config.googleSheetId);
 
-// Groq client
-const groqClient = new OpenAI({
-  baseURL: "https://api.groq.com/openai/v1",
-  apiKey: config.groqApiKey,
+// Ollama client (OpenAI-compatible local API)
+const ollamaClient = new OpenAI({
+  baseURL: config.ollamaBaseUrl,
+  apiKey: "ollama",
 });
-const groqService = createGroqService(groqClient);
+const ollamaService = createOllamaService(ollamaClient);
 
 // Dedup service
-const dedupService = createDedupService(groqService);
+const dedupService = createDedupService(ollamaService);
 
 // Register event handler
 const mentionHandler = createMentionHandler({
   sheetsService,
-  groqService,
+  ollamaService,
   dedupService,
   channelId: config.slackChannelId,
 });
@@ -48,7 +49,7 @@ app.event("app_mention", mentionHandler);
 // Schedule weekly digest
 const weeklyDigest = createWeeklyDigest({
   sheetsService,
-  groqService,
+  ollamaService,
   slackClient: app.client,
   channelId: config.slackChannelId,
 });

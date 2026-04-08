@@ -3,7 +3,7 @@ import { createWeeklyDigest } from "../../src/jobs/weekly-digest.js";
 
 describe("WeeklyDigest", () => {
   let mockSheets;
-  let mockGroq;
+  let mockOllama;
   let mockSlackClient;
   let digest;
 
@@ -11,7 +11,7 @@ describe("WeeklyDigest", () => {
     mockSheets = {
       getOpenIssues: vi.fn(),
     };
-    mockGroq = {
+    mockOllama = {
       generateDigest: vi.fn(),
     };
     mockSlackClient = {
@@ -21,7 +21,7 @@ describe("WeeklyDigest", () => {
     };
     digest = createWeeklyDigest({
       sheetsService: mockSheets,
-      groqService: mockGroq,
+      ollamaService: mockOllama,
       slackClient: mockSlackClient,
       channelId: "C123",
     });
@@ -32,7 +32,7 @@ describe("WeeklyDigest", () => {
       { id: "1", description: "Printer jammed", status: "open" },
       { id: "2", description: "AC broken", status: "open" },
     ]);
-    mockGroq.generateDigest.mockResolvedValue("*Weekly Summary:* 2 issues remain open...");
+    mockOllama.generateDigest.mockResolvedValue("*Weekly Summary:* 2 issues remain open...");
 
     await digest.run();
 
@@ -53,11 +53,11 @@ describe("WeeklyDigest", () => {
     });
   });
 
-  it("posts fallback list when Groq fails", async () => {
+  it("posts fallback list when Ollama fails", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
       { id: "1", description: "Printer jammed", status: "open" },
     ]);
-    mockGroq.generateDigest.mockResolvedValue(null);
+    mockOllama.generateDigest.mockResolvedValue(null);
 
     await digest.run();
 

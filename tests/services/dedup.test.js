@@ -2,14 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDedupService } from "../../src/services/dedup.js";
 
 describe("DedupService", () => {
-  let mockGroq;
+  let mockOllama;
   let service;
 
   beforeEach(() => {
-    mockGroq = {
+    mockOllama = {
       checkDuplicate: vi.fn(),
     };
-    service = createDedupService(mockGroq);
+    service = createDedupService(mockOllama);
   });
 
   describe("findDuplicate", () => {
@@ -21,19 +21,19 @@ describe("DedupService", () => {
     it("returns match from keyword pass without calling AI", async () => {
       const result = await service.findDuplicate("lobby printer jammed again!", openIssues);
       expect(result).toEqual({ id: "1", confident: true });
-      expect(mockGroq.checkDuplicate).not.toHaveBeenCalled();
+      expect(mockOllama.checkDuplicate).not.toHaveBeenCalled();
     });
 
     it("falls through to AI pass when no keyword match", async () => {
-      mockGroq.checkDuplicate.mockResolvedValue("2");
+      mockOllama.checkDuplicate.mockResolvedValue("2");
 
       const result = await service.findDuplicate("the cooling in room 3 is not working", openIssues);
       expect(result).toEqual({ id: "2", confident: false });
-      expect(mockGroq.checkDuplicate).toHaveBeenCalled();
+      expect(mockOllama.checkDuplicate).toHaveBeenCalled();
     });
 
     it("returns null when neither pass finds a match", async () => {
-      mockGroq.checkDuplicate.mockResolvedValue(null);
+      mockOllama.checkDuplicate.mockResolvedValue(null);
 
       const result = await service.findDuplicate("elevator stuck on floor 5", openIssues);
       expect(result).toBeNull();

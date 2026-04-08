@@ -4,11 +4,11 @@ const SYSTEM_PROMPT_DEDUP = `You are a duplicate issue detector. Given a new iss
 
 const SYSTEM_PROMPT_DIGEST = `Summarize these outstanding maintenance issues for a weekly update post in Slack. Group by priority/area if possible. Be concise and actionable. Use Slack formatting (bold with *, bullet lists).`;
 
-export function createGroqService(client) {
+export function createOllamaService(client) {
   async function suggestFix(issueDescription) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma-4-27b",
+        model: "gemma3:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_FIX },
           { role: "user", content: issueDescription },
@@ -28,7 +28,7 @@ export function createGroqService(client) {
         .join("\n");
 
       const res = await client.chat.completions.create({
-        model: "gemma-4-27b",
+        model: "gemma3:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DEDUP },
           {
@@ -53,7 +53,7 @@ export function createGroqService(client) {
   async function generateDigest(openIssues) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma-4-27b",
+        model: "gemma3:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DIGEST },
           { role: "user", content: JSON.stringify(openIssues) },

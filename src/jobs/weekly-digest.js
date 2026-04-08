@@ -1,6 +1,6 @@
 import cron from "node-cron";
 
-export function createWeeklyDigest({ sheetsService, groqService, slackClient, channelId }) {
+export function createWeeklyDigest({ sheetsService, ollamaService, slackClient, channelId }) {
   async function run() {
     const openIssues = await sheetsService.getOpenIssues();
 
@@ -12,7 +12,7 @@ export function createWeeklyDigest({ sheetsService, groqService, slackClient, ch
       return;
     }
 
-    const summary = await groqService.generateDigest(openIssues);
+    const summary = await ollamaService.generateDigest(openIssues);
 
     if (summary) {
       await slackClient.chat.postMessage({
