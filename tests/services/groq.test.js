@@ -25,7 +25,7 @@ describe("GroqService", () => {
       const result = await service.suggestFix("Lobby printer is jammed");
       expect(result).toBe("Try restarting the printer.");
       expect(mockClient.chat.completions.create).toHaveBeenCalledWith({
-        model: "llama-3.3-70b-versatile",
+        model: "gemma-4-27b",
         messages: [
           {
             role: "system",

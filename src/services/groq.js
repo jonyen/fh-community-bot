@@ -8,7 +8,7 @@ export function createGroqService(client) {
   async function suggestFix(issueDescription) {
     try {
       const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "gemma-4-27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_FIX },
           { role: "user", content: issueDescription },
@@ -28,7 +28,7 @@ export function createGroqService(client) {
         .join("\n");
 
       const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "gemma-4-27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DEDUP },
           {
@@ -53,7 +53,7 @@ export function createGroqService(client) {
   async function generateDigest(openIssues) {
     try {
       const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "gemma-4-27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DIGEST },
           { role: "user", content: JSON.stringify(openIssues) },
