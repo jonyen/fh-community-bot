@@ -27,7 +27,7 @@ describe("DedupService", () => {
     it("falls through to AI pass when no keyword match", async () => {
       mockGroq.checkDuplicate.mockResolvedValue("2");
 
-      const result = await service.findDuplicate("the cooling in room 3 is not working", openIssues);
+      const result = await service.findDuplicate("the cooling system is not working well", openIssues);
       expect(result).toEqual({ id: "2", confident: false });
       expect(mockGroq.checkDuplicate).toHaveBeenCalled();
     });

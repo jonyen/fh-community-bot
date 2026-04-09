@@ -4,9 +4,10 @@ function normalize(text) {
 
 function getKeywords(text) {
   const stopWords = new Set(["the", "a", "an", "is", "in", "on", "at", "to", "for", "of", "and", "or", "not", "it", "my", "our", "this", "that", "again", "still", "very", "just", "been", "has", "have", "was", "are", "but", "with"]);
+  const conditionWords = new Set(["broken", "broke", "leaking", "leak", "leaks", "clogged", "stuck", "jammed", "noisy", "loud", "damaged", "cracked", "loose", "missing", "dirty", "stained", "worn", "rusty", "moldy", "wet", "flooded", "overflowing", "running", "dripping", "squeaky", "wobbly", "peeling", "chipped", "dented", "scratched", "flickering", "dead", "stopped", "working", "works", "work", "needs", "need", "repair", "fix", "fixed", "replace", "replaced", "broken", "busted", "faulty", "defective", "malfunctioning"]);
   return normalize(text)
     .split(/\s+/)
-    .filter((w) => w.length > 2 && !stopWords.has(w));
+    .filter((w) => w.length > 2 && !stopWords.has(w) && !conditionWords.has(w));
 }
 
 function keywordOverlap(a, b) {
