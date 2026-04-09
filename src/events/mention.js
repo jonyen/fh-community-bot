@@ -29,7 +29,7 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-export function createMentionHandler({ sheetsService, ollamaService, dedupService, channelId }) {
+export function createMentionHandler({ sheetsService, groqService, dedupService, channelId }) {
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
 
@@ -140,7 +140,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
     // Classify whether this is actually a maintenance request
     if (!forceCreate) {
       console.log("[mention] classifying...");
-      const isMaintenance = await ollamaService.isMaintenanceRequest(issueDescription);
+      const isMaintenance = await groqService.isMaintenanceRequest(issueDescription);
       console.log("[mention] isMaintenance=", isMaintenance);
       if (!isMaintenance) {
         await say({
@@ -180,7 +180,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
     }
 
     console.log("[mention] generating suggestion...");
-    const suggestion = await ollamaService.suggestFix(issueDescription);
+    const suggestion = await groqService.suggestFix(issueDescription);
     console.log("[mention] suggestion done");
 
     let reporterName = event.user;
