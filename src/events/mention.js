@@ -31,6 +31,8 @@ function findMatchingIssues(description, openIssues) {
 
 export function createMentionHandler({ sheetsService, ollamaService, dedupService, channelId }) {
   return async function handleMention({ event, say, client }) {
+    console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
+
     if (event.channel !== channelId) return;
 
     const description = stripMention(event.text);

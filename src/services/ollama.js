@@ -19,7 +19,7 @@ export function createOllamaService(client) {
   async function suggestFix(issueDescription) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma4:26b",
+        model: "gemma3:4b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_FIX },
           { role: "user", content: issueDescription },
@@ -39,7 +39,7 @@ export function createOllamaService(client) {
         .join("\n");
 
       const res = await client.chat.completions.create({
-        model: "gemma4:26b",
+        model: "gemma3:4b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DEDUP },
           {
@@ -64,7 +64,7 @@ export function createOllamaService(client) {
   async function generateDigest(openIssues) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma4:26b",
+        model: "gemma3:4b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DIGEST },
           { role: "user", content: JSON.stringify(openIssues) },
@@ -97,7 +97,7 @@ export function createOllamaService(client) {
 
     try {
       const res = await client.chat.completions.create({
-        model: "gemma4:26b",
+        model: "gemma3:4b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_CLASSIFY },
           { role: "user", content: text },
