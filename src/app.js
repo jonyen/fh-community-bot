@@ -1,3 +1,4 @@
+import "dotenv/config";
 import pkg from "@slack/bolt";
 const { App } = pkg;
 import { google } from "googleapis";
