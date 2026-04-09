@@ -29,18 +29,105 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
+const SEVERITY_OPTIONS = ["minor", "medium", "critical"];
+
+function extractSeverity(text) {
+  // Match patterns like "- critical", "critical priority", "severity: minor", "medium severity", or trailing "critical"
+  const match = text.match(/[\s,\-\|]+(?:severity[:\s]+)?(minor|medium|critical)(?:\s+(?:priority|severity|issue))?\s*$|[\s,\-\|]+(minor|medium|critical)\s+(?:priority|severity)\s*$/i);
+  if (!match) return { description: text, severity: null };
+  const severity = (match[1] || match[2]).toLowerCase().replace(/^./, (c) => c.toUpperCase());
+  const description = text.slice(0, match.index).trim();
+  return { description, severity };
+}
+
 export function createMentionHandler({ sheetsService, groqService, dedupService, channelId, spreadsheetId }) {
+  // Pending issues waiting for severity reply, keyed by thread_ts
+  const pendingIssues = new Map();
+  // Created issues, keyed by thread_ts → row ID
+  const createdIssues = new Map();
+
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
 
     if (event.channel !== channelId) return;
 
-    const description = stripMention(event.text);
+    const description = stripMention(event.text || "");
+    const threadKey = event.thread_ts || event.ts;
+
+    // Check if this is a severity reply for a pending issue
+    const pending = pendingIssues.get(threadKey);
+    if (pending && event.user === pending.user) {
+      const severityLower = description.toLowerCase();
+      if (!SEVERITY_OPTIONS.includes(severityLower)) {
+        await say({
+          text: "Please reply with one of: *minor*, *medium*, or *critical*.",
+          thread_ts: threadKey,
+        });
+        return;
+      }
+
+      const severity = severityLower.replace(/^./, (c) => c.toUpperCase());
+      pendingIssues.delete(threadKey);
+
+      let id;
+      try {
+        id = await sheetsService.appendIssue({
+          reporter: pending.reporterName,
+          description: pending.issueDescription,
+          severity,
+        });
+      } catch {
+        await say({
+          text: "Couldn't log this issue right now — please try again in a few minutes.",
+          thread_ts: threadKey,
+        });
+        return;
+      }
+
+      createdIssues.set(threadKey, id);
+
+      const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+      let responseText = `Logged your issue (severity: *${severity}*). <${docLink}|View in Google Sheets>`;
+      if (pending.duplicate && !pending.duplicate.confident) {
+        responseText += ` This might be related to issue #${pending.duplicate.id}.`;
+      }
+      if (pending.suggestion) {
+        responseText += `\n\n*Suggested fix:* ${pending.suggestion}`;
+      } else {
+        responseText += `\nCouldn't generate a suggestion right now.`;
+      }
+      responseText += `\n\nFeel free to add more details in this thread and I'll include them in the notes.`;
+      if (severity === "Medium" || severity === "Critical") {
+        responseText += `\n\ncc <@U0000000000>`;
+      }
+
+      await say({ text: responseText, thread_ts: threadKey });
+      return;
+    }
+
+    // If this is a thread reply for a created issue and not a command, append as a note
+    const issueRowId = createdIssues.get(threadKey);
+    if (issueRowId && event.thread_ts && description) {
+      // Don't treat list/close/create commands as notes
+      const isCommand = /\b(list|show|what are|open requests|open issues|status)\b/i.test(description)
+        || /^(?:close|resolve|mark as resolved)\s+/i.test(description)
+        || /^create new:\s*/i.test(description);
+      if (!isCommand) {
+        try {
+          await sheetsService.appendNote(issueRowId, description);
+          await say({ text: "Got it, added that to the notes.", thread_ts: threadKey });
+        } catch (err) {
+          console.error("Sheets error:", err.message);
+          await say({ text: "Couldn't update the notes right now.", thread_ts: threadKey });
+        }
+        return;
+      }
+    }
 
     if (!description) {
       await say({
         text: "Please describe the issue you'd like to report.",
-        thread_ts: event.ts,
+        thread_ts: event.thread_ts || event.ts,
       });
       return;
     }
@@ -66,7 +153,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
           );
           await say({
             text: `*${label} (${issuesToShow.length}):*\n${lines.join("\n")}`,
-            thread_ts: event.ts,
+            thread_ts: event.thread_ts || event.ts,
           });
         }
       } catch (err) {
@@ -93,7 +180,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         await sheetsService.updateIssueStatus(rowId, "Resolved");
         await say({
           text: `Issue #${rowId} (*${issue.description}*) has been marked as resolved.`,
-          thread_ts: event.ts,
+          thread_ts: event.thread_ts || event.ts,
         });
       } catch (err) {
         console.error("Sheets error:", err.message);
@@ -115,7 +202,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
           await sheetsService.updateIssueStatus(issue.id, "Resolved");
           await say({
             text: `Issue #${issue.id} (*${issue.description}*) has been marked as resolved.`,
-            thread_ts: event.ts,
+            thread_ts: event.thread_ts || event.ts,
           });
         } else {
           const lines = matches.slice(0, 5).map(
@@ -123,7 +210,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
           );
           await say({
             text: `Multiple issues match that description. Which one should I close?\n${lines.join("\n")}\n\nReply with \`@FH Maintenance close #<ID>\` to specify.`,
-            thread_ts: event.ts,
+            thread_ts: event.thread_ts || event.ts,
           });
         }
       } catch (err) {
@@ -135,7 +222,12 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
     // Check for "create new:" prefix to bypass duplicate detection
     const forceCreate = description.match(/^create new:\s*(.+)$/i);
-    const issueDescription = forceCreate ? forceCreate[1] : description;
+    const rawDescription = forceCreate ? forceCreate[1] : description;
+
+    // Check if severity was provided inline (e.g. "printer jammed - critical")
+    const extracted = extractSeverity(rawDescription);
+    const issueDescription = extracted.severity ? extracted.description : rawDescription;
+    const inlineSeverity = extracted.severity;
 
     // Classify whether this is actually a maintenance request
     if (!forceCreate) {
@@ -145,7 +237,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       if (!isMaintenance) {
         await say({
           text: "I'm not sure that's a maintenance request. Could you describe a specific facilities or maintenance issue you'd like to report? For example: a broken fixture, a leak, or something that needs repair.",
-          thread_ts: event.ts,
+          thread_ts: event.thread_ts || event.ts,
         });
         return;
       }
@@ -159,7 +251,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       console.error("Sheets error:", err.message);
       await say({
         text: "Couldn't log this issue right now — please try again in a few minutes.",
-        thread_ts: event.ts,
+        thread_ts: event.thread_ts || event.ts,
       });
       return;
     }
@@ -182,7 +274,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
         await say({
           text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\n<${docLink}|View in Google Sheets>\n\nIf this is a new issue, reply with \`@FH Maintenance create new: ${issueDescription}\``,
-          thread_ts: event.ts,
+          thread_ts: event.thread_ts || event.ts,
         });
         return;
       }
@@ -200,38 +292,59 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       console.error("Failed to fetch user info:", err.message);
     }
 
-    console.log("[mention] appending issue...");
-    let id;
-    try {
-      id = await sheetsService.appendIssue({
-        reporter: reporterName,
-        description: issueDescription,
-      });
-    } catch {
-      await say({
-        text: "Couldn't log this issue right now — please try again in a few minutes.",
-        thread_ts: event.ts,
-      });
-      return;
-    }
+    if (inlineSeverity) {
+      // Severity provided inline — create issue immediately
+      console.log("[mention] appending issue (inline severity)...");
+      let id;
+      try {
+        id = await sheetsService.appendIssue({
+          reporter: reporterName,
+          description: issueDescription,
+          severity: inlineSeverity,
+        });
+      } catch {
+        await say({
+          text: "Couldn't log this issue right now — please try again in a few minutes.",
+          thread_ts: threadKey,
+        });
+        return;
+      }
 
-    let responseText = `Logged your issue.`;
+      createdIssues.set(threadKey, id);
 
-    if (duplicate && !duplicate.confident) {
-      responseText += ` This might be related to issue #${duplicate.id}.`;
-    }
+      const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+      let responseText = `Logged your issue (severity: *${inlineSeverity}*). <${docLink}|View in Google Sheets>`;
+      if (duplicate && !duplicate.confident) {
+        responseText += ` This might be related to issue #${duplicate.id}.`;
+      }
+      if (suggestion) {
+        responseText += `\n\n*Suggested fix:* ${suggestion}`;
+      } else {
+        responseText += `\nCouldn't generate a suggestion right now.`;
+      }
+      responseText += `\n\nFeel free to add more details in this thread and I'll include them in the notes.`;
+      if (inlineSeverity === "Medium" || inlineSeverity === "Critical") {
+        responseText += `\n\ncc <@U0000000000>`;
+      }
 
-    if (suggestion) {
-      responseText += `\n\n*Suggested fix:* ${suggestion}`;
+      await say({ text: responseText, thread_ts: threadKey });
+      console.log("[mention] done");
     } else {
-      responseText += `\nCouldn't generate a suggestion right now.`;
-    }
+      // Store pending issue and ask for severity
+      pendingIssues.set(threadKey, {
+        user: event.user,
+        reporterName,
+        issueDescription,
+        suggestion,
+        duplicate,
+      });
 
-    console.log("[mention] sending response...");
-    await say({
-      text: responseText,
-      thread_ts: event.ts,
-    });
-    console.log("[mention] done");
+      console.log("[mention] asking for severity...");
+      await say({
+        text: "How severe is this issue? Please reply with one of: *minor*, *medium*, or *critical*.",
+        thread_ts: threadKey,
+      });
+      console.log("[mention] waiting for severity reply");
+    }
   };
 }

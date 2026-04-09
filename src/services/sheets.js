@@ -48,7 +48,7 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     return sheet.properties.sheetId;
   }
 
-  async function appendIssue({ reporter, description }) {
+  async function appendIssue({ reporter, description, severity }) {
     const today = new Date().toLocaleDateString("en-US");
     const sheetId = await getSheetId();
 
@@ -77,7 +77,7 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
       range: `'${SHEET_NAME}'!A${DATA_START_ROW}:H${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[today, reporter, description, "", "", "", "Need to Assign", ""]],
+        values: [[today, reporter, description, severity || "", `=TODAY()-A${DATA_START_ROW}`, "", "Need to Assign", ""]],
       },
     });
 
@@ -96,5 +96,23 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     });
   }
 
-  return { getAllIssues, getOpenIssues, appendIssue, updateIssueStatus };
+  async function appendNote(rowId, note) {
+    const range = `'${SHEET_NAME}'!H${rowId}`;
+    const res = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+    });
+    const existing = (res.data.values && res.data.values[0] && res.data.values[0][0]) || "";
+    const updated = existing ? `${existing}\n${note}` : note;
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[updated]],
+      },
+    });
+  }
+
+  return { getAllIssues, getOpenIssues, appendIssue, updateIssueStatus, appendNote };
 }

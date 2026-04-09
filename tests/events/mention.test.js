@@ -20,6 +20,7 @@ describe("MentionHandler", () => {
       getOpenIssues: vi.fn().mockResolvedValue([]),
       appendIssue: vi.fn().mockResolvedValue("1"),
       updateIssueStatus: vi.fn().mockResolvedValue({}),
+      appendNote: vi.fn().mockResolvedValue({}),
     };
     mockGroq = {
       suggestFix: vi.fn().mockResolvedValue("Try restarting it."),
@@ -69,8 +70,25 @@ describe("MentionHandler", () => {
   });
 
   it("logs a new issue and replies with confirmation + suggestion", async () => {
+    // Step 1: report the issue — bot asks for severity
     await handler({
       event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("minor"),
+        thread_ts: "1",
+      })
+    );
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+
+    // Step 2: user replies with severity in thread
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "medium", user: "U1", ts: "2", thread_ts: "1" },
       say: mockSay,
       client: mockClient,
     });
@@ -78,11 +96,96 @@ describe("MentionHandler", () => {
     expect(mockSheets.appendIssue).toHaveBeenCalledWith({
       reporter: "Test User",
       description: "lobby printer jammed",
+      severity: "Medium",
     });
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("Logged your issue"),
         thread_ts: "1",
+      })
+    );
+  });
+
+  it("creates issue immediately when severity is provided inline", async () => {
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed - critical", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith({
+      reporter: "Test User",
+      description: "lobby printer jammed",
+      severity: "Critical",
+    });
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Logged your issue"),
+        thread_ts: "1",
+      })
+    );
+    // Should NOT have asked for severity
+    expect(mockSay).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("How severe"),
+      })
+    );
+  });
+
+  it("appends thread replies as notes after issue is created", async () => {
+    // Step 1: create issue with inline severity
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed - critical", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+    expect(mockSheets.appendIssue).toHaveBeenCalled();
+
+    // Step 2: follow-up reply in thread
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "it's the one near the front desk", user: "U1", ts: "3", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendNote).toHaveBeenCalledWith("1", "it's the one near the front desk");
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("added that to the notes"),
+        thread_ts: "1",
+      })
+    );
+  });
+
+  it("appends thread replies as notes after severity reply flow", async () => {
+    // Step 1: report issue (no inline severity)
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    // Step 2: provide severity
+    await handler({
+      event: { channel: "C123", text: "medium", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+    expect(mockSheets.appendIssue).toHaveBeenCalled();
+
+    // Step 3: add extra info in thread
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "also it's making a weird noise", user: "U1", ts: "3", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendNote).toHaveBeenCalledWith("1", "also it's making a weird noise");
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("added that to the notes"),
       })
     );
   });
@@ -121,6 +224,14 @@ describe("MentionHandler", () => {
 
     await handler({
       event: { channel: "C123", text: "<@U_BOT> can't print anything", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    // Step 2: reply with severity
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "critical", user: "U1", ts: "2", thread_ts: "1" },
       say: mockSay,
       client: mockClient,
     });
@@ -167,6 +278,14 @@ describe("MentionHandler", () => {
 
     // findDuplicate should be called with an empty array since the issue is too old
     expect(mockDedup.findDuplicate).toHaveBeenCalledWith("printer is broken", []);
+
+    // Reply with severity to complete issue creation
+    await handler({
+      event: { channel: "C123", text: "minor", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
     expect(mockSheets.appendIssue).toHaveBeenCalled();
   });
 
@@ -182,13 +301,47 @@ describe("MentionHandler", () => {
     });
 
     expect(mockDedup.findDuplicate).not.toHaveBeenCalled();
+
+    // Reply with severity
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "critical", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
     expect(mockSheets.appendIssue).toHaveBeenCalledWith({
       reporter: "Test User",
       description: "printer is broken",
+      severity: "Critical",
     });
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("Logged your issue"),
+      })
+    );
+  });
+
+  it("creates issue immediately when 'create new:' includes inline severity", async () => {
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> create new: printer is broken - critical", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith({
+      reporter: "Test User",
+      description: "printer is broken",
+      severity: "Critical",
+    });
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Logged your issue"),
+      })
+    );
+    expect(mockSay).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("How severe"),
       })
     );
   });
@@ -297,6 +450,14 @@ describe("MentionHandler", () => {
     });
 
     expect(mockGroq.isMaintenanceRequest).not.toHaveBeenCalled();
+
+    // Reply with severity
+    await handler({
+      event: { channel: "C123", text: "medium", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
     expect(mockSheets.appendIssue).toHaveBeenCalled();
   });
 
