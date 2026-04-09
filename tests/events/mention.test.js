@@ -7,6 +7,7 @@ describe("MentionHandler", () => {
   let mockDedup;
   let handler;
   let mockSay;
+  let mockClient;
 
   beforeEach(() => {
     mockSheets = {
@@ -16,11 +17,17 @@ describe("MentionHandler", () => {
     };
     mockOllama = {
       suggestFix: vi.fn().mockResolvedValue("Try restarting it."),
+      isMaintenanceRequest: vi.fn().mockResolvedValue(true),
     };
     mockDedup = {
       findDuplicate: vi.fn().mockResolvedValue(null),
     };
     mockSay = vi.fn().mockResolvedValue({});
+    mockClient = {
+      users: {
+        info: vi.fn().mockResolvedValue({ user: { real_name: "Test User", name: "testuser" } }),
+      },
+    };
     handler = createMentionHandler({
       sheetsService: mockSheets,
       ollamaService: mockOllama,
@@ -33,7 +40,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C999", text: "<@U_BOT> printer broke", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSay).not.toHaveBeenCalled();
@@ -43,7 +50,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT>", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSay).toHaveBeenCalledWith(
@@ -58,11 +65,11 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.appendIssue).toHaveBeenCalledWith({
-      reporter: "U1",
+      reporter: "Test User",
       description: "lobby printer jammed",
     });
     expect(mockSay).toHaveBeenCalledWith(
@@ -82,7 +89,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> printer is broken", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.appendIssue).not.toHaveBeenCalled();
@@ -103,7 +110,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> can't print anything", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.appendIssue).toHaveBeenCalled();
@@ -124,7 +131,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> printer is broken", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSay).toHaveBeenCalledWith(
@@ -142,12 +149,12 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> create new: printer is broken", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockDedup.findDuplicate).not.toHaveBeenCalled();
     expect(mockSheets.appendIssue).toHaveBeenCalledWith({
-      reporter: "U1",
+      reporter: "Test User",
       description: "printer is broken",
     });
     expect(mockSay).toHaveBeenCalledWith(
@@ -165,7 +172,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> close #5", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
@@ -185,7 +192,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> close lobby printer jammed", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
@@ -205,7 +212,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> close printer jammed", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.updateIssueStatus).not.toHaveBeenCalled();
@@ -224,7 +231,7 @@ describe("MentionHandler", () => {
     await handler({
       event: { channel: "C123", text: "<@U_BOT> close elevator stuck", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSheets.updateIssueStatus).not.toHaveBeenCalled();
@@ -235,13 +242,42 @@ describe("MentionHandler", () => {
     );
   });
 
+  it("asks for clarification when message is not a maintenance request", async () => {
+    mockOllama.isMaintenanceRequest.mockResolvedValue(false);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> what's for lunch today?", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("not sure that's a maintenance request"),
+        thread_ts: "1",
+      })
+    );
+  });
+
+  it("skips classification when using 'create new:' prefix", async () => {
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> create new: weird smell in kitchen", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockOllama.isMaintenanceRequest).not.toHaveBeenCalled();
+    expect(mockSheets.appendIssue).toHaveBeenCalled();
+  });
+
   it("handles sheets failure gracefully", async () => {
     mockSheets.getOpenIssues.mockRejectedValue(new Error("Sheets down"));
 
     await handler({
       event: { channel: "C123", text: "<@U_BOT> something broke", user: "U1", ts: "1" },
       say: mockSay,
-      client: {},
+      client: mockClient,
     });
 
     expect(mockSay).toHaveBeenCalledWith(

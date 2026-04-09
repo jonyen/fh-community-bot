@@ -126,6 +126,18 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
     const forceCreate = description.match(/^create new:\s*(.+)$/i);
     const issueDescription = forceCreate ? forceCreate[1] : description;
 
+    // Classify whether this is actually a maintenance request
+    if (!forceCreate) {
+      const isMaintenance = await ollamaService.isMaintenanceRequest(issueDescription);
+      if (!isMaintenance) {
+        await say({
+          text: "I'm not sure that's a maintenance request. Could you describe a specific facilities or maintenance issue you'd like to report? For example: a broken fixture, a leak, or something that needs repair.",
+          thread_ts: event.ts,
+        });
+        return;
+      }
+    }
+
     let openIssues;
     try {
       openIssues = await sheetsService.getOpenIssues();
@@ -155,10 +167,18 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
 
     const suggestion = await ollamaService.suggestFix(issueDescription);
 
+    let reporterName = event.user;
+    try {
+      const userInfo = await client.users.info({ user: event.user });
+      reporterName = userInfo.user.real_name || userInfo.user.name || event.user;
+    } catch (err) {
+      console.error("Failed to fetch user info:", err.message);
+    }
+
     let id;
     try {
       id = await sheetsService.appendIssue({
-        reporter: event.user,
+        reporter: reporterName,
         description: issueDescription,
       });
     } catch {

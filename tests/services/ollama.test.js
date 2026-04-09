@@ -82,6 +82,33 @@ describe("OllamaService", () => {
     });
   });
 
+  describe("isMaintenanceRequest", () => {
+    it("returns true for a maintenance request", async () => {
+      mockClient.chat.completions.create.mockResolvedValue({
+        choices: [{ message: { content: "yes" } }],
+      });
+
+      const result = await service.isMaintenanceRequest("The lobby printer is jammed");
+      expect(result).toBe(true);
+    });
+
+    it("returns false for a non-maintenance message", async () => {
+      mockClient.chat.completions.create.mockResolvedValue({
+        choices: [{ message: { content: "no" } }],
+      });
+
+      const result = await service.isMaintenanceRequest("What's for lunch?");
+      expect(result).toBe(false);
+    });
+
+    it("returns true when API fails (fail-open)", async () => {
+      mockClient.chat.completions.create.mockRejectedValue(new Error("API down"));
+
+      const result = await service.isMaintenanceRequest("something");
+      expect(result).toBe(true);
+    });
+  });
+
   describe("generateDigest", () => {
     it("returns a summary of open issues", async () => {
       mockClient.chat.completions.create.mockResolvedValue({
