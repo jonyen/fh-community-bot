@@ -77,7 +77,7 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
       range: `'${SHEET_NAME}'!A${DATA_START_ROW}:H${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[today, reporter, description, "", "", "", "Open", ""]],
+        values: [[today, reporter, description, "", "", "", "Need to Assign", ""]],
       },
     });
 

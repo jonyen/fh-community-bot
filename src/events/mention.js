@@ -50,11 +50,20 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
         if (openIssues.length === 0) {
           await say({ text: "No open requests right now.", thread_ts: event.ts });
         } else {
-          const lines = openIssues.map(
+          // Show past 7 days of requests, or the 5 most recent if none in that window
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          const recentIssues = openIssues.filter((i) => {
+            const parsed = new Date(i.date);
+            return !isNaN(parsed) && parsed >= sevenDaysAgo;
+          });
+          const issuesToShow = recentIssues.length > 0 ? recentIssues : openIssues.slice(0, 5);
+          const label = recentIssues.length > 0 ? "Requests from the Past 7 Days" : "5 Most Recent Requests";
+          const lines = issuesToShow.map(
             (i) => `• *${i.description}* — submitted by ${i.submitter} on ${i.date} (Status: ${i.status})`
           );
           await say({
-            text: `*Open Requests (${openIssues.length}):*\n${lines.join("\n")}`,
+            text: `*${label} (${issuesToShow.length}):*\n${lines.join("\n")}`,
             thread_ts: event.ts,
           });
         }
