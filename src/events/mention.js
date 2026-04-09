@@ -122,7 +122,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
             ({ issue }) => `• #${issue.id} — *${issue.description}* (${issue.status})`
           );
           await say({
-            text: `Multiple issues match that description. Which one should I close?\n${lines.join("\n")}\n\nReply with \`@bot close #<ID>\` to specify.`,
+            text: `Multiple issues match that description. Which one should I close?\n${lines.join("\n")}\n\nReply with \`@FH Maintenance close #<ID>\` to specify.`,
             thread_ts: event.ts,
           });
         }
@@ -169,7 +169,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       if (duplicate && duplicate.confident) {
         const existing = openIssues.find((i) => i.id === duplicate.id);
         await say({
-          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\nIf this is a new issue, reply with \`@bot create new: ${issueDescription}\``,
+          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\nIf this is a new issue, reply with \`@FH Maintenance create new: ${issueDescription}\``,
           thread_ts: event.ts,
         });
         return;
