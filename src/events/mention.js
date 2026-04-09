@@ -139,7 +139,9 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
 
     // Classify whether this is actually a maintenance request
     if (!forceCreate) {
+      console.log("[mention] classifying...");
       const isMaintenance = await ollamaService.isMaintenanceRequest(issueDescription);
+      console.log("[mention] isMaintenance=", isMaintenance);
       if (!isMaintenance) {
         await say({
           text: "I'm not sure that's a maintenance request. Could you describe a specific facilities or maintenance issue you'd like to report? For example: a broken fixture, a leak, or something that needs repair.",
@@ -149,6 +151,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       }
     }
 
+    console.log("[mention] fetching open issues...");
     let openIssues;
     try {
       openIssues = await sheetsService.getOpenIssues();
@@ -176,7 +179,9 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       }
     }
 
+    console.log("[mention] generating suggestion...");
     const suggestion = await ollamaService.suggestFix(issueDescription);
+    console.log("[mention] suggestion done");
 
     let reporterName = event.user;
     try {
@@ -186,6 +191,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       console.error("Failed to fetch user info:", err.message);
     }
 
+    console.log("[mention] appending issue...");
     let id;
     try {
       id = await sheetsService.appendIssue({
@@ -200,7 +206,7 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       return;
     }
 
-    let responseText = `Logged as issue #${id}.`;
+    let responseText = `Logged your issue.`;
 
     if (duplicate && !duplicate.confident) {
       responseText += ` This might be related to issue #${duplicate.id}.`;
@@ -212,9 +218,11 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       responseText += `\nCouldn't generate a suggestion right now.`;
     }
 
+    console.log("[mention] sending response...");
     await say({
       text: responseText,
       thread_ts: event.ts,
     });
+    console.log("[mention] done");
   };
 }
