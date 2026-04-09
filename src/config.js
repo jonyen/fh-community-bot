@@ -25,7 +25,5 @@ export function loadConfig() {
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN,
     groqApiKey: process.env.GROQ_API_KEY,
-    weeklyDigestCron: process.env.WEEKLY_DIGEST_CRON || "0 9 * * 1",
-    timezone: process.env.TIMEZONE || "UTC",
   };
 }
