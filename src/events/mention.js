@@ -51,6 +51,17 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
     if (event.channel !== channelId) return;
 
+    // Acknowledge receipt immediately
+    try {
+      await client.reactions.add({
+        channel: event.channel,
+        timestamp: event.ts,
+        name: "eyes",
+      });
+    } catch (err) {
+      console.error("Failed to add reaction:", err.message);
+    }
+
     const description = stripMention(event.text || "");
     const threadKey = event.thread_ts || event.ts;
 
