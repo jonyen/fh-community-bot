@@ -1,13 +1,12 @@
 # fh-maintenance-bot
 
-A Slack bot for managing facilities maintenance issue reporting and tracking. Mention the bot in a Slack channel to log issues, detect duplicates, get AI-powered fix suggestions, and receive weekly digests of outstanding work.
+A Slack bot for managing facilities maintenance issue reporting and tracking. Mention the bot in a Slack channel to log issues, detect duplicates, and get AI-powered fix suggestions.
 
 ## Features
 
 - **Issue reporting** via Slack @mentions -- automatically logged to Google Sheets
 - **Duplicate detection** -- two-pass strategy using keyword matching + LLM verification
 - **Fix suggestions** -- AI-powered quick-fix recommendations for common issues
-- **Weekly digest** -- scheduled summary of open issues posted to Slack
 - **Issue management** -- list open issues, close/resolve by ID or description
 
 ## Tech Stack
@@ -15,7 +14,6 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - [Slack Bolt](https://slack.dev/bolt-js/) (Socket Mode) for event handling
 - [Google Sheets API](https://developers.google.com/sheets/api) for issue storage
 - [Groq](https://groq.com/) (Llama 3.3 70B) for AI features
-- [node-cron](https://github.com/node-cron/node-cron) for scheduling
 
 ## Setup
 
@@ -46,8 +44,6 @@ cp .env.example .env
 | `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Yes | Google OAuth2 refresh token |
 | `GROQ_API_KEY` | Yes | Groq API key (`gsk_...`) |
-| `WEEKLY_DIGEST_CRON` | No | Cron expression for digest schedule (default: `0 9 * * 1`) |
-| `TIMEZONE` | No | Timezone for cron (default: `America/Los_Angeles`) |
 
 To generate a Google refresh token:
 
@@ -92,8 +88,6 @@ src/
     sheets.js         # Google Sheets CRUD
     groq.js           # LLM client (suggestions, dedup, digest)
     dedup.js          # Duplicate detection logic
-  jobs/
-    weekly-digest.js  # Cron-scheduled weekly digest
 tests/                # Vitest test suite
 scripts/
   get-google-token.js # OAuth2 token generation utility

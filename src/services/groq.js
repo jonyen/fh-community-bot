@@ -2,7 +2,6 @@ const SYSTEM_PROMPT_FIX = `You are a facilities/maintenance assistant. A user re
 
 const SYSTEM_PROMPT_DEDUP = `You are a duplicate issue detector. Given a new issue report and a list of existing open issues, determine if the new report is about the same problem as any existing issue. If it matches an existing issue, respond with ONLY the ID number. If it does not match any, respond with ONLY the word "none". Do not explain.`;
 
-const SYSTEM_PROMPT_DIGEST = `Summarize these outstanding maintenance issues for a weekly update post in Slack. Group by priority/area if possible. Be concise and actionable. Use Slack formatting (bold with *, bullet lists).`;
 
 const SYSTEM_PROMPT_CLASSIFY = `You are a strict facilities/maintenance request classifier. Determine if a message is a genuine maintenance or facilities issue report — something specific that is broken, leaking, malfunctioning, dirty, or needing repair or replacement.
 
@@ -61,22 +60,6 @@ export function createGroqService(client) {
     }
   }
 
-  async function generateDigest(openIssues) {
-    try {
-      const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT_DIGEST },
-          { role: "user", content: JSON.stringify(openIssues) },
-        ],
-        max_tokens: 1024,
-      });
-      return res.choices[0].message.content;
-    } catch {
-      return null;
-    }
-  }
-
   function isObviouslyNotMaintenance(text) {
     const normalized = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
     const junkPatterns = [
@@ -111,5 +94,5 @@ export function createGroqService(client) {
     }
   }
 
-  return { suggestFix, checkDuplicate, generateDigest, isMaintenanceRequest };
+  return { suggestFix, checkDuplicate, isMaintenanceRequest };
 }

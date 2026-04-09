@@ -7,8 +7,6 @@ import { createSheetsService } from "./services/sheets.js";
 import { createGroqService } from "./services/groq.js";
 import { createDedupService } from "./services/dedup.js";
 import { createMentionHandler } from "./events/mention.js";
-import { createWeeklyDigest } from "./jobs/weekly-digest.js";
-
 const config = loadConfig();
 
 // Slack Bolt app
@@ -54,15 +52,6 @@ app.event("message", async ({ event, say, client }) => {
   if (/<@[A-Z0-9_]+>/.test(event.text || "")) return; // skip @mentions (handled above)
   await mentionHandler({ event, say, client });
 });
-
-// Schedule weekly digest
-const weeklyDigest = createWeeklyDigest({
-  sheetsService,
-  groqService,
-  slackClient: app.client,
-  channelId: config.slackChannelId,
-});
-weeklyDigest.schedule(config.weeklyDigestCron, config.timezone);
 
 // Start
 (async () => {
