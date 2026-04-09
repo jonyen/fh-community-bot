@@ -77,7 +77,24 @@ export function createOllamaService(client) {
     }
   }
 
+  function isObviouslyNotMaintenance(text) {
+    const normalized = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+    const junkPatterns = [
+      /^(test|testing|tset|tsetign)$/,
+      /^(hi|hello|hey|yo|sup|hola|howdy)$/,
+      /^(ok|okay|yes|no|yep|nope|sure|thanks|ty|thx)$/,
+      /^(lol|lmao|haha|heh|hmm|wow|bruh|nice)$/,
+      /^(ping|pong|check|checking)$/,
+      /^just (a )?test(ing)?$/,
+      /^is (this|it) (working|on|live|up)(\?)?$/,
+      /^(does this work|are you there|hello world|foo ?bar|asdf+|aaa+)$/,
+    ];
+    return junkPatterns.some((p) => p.test(normalized));
+  }
+
   async function isMaintenanceRequest(text) {
+    if (isObviouslyNotMaintenance(text)) return false;
+
     try {
       const res = await client.chat.completions.create({
         model: "gemma4:27b",

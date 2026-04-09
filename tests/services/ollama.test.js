@@ -101,6 +101,15 @@ describe("OllamaService", () => {
       expect(result).toBe(false);
     });
 
+    it("returns false for junk messages without calling the API", async () => {
+      const junkMessages = ["test", "testing", "hello", "hi", "just a test", "ping", "asdf", "lol"];
+      for (const msg of junkMessages) {
+        const result = await service.isMaintenanceRequest(msg);
+        expect(result, `expected false for "${msg}"`).toBe(false);
+      }
+      expect(mockClient.chat.completions.create).not.toHaveBeenCalled();
+    });
+
     it("returns true when API fails (fail-open)", async () => {
       mockClient.chat.completions.create.mockRejectedValue(new Error("API down"));
 
