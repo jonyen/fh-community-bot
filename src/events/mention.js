@@ -71,7 +71,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       const severityLower = description.toLowerCase();
       if (!SEVERITY_OPTIONS.includes(severityLower)) {
         await say({
-          text: "Please reply with one of: *minor*, *medium*, or *critical*.",
+          text: "Please reply with one of: *Minor*, *Medium*, or *Critical*.",
           thread_ts: threadKey,
         });
         return;
