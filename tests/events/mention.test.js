@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMentionHandler } from "../../src/events/mention.js";
 
+function recentDate(daysAgo = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toLocaleDateString("en-US");
+}
+
 describe("MentionHandler", () => {
   let mockSheets;
   let mockGroq;
@@ -33,6 +39,7 @@ describe("MentionHandler", () => {
       groqService: mockGroq,
       dedupService: mockDedup,
       channelId: "C123",
+      spreadsheetId: "sheet-id",
     });
   });
 
@@ -74,7 +81,7 @@ describe("MentionHandler", () => {
     });
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Logged as issue #1"),
+        text: expect.stringContaining("Logged your issue"),
         thread_ts: "1",
       })
     );
@@ -82,7 +89,7 @@ describe("MentionHandler", () => {
 
   it("notifies about duplicate when one is found confidently", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
-      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
     ]);
     mockDedup.findDuplicate.mockResolvedValue({ id: "5", confident: true });
 
@@ -99,11 +106,16 @@ describe("MentionHandler", () => {
         thread_ts: "1",
       })
     );
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("docs.google.com/spreadsheets/d/sheet-id"),
+      })
+    );
   });
 
   it("logs new issue with related note when dedup is uncertain", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
-      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
     ]);
     mockDedup.findDuplicate.mockResolvedValue({ id: "5", confident: false });
 
@@ -124,7 +136,7 @@ describe("MentionHandler", () => {
 
   it("suggests override when confident duplicate found", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
-      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
     ]);
     mockDedup.findDuplicate.mockResolvedValue({ id: "5", confident: true });
 
@@ -141,9 +153,26 @@ describe("MentionHandler", () => {
     );
   });
 
+  it("treats issues older than 7 days as new (skips dedup)", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(10), status: "Open" },
+    ]);
+    mockDedup.findDuplicate.mockResolvedValue(null);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> printer is broken", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    // findDuplicate should be called with an empty array since the issue is too old
+    expect(mockDedup.findDuplicate).toHaveBeenCalledWith("printer is broken", []);
+    expect(mockSheets.appendIssue).toHaveBeenCalled();
+  });
+
   it("bypasses duplicate check with 'create new:' prefix", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
-      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
     ]);
 
     await handler({
@@ -159,7 +188,7 @@ describe("MentionHandler", () => {
     });
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Logged as issue"),
+        text: expect.stringContaining("Logged your issue"),
       })
     );
   });

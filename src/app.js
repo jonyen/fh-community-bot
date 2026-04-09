@@ -43,6 +43,7 @@ const mentionHandler = createMentionHandler({
   groqService,
   dedupService,
   channelId: config.slackChannelId,
+  spreadsheetId: config.googleSheetId,
 });
 app.event("app_mention", mentionHandler);
 

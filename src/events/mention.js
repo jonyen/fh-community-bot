@@ -29,7 +29,7 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelId }) {
+export function createMentionHandler({ sheetsService, groqService, dedupService, channelId, spreadsheetId }) {
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
 
@@ -165,14 +165,23 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     }
 
     // Skip duplicate check if user is forcing creation
+    // Ignore issues older than 7 days for duplicate detection
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentIssues = openIssues.filter((issue) => {
+      const parsed = new Date(issue.date);
+      return !isNaN(parsed) && parsed >= sevenDaysAgo;
+    });
+
     let duplicate = null;
     if (!forceCreate) {
-      duplicate = await dedupService.findDuplicate(issueDescription, openIssues);
+      duplicate = await dedupService.findDuplicate(issueDescription, recentIssues);
 
       if (duplicate && duplicate.confident) {
         const existing = openIssues.find((i) => i.id === duplicate.id);
+        const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
         await say({
-          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\nIf this is a new issue, reply with \`@FH Maintenance create new: ${issueDescription}\``,
+          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\n<${docLink}|View in Google Sheets>\n\nIf this is a new issue, reply with \`@FH Maintenance create new: ${issueDescription}\``,
           thread_ts: event.ts,
         });
         return;
