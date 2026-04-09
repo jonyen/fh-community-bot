@@ -47,6 +47,14 @@ const mentionHandler = createMentionHandler({
 });
 app.event("app_mention", mentionHandler);
 
+// In threads, respond without requiring an @ mention
+app.event("message", async ({ event, say, client }) => {
+  if (!event.thread_ts) return;                        // only thread replies
+  if (event.bot_id || event.subtype) return;           // skip bot messages
+  if (/<@[A-Z0-9_]+>/.test(event.text || "")) return; // skip @mentions (handled above)
+  await mentionHandler({ event, say, client });
+});
+
 // Schedule weekly digest
 const weeklyDigest = createWeeklyDigest({
   sheetsService,

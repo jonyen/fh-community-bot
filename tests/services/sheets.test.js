@@ -91,7 +91,7 @@ describe("SheetsService", () => {
         range: "'Maintenance Request'!A5:H5",
         valueInputOption: "USER_ENTERED",
         requestBody: {
-          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "", "", "Need to Assign", ""]],
+          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", ""]],
         },
       });
     });
