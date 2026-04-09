@@ -14,7 +14,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 
 - [Slack Bolt](https://slack.dev/bolt-js/) (Socket Mode) for event handling
 - [Google Sheets API](https://developers.google.com/sheets/api) for issue storage
-- [Ollama](https://ollama.com/) (local LLM) for AI features
+- [Groq](https://groq.com/) (Llama 3.3 70B) for AI features
 - [node-cron](https://github.com/node-cron/node-cron) for scheduling
 
 ## Setup
@@ -24,7 +24,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - Node.js 20+
 - A Slack app with Bot Token and App-Level Token (Socket Mode enabled)
 - A Google Cloud project with Sheets API enabled and OAuth2 credentials
-- Ollama running locally (optional -- bot degrades gracefully without it)
+- A Groq API key (get one at https://console.groq.com/)
 
 ### Installation
 
@@ -45,7 +45,7 @@ cp .env.example .env
 | `GOOGLE_CLIENT_ID` | Yes | Google OAuth2 client ID |
 | `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Yes | Google OAuth2 refresh token |
-| `OLLAMA_BASE_URL` | No | Ollama API endpoint (default: `http://localhost:11434/v1`) |
+| `GROQ_API_KEY` | Yes | Groq API key (`gsk_...`) |
 | `WEEKLY_DIGEST_CRON` | No | Cron expression for digest schedule (default: `0 9 * * 1`) |
 | `TIMEZONE` | No | Timezone for cron (default: `America/Los_Angeles`) |
 
@@ -90,7 +90,7 @@ src/
     mention.js        # @mention handler (triage, commands)
   services/
     sheets.js         # Google Sheets CRUD
-    ollama.js         # LLM client (suggestions, dedup, digest)
+    groq.js           # LLM client (suggestions, dedup, digest)
     dedup.js          # Duplicate detection logic
   jobs/
     weekly-digest.js  # Cron-scheduled weekly digest
