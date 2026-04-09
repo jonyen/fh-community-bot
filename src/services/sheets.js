@@ -1,7 +1,8 @@
 // Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES
 // Data starts at row 5 (rows 1-4 are headers/metadata)
+const SHEET_NAME = "Maintenance Request";
 const DATA_START_ROW = 5;
-const DATA_RANGE = `'Maintenance Request'!A${DATA_START_ROW}:H`;
+const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:H`;
 
 function parseRow(row, rowIndex) {
   return {
@@ -36,21 +37,51 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     return all.filter((issue) => issue.status.toLowerCase() !== "resolved" && issue.status.toLowerCase() !== "completed");
   }
 
+  async function getSheetId() {
+    const res = await sheetsClient.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties",
+    });
+    const sheet = res.data.sheets.find(
+      (s) => s.properties.title === SHEET_NAME
+    );
+    return sheet.properties.sheetId;
+  }
+
   async function appendIssue({ reporter, description }) {
     const today = new Date().toLocaleDateString("en-US");
+    const sheetId = await getSheetId();
 
-    await sheetsClient.spreadsheets.values.append({
+    // Insert a blank row at row 5 (pushing existing data down)
+    await sheetsClient.spreadsheets.batchUpdate({
       spreadsheetId,
-      range: DATA_RANGE,
+      requestBody: {
+        requests: [
+          {
+            insertDimension: {
+              range: {
+                sheetId,
+                dimension: "ROWS",
+                startIndex: DATA_START_ROW - 1, // 0-based
+                endIndex: DATA_START_ROW,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    // Write data into the newly inserted row
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:H${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [[today, reporter, description, "", "", "", "Open", ""]],
       },
     });
 
-    // Return the new row number as the ID
-    const rows = await getAllRows();
-    return String(rows.length + DATA_START_ROW - 1);
+    return String(DATA_START_ROW);
   }
 
   async function updateIssueStatus(rowId, status) {

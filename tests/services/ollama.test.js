@@ -25,11 +25,11 @@ describe("OllamaService", () => {
       const result = await service.suggestFix("Lobby printer is jammed");
       expect(result).toBe("Try restarting the printer.");
       expect(mockClient.chat.completions.create).toHaveBeenCalledWith({
-        model: "gemma3:27b",
+        model: "gemma4:27b",
         messages: [
           {
             role: "system",
-            content: expect.stringContaining("facilities/maintenance assistant"),
+            content: expect.stringContaining("facilities/maintenance"),
           },
           {
             role: "user",

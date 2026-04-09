@@ -8,9 +8,14 @@ describe("SheetsService", () => {
   beforeEach(() => {
     mockSheets = {
       spreadsheets: {
+        get: vi.fn().mockResolvedValue({
+          data: {
+            sheets: [{ properties: { title: "Maintenance Request", sheetId: 0 } }],
+          },
+        }),
+        batchUpdate: vi.fn().mockResolvedValue({}),
         values: {
           get: vi.fn(),
-          append: vi.fn(),
           update: vi.fn().mockResolvedValue({}),
         },
       },
@@ -56,21 +61,33 @@ describe("SheetsService", () => {
   });
 
   describe("appendIssue", () => {
-    it("appends a new row and returns the row number", async () => {
-      mockSheets.spreadsheets.values.append.mockResolvedValue({});
-      mockSheets.spreadsheets.values.get.mockResolvedValue({
-        data: { values: [["row1"], ["row2"], ["row3"]] },
-      });
-
+    it("inserts a row at row 5 and returns the row number", async () => {
       const id = await service.appendIssue({
         reporter: "U789",
         description: "Water leak in bathroom",
       });
 
-      expect(id).toBe("7");
-      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalledWith({
+      expect(id).toBe("5");
+      expect(mockSheets.spreadsheets.batchUpdate).toHaveBeenCalledWith({
         spreadsheetId: "sheet-id",
-        range: "'Maintenance Request'!A5:H",
+        requestBody: {
+          requests: [
+            {
+              insertDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: "ROWS",
+                  startIndex: 4,
+                  endIndex: 5,
+                },
+              },
+            },
+          ],
+        },
+      });
+      expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith({
+        spreadsheetId: "sheet-id",
+        range: "'Maintenance Request'!A5:H5",
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: [[expect.any(String), "U789", "Water leak in bathroom", "", "", "", "Open", ""]],

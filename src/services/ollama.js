@@ -4,13 +4,22 @@ const SYSTEM_PROMPT_DEDUP = `You are a duplicate issue detector. Given a new iss
 
 const SYSTEM_PROMPT_DIGEST = `Summarize these outstanding maintenance issues for a weekly update post in Slack. Group by priority/area if possible. Be concise and actionable. Use Slack formatting (bold with *, bullet lists).`;
 
-const SYSTEM_PROMPT_CLASSIFY = `You are a facilities/maintenance request classifier. Determine if a message is a maintenance or facilities issue report (e.g. something broken, leaking, malfunctioning, dirty, needing repair or replacement). Respond with ONLY "yes" if it is a maintenance request, or "no" if it is not. Do not explain.`;
+const SYSTEM_PROMPT_CLASSIFY = `You are a strict facilities/maintenance request classifier. Determine if a message is a genuine maintenance or facilities issue report — something specific that is broken, leaking, malfunctioning, dirty, or needing repair or replacement.
+
+Respond "no" for:
+- Greetings, small talk, or test messages (e.g. "hi", "hello", "test", "hey")
+- General questions, chitchat, or off-topic messages
+- Vague messages with no identifiable maintenance issue
+
+Respond "yes" ONLY if the message describes a specific physical/facilities problem.
+
+Respond with ONLY "yes" or "no". Do not explain.`;
 
 export function createOllamaService(client) {
   async function suggestFix(issueDescription) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma3:27b",
+        model: "gemma4:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_FIX },
           { role: "user", content: issueDescription },
@@ -30,7 +39,7 @@ export function createOllamaService(client) {
         .join("\n");
 
       const res = await client.chat.completions.create({
-        model: "gemma3:27b",
+        model: "gemma4:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DEDUP },
           {
@@ -55,7 +64,7 @@ export function createOllamaService(client) {
   async function generateDigest(openIssues) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma3:27b",
+        model: "gemma4:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DIGEST },
           { role: "user", content: JSON.stringify(openIssues) },
@@ -71,7 +80,7 @@ export function createOllamaService(client) {
   async function isMaintenanceRequest(text) {
     try {
       const res = await client.chat.completions.create({
-        model: "gemma3:27b",
+        model: "gemma4:27b",
         messages: [
           { role: "system", content: SYSTEM_PROMPT_CLASSIFY },
           { role: "user", content: text },
