@@ -11,6 +11,7 @@ describe("SheetsService", () => {
         values: {
           get: vi.fn(),
           append: vi.fn(),
+          update: vi.fn().mockResolvedValue({}),
         },
       },
     };
@@ -73,6 +74,21 @@ describe("SheetsService", () => {
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: [[expect.any(String), "U789", "Water leak in bathroom", "", "", "", "Open", ""]],
+        },
+      });
+    });
+  });
+
+  describe("updateIssueStatus", () => {
+    it("updates column G for the given row", async () => {
+      await service.updateIssueStatus("7", "Resolved");
+
+      expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith({
+        spreadsheetId: "sheet-id",
+        range: "'Maintenance Request'!G7",
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [["Resolved"]],
         },
       });
     });

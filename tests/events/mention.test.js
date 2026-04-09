@@ -12,6 +12,7 @@ describe("MentionHandler", () => {
     mockSheets = {
       getOpenIssues: vi.fn().mockResolvedValue([]),
       appendIssue: vi.fn().mockResolvedValue("1"),
+      updateIssueStatus: vi.fn().mockResolvedValue({}),
     };
     mockOllama = {
       suggestFix: vi.fn().mockResolvedValue("Try restarting it."),
@@ -110,6 +111,126 @@ describe("MentionHandler", () => {
       expect.objectContaining({
         text: expect.stringContaining("might be related to issue #5"),
         thread_ts: "1",
+      })
+    );
+  });
+
+  it("suggests override when confident duplicate found", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+    ]);
+    mockDedup.findDuplicate.mockResolvedValue({ id: "5", confident: true });
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> printer is broken", user: "U1", ts: "1" },
+      say: mockSay,
+      client: {},
+    });
+
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("create new:"),
+      })
+    );
+  });
+
+  it("bypasses duplicate check with 'create new:' prefix", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+    ]);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> create new: printer is broken", user: "U1", ts: "1" },
+      say: mockSay,
+      client: {},
+    });
+
+    expect(mockDedup.findDuplicate).not.toHaveBeenCalled();
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith({
+      reporter: "U1",
+      description: "printer is broken",
+    });
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Logged as issue"),
+      })
+    );
+  });
+
+  it("closes an issue by ID", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+    ]);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> close #5", user: "U1", ts: "1" },
+      say: mockSay,
+      client: {},
+    });
+
+    expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("marked as resolved"),
+      })
+    );
+  });
+
+  it("closes an issue by description when single match", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Lobby printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+      { id: "6", description: "AC broken in room 3", submitter: "Bob", date: "4/2/2026", status: "Open" },
+    ]);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> close lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: {},
+    });
+
+    expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("marked as resolved"),
+      })
+    );
+  });
+
+  it("asks for clarification when multiple issues match close description", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed in lobby", submitter: "Alice", date: "4/1/2026", status: "Open" },
+      { id: "6", description: "Printer jammed in office", submitter: "Bob", date: "4/2/2026", status: "Open" },
+    ]);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> close printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: {},
+    });
+
+    expect(mockSheets.updateIssueStatus).not.toHaveBeenCalled();
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Multiple issues match"),
+      })
+    );
+  });
+
+  it("reports no match when close description doesn't match any issue", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
+    ]);
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> close elevator stuck", user: "U1", ts: "1" },
+      say: mockSay,
+      client: {},
+    });
+
+    expect(mockSheets.updateIssueStatus).not.toHaveBeenCalled();
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("No open issue matching"),
       })
     );
   });

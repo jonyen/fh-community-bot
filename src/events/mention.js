@@ -2,6 +2,33 @@ function stripMention(text) {
   return text.replace(/<@[A-Z0-9_]+>/g, "").trim();
 }
 
+function normalize(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+}
+
+function getKeywords(text) {
+  const stopWords = new Set(["the", "a", "an", "is", "in", "on", "at", "to", "for", "of", "and", "or", "not", "it", "my", "our", "this", "that", "again", "still", "very", "just", "been", "has", "have", "was", "are", "but", "with"]);
+  return normalize(text)
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !stopWords.has(w));
+}
+
+function keywordOverlap(a, b) {
+  const setA = new Set(getKeywords(a));
+  const wordsB = getKeywords(b);
+  if (setA.size === 0 || wordsB.length === 0) return 0;
+  const matches = wordsB.filter((w) => setA.has(w)).length;
+  return matches / Math.min(setA.size, wordsB.length);
+}
+
+function findMatchingIssues(description, openIssues) {
+  const scored = openIssues
+    .map((issue) => ({ issue, score: keywordOverlap(description, issue.description) }))
+    .filter(({ score }) => score > 0.3)
+    .sort((a, b) => b.score - a.score);
+  return scored;
+}
+
 export function createMentionHandler({ sheetsService, ollamaService, dedupService, channelId }) {
   return async function handleMention({ event, say, client }) {
     if (event.channel !== channelId) return;
@@ -38,6 +65,67 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       return;
     }
 
+    // Check for close/resolve command
+    const closeMatch = description.match(/^(?:close|resolve|mark as resolved)\s+#?(\d+)$/i);
+    const closeByDesc = description.match(/^(?:close|resolve|mark as resolved)\s+(.+)$/i);
+
+    if (closeMatch) {
+      // Direct close by ID
+      const rowId = closeMatch[1];
+      try {
+        const allIssues = await sheetsService.getOpenIssues();
+        const issue = allIssues.find((i) => i.id === rowId);
+        if (!issue) {
+          await say({ text: `No open issue found with ID #${rowId}.`, thread_ts: event.ts });
+          return;
+        }
+        await sheetsService.updateIssueStatus(rowId, "Resolved");
+        await say({
+          text: `Issue #${rowId} (*${issue.description}*) has been marked as resolved.`,
+          thread_ts: event.ts,
+        });
+      } catch (err) {
+        console.error("Sheets error:", err.message);
+        await say({ text: "Couldn't update the issue right now — please try again.", thread_ts: event.ts });
+      }
+      return;
+    }
+
+    if (closeByDesc && !/^\d+$/.test(closeByDesc[1].trim())) {
+      const searchDesc = closeByDesc[1].trim();
+      try {
+        const openIssues = await sheetsService.getOpenIssues();
+        const matches = findMatchingIssues(searchDesc, openIssues);
+
+        if (matches.length === 0) {
+          await say({ text: `No open issue matching "${searchDesc}" was found.`, thread_ts: event.ts });
+        } else if (matches.length === 1) {
+          const { issue } = matches[0];
+          await sheetsService.updateIssueStatus(issue.id, "Resolved");
+          await say({
+            text: `Issue #${issue.id} (*${issue.description}*) has been marked as resolved.`,
+            thread_ts: event.ts,
+          });
+        } else {
+          const lines = matches.slice(0, 5).map(
+            ({ issue }) => `• #${issue.id} — *${issue.description}* (${issue.status})`
+          );
+          await say({
+            text: `Multiple issues match that description. Which one should I close?\n${lines.join("\n")}\n\nReply with \`@bot close #<ID>\` to specify.`,
+            thread_ts: event.ts,
+          });
+        }
+      } catch (err) {
+        console.error("Sheets error:", err.message);
+        await say({ text: "Couldn't update the issue right now — please try again.", thread_ts: event.ts });
+      }
+      return;
+    }
+
+    // Check for "create new:" prefix to bypass duplicate detection
+    const forceCreate = description.match(/^create new:\s*(.+)$/i);
+    const issueDescription = forceCreate ? forceCreate[1] : description;
+
     let openIssues;
     try {
       openIssues = await sheetsService.getOpenIssues();
@@ -50,24 +138,28 @@ export function createMentionHandler({ sheetsService, ollamaService, dedupServic
       return;
     }
 
-    const duplicate = await dedupService.findDuplicate(description, openIssues);
+    // Skip duplicate check if user is forcing creation
+    let duplicate = null;
+    if (!forceCreate) {
+      duplicate = await dedupService.findDuplicate(issueDescription, openIssues);
 
-    if (duplicate && duplicate.confident) {
-      const existing = openIssues.find((i) => i.id === duplicate.id);
-      await say({
-        text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*`,
-        thread_ts: event.ts,
-      });
-      return;
+      if (duplicate && duplicate.confident) {
+        const existing = openIssues.find((i) => i.id === duplicate.id);
+        await say({
+          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\nIf this is a new issue, reply with \`@bot create new: ${issueDescription}\``,
+          thread_ts: event.ts,
+        });
+        return;
+      }
     }
 
-    const suggestion = await ollamaService.suggestFix(description);
+    const suggestion = await ollamaService.suggestFix(issueDescription);
 
     let id;
     try {
       id = await sheetsService.appendIssue({
         reporter: event.user,
-        description,
+        description: issueDescription,
       });
     } catch {
       await say({

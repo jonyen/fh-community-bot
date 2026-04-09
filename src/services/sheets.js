@@ -53,5 +53,17 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     return String(rows.length + DATA_START_ROW - 1);
   }
 
-  return { getAllIssues, getOpenIssues, appendIssue };
+  async function updateIssueStatus(rowId, status) {
+    const range = `'Maintenance Request'!G${rowId}`;
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[status]],
+      },
+    });
+  }
+
+  return { getAllIssues, getOpenIssues, appendIssue, updateIssueStatus };
 }
