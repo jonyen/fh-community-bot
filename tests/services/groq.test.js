@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createOllamaService } from "../../src/services/ollama.js";
+import { createGroqService } from "../../src/services/groq.js";
 
-describe("OllamaService", () => {
+describe("GroqService", () => {
   let mockClient;
   let service;
 
@@ -13,7 +13,7 @@ describe("OllamaService", () => {
         },
       },
     };
-    service = createOllamaService(mockClient);
+    service = createGroqService(mockClient);
   });
 
   describe("suggestFix", () => {
@@ -25,7 +25,7 @@ describe("OllamaService", () => {
       const result = await service.suggestFix("Lobby printer is jammed");
       expect(result).toBe("Try restarting the printer.");
       expect(mockClient.chat.completions.create).toHaveBeenCalledWith({
-        model: "gemma3:1b",
+        model: "llama-3.3-70b-versatile",
         messages: [
           {
             role: "system",

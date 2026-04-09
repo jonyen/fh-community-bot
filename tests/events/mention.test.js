@@ -3,7 +3,7 @@ import { createMentionHandler } from "../../src/events/mention.js";
 
 describe("MentionHandler", () => {
   let mockSheets;
-  let mockOllama;
+  let mockGroq;
   let mockDedup;
   let handler;
   let mockSay;
@@ -15,7 +15,7 @@ describe("MentionHandler", () => {
       appendIssue: vi.fn().mockResolvedValue("1"),
       updateIssueStatus: vi.fn().mockResolvedValue({}),
     };
-    mockOllama = {
+    mockGroq = {
       suggestFix: vi.fn().mockResolvedValue("Try restarting it."),
       isMaintenanceRequest: vi.fn().mockResolvedValue(true),
     };
@@ -30,7 +30,7 @@ describe("MentionHandler", () => {
     };
     handler = createMentionHandler({
       sheetsService: mockSheets,
-      ollamaService: mockOllama,
+      groqService: mockGroq,
       dedupService: mockDedup,
       channelId: "C123",
     });
@@ -243,7 +243,7 @@ describe("MentionHandler", () => {
   });
 
   it("asks for clarification when message is not a maintenance request", async () => {
-    mockOllama.isMaintenanceRequest.mockResolvedValue(false);
+    mockGroq.isMaintenanceRequest.mockResolvedValue(false);
 
     await handler({
       event: { channel: "C123", text: "<@U_BOT> what's for lunch today?", user: "U1", ts: "1" },
@@ -267,7 +267,7 @@ describe("MentionHandler", () => {
       client: mockClient,
     });
 
-    expect(mockOllama.isMaintenanceRequest).not.toHaveBeenCalled();
+    expect(mockGroq.isMaintenanceRequest).not.toHaveBeenCalled();
     expect(mockSheets.appendIssue).toHaveBeenCalled();
   });
 

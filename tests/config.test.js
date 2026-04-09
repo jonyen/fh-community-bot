@@ -9,6 +9,7 @@ describe("loadConfig", () => {
     GOOGLE_CLIENT_ID: "test-client-id",
     GOOGLE_CLIENT_SECRET: "test-client-secret",
     GOOGLE_REFRESH_TOKEN: "test-refresh-token",
+    GROQ_API_KEY: "gsk_test-key",
   };
 
   let originalEnv;
@@ -32,7 +33,7 @@ describe("loadConfig", () => {
     expect(config.googleClientId).toBe("test-client-id");
     expect(config.googleClientSecret).toBe("test-client-secret");
     expect(config.googleRefreshToken).toBe("test-refresh-token");
-    expect(config.ollamaBaseUrl).toBe("http://localhost:11434/v1");
+    expect(config.groqApiKey).toBe("gsk_test-key");
   });
 
   it("uses defaults for optional vars", async () => {

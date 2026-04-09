@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import OpenAI from "openai";
 import { loadConfig } from "./config.js";
 import { createSheetsService } from "./services/sheets.js";
-import { createOllamaService } from "./services/ollama.js";
+import { createGroqService } from "./services/groq.js";
 import { createDedupService } from "./services/dedup.js";
 import { createMentionHandler } from "./events/mention.js";
 import { createWeeklyDigest } from "./jobs/weekly-digest.js";
@@ -27,20 +27,20 @@ oauth2Client.setCredentials({ refresh_token: config.googleRefreshToken });
 const sheetsClient = google.sheets({ version: "v4", auth: oauth2Client });
 const sheetsService = createSheetsService(sheetsClient, config.googleSheetId);
 
-// Ollama client (OpenAI-compatible local API)
-const ollamaClient = new OpenAI({
-  baseURL: config.ollamaBaseUrl,
-  apiKey: "ollama",
+// Groq client (OpenAI-compatible API)
+const groqClient = new OpenAI({
+  baseURL: "https://api.groq.com/openai/v1",
+  apiKey: config.groqApiKey,
 });
-const ollamaService = createOllamaService(ollamaClient);
+const groqService = createGroqService(groqClient);
 
 // Dedup service
-const dedupService = createDedupService(ollamaService);
+const dedupService = createDedupService(groqService);
 
 // Register event handler
 const mentionHandler = createMentionHandler({
   sheetsService,
-  ollamaService,
+  groqService,
   dedupService,
   channelId: config.slackChannelId,
 });
@@ -49,7 +49,7 @@ app.event("app_mention", mentionHandler);
 // Schedule weekly digest
 const weeklyDigest = createWeeklyDigest({
   sheetsService,
-  ollamaService,
+  groqService,
   slackClient: app.client,
   channelId: config.slackChannelId,
 });
