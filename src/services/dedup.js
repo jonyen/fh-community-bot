@@ -19,7 +19,7 @@ function keywordOverlap(a, b) {
 
 const KEYWORD_THRESHOLD = 0.5;
 
-export function createDedupService(ollamaService) {
+export function createDedupService(groqService) {
   async function findDuplicate(newDescription, openIssues) {
     if (openIssues.length === 0) return null;
 
@@ -40,7 +40,7 @@ export function createDedupService(ollamaService) {
 
     // Pass 2: AI check (last 20)
     const recent = openIssues.slice(-20);
-    const matchedId = await ollamaService.checkDuplicate(newDescription, recent);
+    const matchedId = await groqService.checkDuplicate(newDescription, recent);
     if (matchedId) {
       return { id: matchedId, confident: false };
     }

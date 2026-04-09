@@ -6,6 +6,7 @@ const REQUIRED = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REFRESH_TOKEN",
+  "GROQ_API_KEY",
 ];
 
 export function loadConfig() {
@@ -23,7 +24,7 @@ export function loadConfig() {
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN,
-    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1",
+    groqApiKey: process.env.GROQ_API_KEY,
     weeklyDigestCron: process.env.WEEKLY_DIGEST_CRON || "0 9 * * 1",
     timezone: process.env.TIMEZONE || "UTC",
   };
