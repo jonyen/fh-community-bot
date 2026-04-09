@@ -244,7 +244,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     if (!forceCreate) {
       console.log("[mention] classifying...");
       const isMaintenance = await groqService.isMaintenanceRequest(issueDescription);
-      console.log("[mention] isMaintenance=", isMaintenance);
+      console.log("[mention] isMaintenance =", isMaintenance);
       if (!isMaintenance) {
         await say({
           text: "I'm not sure that's a maintenance request. Could you describe a specific facilities or maintenance issue you'd like to report? For example: a broken fixture, a leak, or something that needs repair.",
