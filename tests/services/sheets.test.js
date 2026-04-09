@@ -30,6 +30,7 @@ describe("SheetsService", () => {
           values: [
             ["4/1/2026", "Alice", "Lobby printer jammed", "High", "5", "Bob", "Open", ""],
             ["4/2/2026", "Charlie", "AC broken in room 3", "Medium", "3", "Dave", "Completed", "Fixed"],
+            ["4/3/2026", "Eve", "Elevator stuck on floor 2", "Low", "1", "Frank", "Done", ""],
           ],
         },
       });

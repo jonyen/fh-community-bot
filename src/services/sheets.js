@@ -34,7 +34,7 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
 
   async function getOpenIssues() {
     const all = await getAllIssues();
-    return all.filter((issue) => issue.status.toLowerCase() !== "resolved" && issue.status.toLowerCase() !== "completed");
+    return all.filter((issue) => issue.status.toLowerCase() !== "resolved" && issue.status.toLowerCase() !== "completed" && issue.status.toLowerCase() !== "done");
   }
 
   async function getSheetId() {
