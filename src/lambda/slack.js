@@ -44,7 +44,6 @@ const issueProcessor = createIssueProcessor({
   groqService,
   dedupService,
   conversationService,
-  spreadsheetId: config.googleSheetId,
 });
 
 // Slack client

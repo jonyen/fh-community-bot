@@ -10,7 +10,7 @@ export function extractSeverity(text) {
 
 const VALID_SEVERITIES = ["minor", "medium", "critical"];
 
-export function createIssueProcessor({ sheetsService, groqService, dedupService, conversationService, spreadsheetId }) {
+export function createIssueProcessor({ sheetsService, groqService, dedupService, conversationService }) {
   async function processNewReport({ description, reporterName, conversationKey, severity: passedSeverity, forceCreate }) {
     // Extract inline severity from description
     const extracted = extractSeverity(description);

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSlackHandler } from "../../src/handlers/slack.js";
 
@@ -283,6 +284,81 @@ describe("createSlackHandler", () => {
         text: expect.stringContaining("not sure that's a maintenance request"),
       })
     );
+  });
+
+  describe("signature verification", () => {
+    const secret = "test-signing-secret";
+    let secureHandler;
+
+    function makeSignedEvent(bodyObj, overrides = {}) {
+      const bodyStr = JSON.stringify(bodyObj);
+      const timestamp = overrides.timestamp || String(Math.floor(Date.now() / 1000));
+      const sigBasestring = `v0:${timestamp}:${bodyStr}`;
+      const signature = "v0=" + crypto.createHmac("sha256", secret).update(sigBasestring).digest("hex");
+      return {
+        body: bodyStr,
+        headers: {
+          "x-slack-request-timestamp": overrides.timestamp || timestamp,
+          "x-slack-signature": overrides.signature || signature,
+        },
+      };
+    }
+
+    beforeEach(() => {
+      secureHandler = createSlackHandler({
+        issueProcessor,
+        conversationService,
+        slackClient,
+        sheetsService,
+        channelId,
+        spreadsheetId,
+        signingSecret: secret,
+      });
+    });
+
+    it("rejects requests with wrong signature", async () => {
+      const event = makeSignedEvent(
+        { type: "event_callback", event: { channel: channelId, user: "U123", text: "hello", ts: "123.456" } },
+        { signature: "v0=invalidsignaturevalue" }
+      );
+      const result = await secureHandler(event);
+
+      expect(result.statusCode).toBe(401);
+      expect(result.body).toBe("Invalid signature");
+    });
+
+    it("rejects requests with missing signature headers", async () => {
+      const event = {
+        body: JSON.stringify({ type: "event_callback" }),
+        headers: {},
+      };
+      const result = await secureHandler(event);
+
+      expect(result.statusCode).toBe(401);
+      expect(result.body).toBe("Missing signature headers");
+    });
+
+    it("rejects requests with old timestamp", async () => {
+      const oldTimestamp = String(Math.floor(Date.now() / 1000) - 600);
+      const event = makeSignedEvent(
+        { type: "event_callback", event: { channel: channelId, user: "U123", text: "hello", ts: "123.456" } },
+        { timestamp: oldTimestamp }
+      );
+      const result = await secureHandler(event);
+
+      expect(result.statusCode).toBe(401);
+      expect(result.body).toBe("Request too old");
+    });
+
+    it("accepts requests with valid signature", async () => {
+      const event = makeSignedEvent({
+        type: "event_callback",
+        event: { channel: channelId, user: "U123", text: "<@BOT> printer broken", ts: "123.456" },
+      });
+      const result = await secureHandler(event);
+
+      expect(result.statusCode).toBe(200);
+    });
   });
 
   it("handles CC for medium/critical severity", async () => {

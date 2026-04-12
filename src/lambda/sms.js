@@ -52,7 +52,6 @@ const issueProcessor = createIssueProcessor({
   groqService,
   dedupService,
   conversationService,
-  spreadsheetId: config.googleSheetId,
 });
 
 // Handler

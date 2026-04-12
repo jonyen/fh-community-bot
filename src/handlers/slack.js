@@ -28,26 +28,38 @@ function findMatchingIssues(description, openIssues) {
 
 export function createSlackHandler({ issueProcessor, conversationService, slackClient, sheetsService, channelId, spreadsheetId, signingSecret }) {
   return async function handleSlackEvent(apiGatewayEvent) {
+    // 1. Signature verification (must come before any request handling)
+    if (signingSecret) {
+      const timestamp = apiGatewayEvent.headers["x-slack-request-timestamp"];
+      const slackSignature = apiGatewayEvent.headers["x-slack-signature"];
+
+      if (!timestamp || !slackSignature) {
+        return { statusCode: 401, body: "Missing signature headers" };
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - Number(timestamp)) > 300) {
+        return { statusCode: 401, body: "Request too old" };
+      }
+
+      const sigBasestring = `v0:${timestamp}:${apiGatewayEvent.body}`;
+      const mySignature = "v0=" + crypto.createHmac("sha256", signingSecret).update(sigBasestring).digest("hex");
+      const expected = Buffer.from(mySignature);
+      const actual = Buffer.from(slackSignature);
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+        return { statusCode: 401, body: "Invalid signature" };
+      }
+    }
+
     const body = JSON.parse(apiGatewayEvent.body);
 
-    // 1. URL verification challenge
+    // 2. URL verification challenge
     if (body.type === "url_verification") {
       return {
         statusCode: 200,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ challenge: body.challenge }),
       };
-    }
-
-    // 2. Signature verification
-    if (signingSecret) {
-      const timestamp = apiGatewayEvent.headers["x-slack-request-timestamp"];
-      const slackSignature = apiGatewayEvent.headers["x-slack-signature"];
-      const sigBasestring = `v0:${timestamp}:${apiGatewayEvent.body}`;
-      const mySignature = "v0=" + crypto.createHmac("sha256", signingSecret).update(sigBasestring).digest("hex");
-      if (mySignature !== slackSignature) {
-        return { statusCode: 401, body: "Invalid signature" };
-      }
     }
 
     // 3. Non-event_callback

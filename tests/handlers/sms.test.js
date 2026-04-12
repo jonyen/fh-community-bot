@@ -140,6 +140,31 @@ describe("createSmsHandler", () => {
     );
   });
 
+  it("handles malformed SNS payload gracefully", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await handleSms({ Records: [{ Sns: { Message: "not-valid-json" } }] });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Failed to parse SNS message:",
+      expect.any(String)
+    );
+    expect(pinpointService.sendSms).not.toHaveBeenCalled();
+    expect(issueProcessor.processNewReport).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("handles missing Records gracefully", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await handleSms({});
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Failed to parse SNS message:",
+      expect.any(String)
+    );
+    expect(pinpointService.sendSms).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
   it("sends prompt when body is empty", async () => {
     await handleSms(snsEvent("   "));
 

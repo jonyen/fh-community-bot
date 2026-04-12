@@ -66,7 +66,6 @@ describe("createIssueProcessor", () => {
       groqService,
       dedupService,
       conversationService,
-      spreadsheetId: "sheet-id",
     });
   });
 

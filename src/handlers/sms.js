@@ -1,9 +1,15 @@
 export function createSmsHandler({ issueProcessor, conversationService, pinpointService }) {
   async function handleSms(event) {
-    const record = event.Records[0];
-    const message = JSON.parse(record.Sns.Message);
-    const phoneNumber = message.originationNumber;
-    const body = (message.messageBody || "").trim();
+    let phoneNumber, body;
+    try {
+      const record = event.Records[0];
+      const message = JSON.parse(record.Sns.Message);
+      phoneNumber = message.originationNumber;
+      body = (message.messageBody || "").trim();
+    } catch (err) {
+      console.error("Failed to parse SNS message:", err.message);
+      return;
+    }
     const conversationKey = `SMS#${phoneNumber}`;
 
     // Empty body
