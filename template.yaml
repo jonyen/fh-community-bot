@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: FH Maintenance Bot - Slack + SMS
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        SLACK_BOT_TOKEN: !Ref SlackBotToken
+        SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+        SLACK_CHANNEL_ID: !Ref SlackChannelId
+        GOOGLE_SHEET_ID: !Ref GoogleSheetId
+        GOOGLE_CLIENT_ID: !Ref GoogleClientId
+        GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+        GOOGLE_REFRESH_TOKEN: !Ref GoogleRefreshToken
+        GROQ_API_KEY: !Ref GroqApiKey
+        DYNAMODB_TABLE: !Ref ConversationsTable
+        PINPOINT_APP_ID: !Ref PinpointAppId
+        PINPOINT_NUMBER: !Ref PinpointNumber
+
+Parameters:
+  SlackBotToken:
+    Type: String
+    NoEcho: true
+  SlackSigningSecret:
+    Type: String
+    NoEcho: true
+  SlackChannelId:
+    Type: String
+  GoogleSheetId:
+    Type: String
+  GoogleClientId:
+    Type: String
+    NoEcho: true
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+  GoogleRefreshToken:
+    Type: String
+    NoEcho: true
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+  PinpointAppId:
+    Type: String
+  PinpointNumber:
+    Type: String
+
+Resources:
+  ConversationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: maintenance-bot-conversations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  SlackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/slack.handler
+      Events:
+        SlackEvents:
+          Type: Api
+          Properties:
+            Path: /slack/events
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+
+  SmsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/sms.handler
+      Events:
+        SmsInbound:
+          Type: SNS
+          Properties:
+            Topic: !Ref SmsTopic
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - mobiletargeting:SendMessages
+              Resource: !Sub "arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${PinpointAppId}/*"
+
+  SmsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: maintenance-bot-sms-inbound
+
+Outputs:
+  SlackApiUrl:
+    Description: Slack Events API endpoint
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/slack/events"
+  SmsTopicArn:
+    Description: SNS topic ARN for Pinpoint SMS routing
+    Value: !Ref SmsTopic
