@@ -1,23 +1,19 @@
 {
   "name": "fh-maintenance-bot",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs"
-  },
-  "scripts": {
-    "start": "pm2 start ecosystem.config.cjs",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "version": "2.0.0",
+  "description": "Maintenance bot with Slack + SMS channels on AWS Lambda",
   "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "deploy": "sam build && sam deploy",
+    "validate": "sam validate"
+  },
   "dependencies": {
-    "@slack/bolt": "^4.7.0",
-    "dotenv": "^17.4.1",
+    "@aws-sdk/client-dynamodb": "^3.1029.0",
+    "@aws-sdk/client-pinpoint": "^3.1029.0",
+    "@aws-sdk/lib-dynamodb": "^3.1029.0",
+    "@slack/web-api": "^7.15.0",
     "googleapis": "^171.4.0",
     "openai": "^6.33.0"
   },
