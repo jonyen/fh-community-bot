@@ -1,12 +1,19 @@
 const REQUIRED = [
   "SLACK_BOT_TOKEN",
-  "SLACK_CHANNEL_ID",
+  "SLACK_CHANNEL_IDS",
   "GOOGLE_SHEET_ID",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REFRESH_TOKEN",
   "GROQ_API_KEY",
 ];
+
+function parseChannelIds(raw) {
+  return (raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
 
 export function loadConfig() {
   for (const key of REQUIRED) {
@@ -18,7 +25,7 @@ export function loadConfig() {
   return {
     slackBotToken: process.env.SLACK_BOT_TOKEN,
     slackSigningSecret: process.env.SLACK_SIGNING_SECRET || "",
-    slackChannelId: process.env.SLACK_CHANNEL_ID,
+    slackChannelIds: parseChannelIds(process.env.SLACK_CHANNEL_IDS),
     googleSheetId: process.env.GOOGLE_SHEET_ID,
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,

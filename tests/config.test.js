@@ -4,7 +4,7 @@ describe("loadConfig", () => {
   const VALID_ENV = {
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "signing-secret-test",
-    SLACK_CHANNEL_ID: "C123",
+    SLACK_CHANNEL_IDS: "C123",
     GOOGLE_SHEET_ID: "sheet-id",
     GOOGLE_CLIENT_ID: "test-client-id",
     GOOGLE_CLIENT_SECRET: "test-client-secret",
@@ -29,7 +29,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.slackBotToken).toBe("xoxb-test");
     expect(config.slackSigningSecret).toBe("signing-secret-test");
-    expect(config.slackChannelId).toBe("C123");
+    expect(config.slackChannelIds).toEqual(["C123"]);
     expect(config.googleSheetId).toBe("sheet-id");
     expect(config.googleClientId).toBe("test-client-id");
     expect(config.googleClientSecret).toBe("test-client-secret");
@@ -76,6 +76,33 @@ describe("loadConfig", () => {
     expect(config.pinpointAppId).toBe("");
     expect(config.pinpointNumber).toBe("");
     expect(config.slackSigningSecret).toBe("signing-secret-test");
+  });
+
+  it("parses SLACK_CHANNEL_IDS as a comma-separated list, trimming whitespace", async () => {
+    Object.assign(process.env, VALID_ENV, {
+      SLACK_CHANNEL_IDS: " C123 , C456,C789 ",
+    });
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.slackChannelIds).toEqual(["C123", "C456", "C789"]);
+  });
+
+  it("parses a single channel ID into a one-element array", async () => {
+    Object.assign(process.env, VALID_ENV, {
+      SLACK_CHANNEL_IDS: "C999",
+    });
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.slackChannelIds).toEqual(["C999"]);
+  });
+
+  it("drops empty entries from SLACK_CHANNEL_IDS", async () => {
+    Object.assign(process.env, VALID_ENV, {
+      SLACK_CHANNEL_IDS: "C123,,C456,",
+    });
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.slackChannelIds).toEqual(["C123", "C456"]);
   });
 
   it("SLACK_APP_TOKEN is no longer required", async () => {
