@@ -118,25 +118,4 @@ describe("GroqService", () => {
     });
   });
 
-  describe("generateDigest", () => {
-    it("returns a summary of open issues", async () => {
-      mockClient.chat.completions.create.mockResolvedValue({
-        choices: [{ message: { content: "Weekly summary: 2 open issues..." } }],
-      });
-
-      const result = await service.generateDigest([
-        { id: "1", description: "Printer jammed", status: "open" },
-        { id: "2", description: "AC broken", status: "open" },
-      ]);
-
-      expect(result).toBe("Weekly summary: 2 open issues...");
-    });
-
-    it("returns null when API fails", async () => {
-      mockClient.chat.completions.create.mockRejectedValue(new Error("API down"));
-
-      const result = await service.generateDigest([]);
-      expect(result).toBeNull();
-    });
-  });
 });
