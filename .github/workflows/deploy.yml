@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM build
+        run: sam build
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              SlackBotToken=${{ secrets.SLACK_BOT_TOKEN }} \
+              SlackSigningSecret=${{ secrets.SLACK_SIGNING_SECRET }} \
+              SlackChannelIds=${{ vars.SLACK_CHANNEL_IDS }} \
+              GoogleSheetId=${{ vars.GOOGLE_SHEET_ID }} \
+              GoogleClientId=${{ secrets.GOOGLE_CLIENT_ID }} \
+              GoogleClientSecret=${{ secrets.GOOGLE_CLIENT_SECRET }} \
+              GoogleRefreshToken=${{ secrets.GOOGLE_REFRESH_TOKEN }} \
+              GroqApiKey=${{ secrets.GROQ_API_KEY }} \
+              PinpointAppId=${{ vars.PINPOINT_APP_ID }} \
+              PinpointNumber=${{ vars.PINPOINT_NUMBER }}
