@@ -55,7 +55,7 @@ const handler = createSlackHandler({
   conversationService,
   slackClient,
   sheetsService,
-  channelId: config.slackChannelId,
+  channelIds: config.slackChannelIds,
   spreadsheetId: config.googleSheetId,
   signingSecret: config.slackSigningSecret,
 });

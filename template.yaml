@@ -11,7 +11,7 @@ Globals:
       Variables:
         SLACK_BOT_TOKEN: !Ref SlackBotToken
         SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-        SLACK_CHANNEL_ID: !Ref SlackChannelId
+        SLACK_CHANNEL_IDS: !Ref SlackChannelIds
         GOOGLE_SHEET_ID: !Ref GoogleSheetId
         GOOGLE_CLIENT_ID: !Ref GoogleClientId
         GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
@@ -28,8 +28,9 @@ Parameters:
   SlackSigningSecret:
     Type: String
     NoEcho: true
-  SlackChannelId:
+  SlackChannelIds:
     Type: String
+    Description: Comma-separated list of Slack channel IDs
   GoogleSheetId:
     Type: String
   GoogleClientId:
