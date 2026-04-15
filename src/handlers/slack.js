@@ -26,7 +26,7 @@ function findMatchingIssues(description, openIssues) {
     .sort((a, b) => b.score - a.score);
 }
 
-export function createSlackHandler({ issueProcessor, conversationService, slackClient, sheetsService, channelId, spreadsheetId, signingSecret }) {
+export function createSlackHandler({ issueProcessor, conversationService, slackClient, sheetsService, channelIds, spreadsheetId, signingSecret }) {
   return async function handleSlackEvent(apiGatewayEvent) {
     // 1. Signature verification (must come before any request handling)
     if (signingSecret) {
@@ -70,7 +70,7 @@ export function createSlackHandler({ issueProcessor, conversationService, slackC
     const event = body.event;
 
     // 4. Filter: wrong channel, bot messages, subtypes
-    if (event.channel !== channelId || event.bot_id || event.subtype) {
+    if (!channelIds.includes(event.channel) || event.bot_id || event.subtype) {
       return { statusCode: 200, body: "ok" };
     }
 

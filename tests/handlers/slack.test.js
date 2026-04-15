@@ -49,7 +49,7 @@ describe("createSlackHandler", () => {
       conversationService,
       slackClient,
       sheetsService,
-      channelId,
+      channelIds: [channelId],
       spreadsheetId,
       signingSecret: "",
     });
@@ -310,7 +310,7 @@ describe("createSlackHandler", () => {
         conversationService,
         slackClient,
         sheetsService,
-        channelId,
+        channelIds: [channelId],
         spreadsheetId,
         signingSecret: secret,
       });
@@ -359,6 +359,46 @@ describe("createSlackHandler", () => {
 
       expect(result.statusCode).toBe(200);
     });
+  });
+
+  it("processes events from any of multiple configured channels", async () => {
+    handler = createSlackHandler({
+      issueProcessor,
+      conversationService: conversationService,
+      slackClient: slackClient,
+      sheetsService: sheetsService,
+      channelIds: ["C123", "C456"],
+      spreadsheetId: "sheet-id",
+      signingSecret: "",
+    });
+
+    await handler(makeSlackEvent({
+      type: "app_mention",
+      channel: "C123",
+      text: "<@UBOT> lobby printer jammed",
+      user: "U1",
+      ts: "1",
+    }));
+    expect(issueProcessor.processNewReport).toHaveBeenCalledTimes(1);
+
+    await handler(makeSlackEvent({
+      type: "app_mention",
+      channel: "C456",
+      text: "<@UBOT> water leak in bathroom",
+      user: "U2",
+      ts: "2",
+    }));
+    expect(issueProcessor.processNewReport).toHaveBeenCalledTimes(2);
+
+    issueProcessor.processNewReport.mockClear();
+    await handler(makeSlackEvent({
+      type: "app_mention",
+      channel: "C999",
+      text: "<@UBOT> something broke",
+      user: "U3",
+      ts: "3",
+    }));
+    expect(issueProcessor.processNewReport).not.toHaveBeenCalled();
   });
 
   it("handles CC for medium/critical severity", async () => {
