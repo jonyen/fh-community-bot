@@ -1,0 +1,48 @@
+import { WebClient } from "@slack/web-api";
+import { google } from "googleapis";
+import OpenAI from "openai";
+import { loadConfig } from "../config.js";
+import { createSheetsService } from "../services/sheets.js";
+import { createGroqService } from "../services/groq.js";
+import { createDedupService } from "../services/dedup.js";
+import { createMentionHandler } from "../events/mention.js";
+
+let cached;
+
+export function getDeps() {
+  if (cached) return cached;
+
+  const config = loadConfig();
+
+  const slack = new WebClient(config.slackBotToken);
+
+  const oauth2Client = new google.auth.OAuth2(
+    config.googleClientId,
+    config.googleClientSecret
+  );
+  oauth2Client.setCredentials({ refresh_token: config.googleRefreshToken });
+  const sheetsClient = google.sheets({ version: "v4", auth: oauth2Client });
+  const sheetsService = createSheetsService(sheetsClient, config.googleSheetId);
+
+  const groqClient = new OpenAI({
+    baseURL: "https://api.groq.com/openai/v1",
+    apiKey: config.groqApiKey,
+  });
+  const groqService = createGroqService(groqClient);
+  const dedupService = createDedupService(groqService);
+
+  const handler = createMentionHandler({
+    sheetsService,
+    groqService,
+    dedupService,
+    channelId: config.slackChannelId,
+    spreadsheetId: config.googleSheetId,
+  });
+
+  cached = { client: slack, handler };
+  return cached;
+}
+
+export function _resetForTests() {
+  cached = undefined;
+}
