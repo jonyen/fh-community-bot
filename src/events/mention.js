@@ -40,7 +40,7 @@ function extractSeverity(text) {
   return { description, severity };
 }
 
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelId, spreadsheetId }) {
+export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId }) {
   // Pending issues waiting for severity reply, keyed by thread_ts
   const pendingIssues = new Map();
   // Created issues, keyed by thread_ts → row ID
@@ -49,7 +49,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
 
-    if (event.channel !== channelId) return;
+    if (!channelIds.has(event.channel)) return;
 
     // Acknowledge receipt immediately
     try {

@@ -53,7 +53,7 @@ jobs:
             --parameter-overrides \
               SlackBotToken="${{ secrets.SLACK_BOT_TOKEN }}" \
               SlackSigningSecret="${{ secrets.SLACK_SIGNING_SECRET }}" \
-              SlackChannelId="${{ vars.SLACK_CHANNEL_ID }}" \
+              SlackChannelIds="${{ vars.SLACK_CHANNEL_IDS }}" \
               GoogleSheetId="${{ vars.GOOGLE_SHEET_ID }}" \
               GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
