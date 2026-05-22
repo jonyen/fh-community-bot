@@ -4,64 +4,65 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 
 ## Features
 
-- **Issue reporting** via Slack @mentions -- automatically logged to Google Sheets
-- **Duplicate detection** -- two-pass strategy using keyword matching + LLM verification
-- **Fix suggestions** -- AI-powered quick-fix recommendations for common issues
-- **Issue management** -- list open issues, close/resolve by ID or description
+- **Issue reporting** via Slack @mentions — automatically logged to Google Sheets
+- **Duplicate detection** — two-pass strategy using keyword matching + LLM verification
+- **Fix suggestions** — AI-powered quick-fix recommendations for common issues
+- **Issue management** — list open issues, close/resolve by ID or description
+
+## Architecture
+
+```
+Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
+                        │
+                        ▼
+                  EventQueue (SQS) ──▶ WorkerFn (Lambda)
+                                              │
+                                              ▼
+                              Groq · Google Sheets · Slack Web API
+```
+
+Two AWS Lambdas. SQS in between for the 3-second Slack ack budget. No VPC, no database.
 
 ## Tech Stack
 
-- [Slack Bolt](https://slack.dev/bolt-js/) (Socket Mode) for event handling
-- [Google Sheets API](https://developers.google.com/sheets/api) for issue storage
-- [Groq](https://groq.com/) (Llama 3.3 70B) for AI features
+- AWS Lambda (Node 22, arm64), SQS, CloudWatch Logs
+- AWS SAM for IaC
+- GitHub Actions + OIDC for deploys
+- [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
+- [Google Sheets API](https://developers.google.com/sheets/api)
+- [Groq](https://groq.com/) (Llama 3.3 70B)
 
 ## Setup
 
-### Prerequisites
+See [`docs/aws-bootstrap.md`](docs/aws-bootstrap.md) for the one-time bootstrap runbook.
 
-- Node.js 20+
-- A Slack app with Bot Token and App-Level Token (Socket Mode enabled)
-- A Google Cloud project with Sheets API enabled and OAuth2 credentials
-- A Groq API key (get one at https://console.groq.com/)
+After bootstrap, deploys happen automatically on push to `main`.
 
-### Installation
+### Local development
 
 ```bash
 npm install
-cp .env.example .env
-# Edit .env with your credentials
+cp .env.example .env  # fill in secrets
+npm test
 ```
 
-### Environment Variables
+### Required environment variables (for local tests / `sam local`)
 
-| Variable | Required | Description |
-|---|---|---|
-| `SLACK_BOT_TOKEN` | Yes | Bot OAuth token (`xoxb-...`) |
-| `SLACK_APP_TOKEN` | Yes | App-level token for Socket Mode (`xapp-...`) |
-| `SLACK_CHANNEL_ID` | Yes | Channel ID for maintenance requests |
-| `GOOGLE_SHEET_ID` | Yes | Spreadsheet ID for issue storage |
-| `GOOGLE_CLIENT_ID` | Yes | Google OAuth2 client ID |
-| `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth2 client secret |
-| `GOOGLE_REFRESH_TOKEN` | Yes | Google OAuth2 refresh token |
-| `GROQ_API_KEY` | Yes | Groq API key (`gsk_...`) |
+| Variable | Description |
+|---|---|
+| `SLACK_BOT_TOKEN` | Bot OAuth token (`xoxb-...`) |
+| `SLACK_SIGNING_SECRET` | Slack app signing secret |
+| `SLACK_CHANNEL_ID` | Channel ID for maintenance requests |
+| `GOOGLE_SHEET_ID` | Spreadsheet ID |
+| `GOOGLE_CLIENT_ID` | Google OAuth2 client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
+| `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token |
+| `GROQ_API_KEY` | Groq API key (`gsk_...`) |
 
 To generate a Google refresh token:
 
 ```bash
 node scripts/get-google-token.js <client_id> <client_secret>
-```
-
-### Running
-
-```bash
-npm start
-```
-
-### Testing
-
-```bash
-npm test
-npm run test:watch
 ```
 
 ## Usage
@@ -76,19 +77,22 @@ In the configured Slack channel:
 | `@bot close <description>` | Resolve an issue by description |
 | `@bot create new: <description>` | Force-create, bypassing duplicate detection |
 
-## Project Structure
+## Project structure
 
 ```
 src/
-  app.js              # Entry point, Bolt app initialization
-  config.js           # Environment config loading & validation
-  events/
-    mention.js        # @mention handler (triage, commands)
-  services/
-    sheets.js         # Google Sheets CRUD
-    groq.js           # LLM client (suggestions, dedup, digest)
-    dedup.js          # Duplicate detection logic
-tests/                # Vitest test suite
-scripts/
-  get-google-token.js # OAuth2 token generation utility
+  config.js                  # env loading
+  events/mention.js          # @mention business logic (Slack-runtime-agnostic)
+  services/sheets.js         # Google Sheets CRUD
+  services/groq.js           # LLM client
+  services/dedup.js          # duplicate detection
+  lambda/
+    receiver.js              # entry: verify Slack sig, enqueue to SQS
+    worker.js                # entry: SQS → dispatch
+    dispatch.js              # SQS record → (event, say, client) → mention handler
+    clients.js               # cold-start dep wiring
+    slack-signature.js       # HMAC verification
+template.yaml                # SAM
+samconfig.toml               # SAM defaults
+.github/workflows/deploy.yml # CI/CD
 ```

@@ -1,0 +1,61 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM build
+        run: sam build
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              SlackBotToken="${{ secrets.SLACK_BOT_TOKEN }}" \
+              SlackSigningSecret="${{ secrets.SLACK_SIGNING_SECRET }}" \
+              SlackChannelId="${{ vars.SLACK_CHANNEL_ID }}" \
+              GoogleSheetId="${{ vars.GOOGLE_SHEET_ID }}" \
+              GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
+              GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+              GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
+              GroqApiKey="${{ secrets.GROQ_API_KEY }}"
