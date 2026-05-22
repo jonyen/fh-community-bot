@@ -1,6 +1,8 @@
+// SLACK_SIGNING_SECRET is required only by the receiver Lambda, which reads
+// process.env directly and never calls loadConfig(). The worker (which does
+// call loadConfig via clients.js) has no use for it.
 const REQUIRED = [
   "SLACK_BOT_TOKEN",
-  "SLACK_SIGNING_SECRET",
   "SLACK_CHANNEL_IDS",
   "GOOGLE_SHEET_ID",
   "GOOGLE_CLIENT_ID",
