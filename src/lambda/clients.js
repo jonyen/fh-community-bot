@@ -35,7 +35,7 @@ export function getDeps() {
     sheetsService,
     groqService,
     dedupService,
-    channelId: config.slackChannelId,
+    channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
   });
 

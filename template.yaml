@@ -5,7 +5,7 @@ Description: fh-maintenance-bot — Slack Events API receiver + SQS-driven worke
 Parameters:
   SlackBotToken:        { Type: String, NoEcho: true }
   SlackSigningSecret:   { Type: String, NoEcho: true }
-  SlackChannelId:       { Type: String }
+  SlackChannelIds:      { Type: CommaDelimitedList }
   GoogleSheetId:        { Type: String }
   GoogleClientId:       { Type: String, NoEcho: true }
   GoogleClientSecret:   { Type: String, NoEcho: true }
@@ -64,7 +64,7 @@ Resources:
       Environment:
         Variables:
           SLACK_BOT_TOKEN:        !Ref SlackBotToken
-          SLACK_CHANNEL_ID:       !Ref SlackChannelId
+          SLACK_CHANNEL_IDS:      !Join [",", !Ref SlackChannelIds]
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
