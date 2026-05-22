@@ -28,7 +28,7 @@ Resources:
   EventQueue:
     Type: AWS::SQS::Queue
     Properties:
-      VisibilityTimeout: 60
+      VisibilityTimeout: 180
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt EventDLQ.Arn
         maxReceiveCount: 3
@@ -71,7 +71,6 @@ Resources:
       Environment:
         Variables:
           SLACK_BOT_TOKEN:        !Ref SlackBotToken
-          SLACK_SIGNING_SECRET:   !Ref SlackSigningSecret
           SLACK_CHANNEL_ID:       !Ref SlackChannelId
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
