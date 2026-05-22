@@ -39,7 +39,7 @@ describe("MentionHandler", () => {
       sheetsService: mockSheets,
       groqService: mockGroq,
       dedupService: mockDedup,
-      channelId: "C123",
+      channelIds: new Set(["C123"]),
       spreadsheetId: "sheet-id",
     });
   });
