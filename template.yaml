@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: fh-maintenance-bot — Slack Events API receiver + SQS-driven worker
+
+Parameters:
+  SlackBotToken:        { Type: String, NoEcho: true }
+  SlackSigningSecret:   { Type: String, NoEcho: true }
+  SlackChannelId:       { Type: String }
+  GoogleSheetId:        { Type: String }
+  GoogleClientId:       { Type: String, NoEcho: true }
+  GoogleClientSecret:   { Type: String, NoEcho: true }
+  GoogleRefreshToken:   { Type: String, NoEcho: true }
+  GroqApiKey:           { Type: String, NoEcho: true }
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  EventDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  EventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventDLQ.Arn
+        maxReceiveCount: 3
+
+  ReceiverFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/receiver.handler
+      MemorySize: 128
+      Timeout: 10
+      Environment:
+        Variables:
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          EVENT_QUEUE_URL:      !Ref EventQueue
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt EventQueue.QueueName
+
+  ReceiverLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ReceiverFn}
+      RetentionInDays: 14
+
+  WorkerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/worker.handler
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN:        !Ref SlackBotToken
+          SLACK_CHANNEL_ID:       !Ref SlackChannelId
+          GOOGLE_SHEET_ID:        !Ref GoogleSheetId
+          GOOGLE_CLIENT_ID:       !Ref GoogleClientId
+          GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
+          GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
+          GROQ_API_KEY:           !Ref GroqApiKey
+      Events:
+        FromQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventQueue.Arn
+            BatchSize: 1
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WorkerFn}
+      RetentionInDays: 14
+
+Outputs:
+  FunctionUrl:
+    Description: Paste this into the Slack app Event Subscriptions → Request URL
+    Value: !GetAtt ReceiverFnUrl.FunctionUrl
+  EventQueueUrl:
+    Value: !Ref EventQueue
+  EventDLQUrl:
+    Value: !Ref EventDLQ

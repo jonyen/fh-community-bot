@@ -1,2 +1,4 @@
 node_modules/
 .env
+samconfig.local.toml
+.aws-sam/

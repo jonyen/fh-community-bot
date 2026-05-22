@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 describe("loadConfig", () => {
   const VALID_ENV = {
     SLACK_BOT_TOKEN: "xoxb-test",
-    SLACK_APP_TOKEN: "xapp-test",
+    SLACK_SIGNING_SECRET: "sig-test",
     SLACK_CHANNEL_ID: "C123",
     GOOGLE_SHEET_ID: "sheet-id",
     GOOGLE_CLIENT_ID: "test-client-id",
@@ -27,7 +27,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await import("../src/config.js");
     const config = loadConfig();
     expect(config.slackBotToken).toBe("xoxb-test");
-    expect(config.slackAppToken).toBe("xapp-test");
+    expect(config.slackSigningSecret).toBe("sig-test");
     expect(config.slackChannelId).toBe("C123");
     expect(config.googleSheetId).toBe("sheet-id");
     expect(config.googleClientId).toBe("test-client-id");
@@ -36,16 +36,16 @@ describe("loadConfig", () => {
     expect(config.groqApiKey).toBe("gsk_test-key");
   });
 
-  it("uses defaults for optional vars", async () => {
-    Object.assign(process.env, VALID_ENV);
+  it("reads EVENT_QUEUE_URL when set", async () => {
+    Object.assign(process.env, VALID_ENV, { EVENT_QUEUE_URL: "https://sqs.example/q" });
     const { loadConfig } = await import("../src/config.js");
     const config = loadConfig();
-    expect(config.weeklyDigestCron).toBe("0 9 * * 1");
-    expect(config.timezone).toBe("UTC");
+    expect(config.eventQueueUrl).toBe("https://sqs.example/q");
   });
 
   it("throws if a required var is missing", async () => {
     process.env = { ...originalEnv };
+    delete process.env.SLACK_BOT_TOKEN;
     const { loadConfig } = await import("../src/config.js");
     expect(() => loadConfig()).toThrow("Missing required environment variable");
   });
