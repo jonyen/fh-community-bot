@@ -42,14 +42,7 @@ Resources:
       Environment:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-          SLACK_BOT_TOKEN:      !Ref SlackBotToken
           EVENT_QUEUE_URL:      !Ref EventQueue
-          SLACK_CHANNEL_ID:     !Ref SlackChannelId
-          GOOGLE_SHEET_ID:      !Ref GoogleSheetId
-          GOOGLE_CLIENT_ID:     !Ref GoogleClientId
-          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
-          GOOGLE_REFRESH_TOKEN: !Ref GoogleRefreshToken
-          GROQ_API_KEY:         !Ref GroqApiKey
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
