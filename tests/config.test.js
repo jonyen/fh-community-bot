@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 describe("loadConfig", () => {
   const VALID_ENV = {
     SLACK_BOT_TOKEN: "xoxb-test",
-    SLACK_SIGNING_SECRET: "sig-test",
     SLACK_CHANNEL_IDS: "C123",
     GOOGLE_SHEET_ID: "sheet-id",
     GOOGLE_CLIENT_ID: "test-client-id",
@@ -27,7 +26,6 @@ describe("loadConfig", () => {
     const { loadConfig } = await import("../src/config.js");
     const config = loadConfig();
     expect(config.slackBotToken).toBe("xoxb-test");
-    expect(config.slackSigningSecret).toBe("sig-test");
     expect(config.slackChannelIds).toEqual(new Set(["C123"]));
     expect(config.googleSheetId).toBe("sheet-id");
     expect(config.googleClientId).toBe("test-client-id");
