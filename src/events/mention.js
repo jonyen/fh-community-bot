@@ -1,3 +1,5 @@
+import { extractSeverity, SEVERITY_OPTIONS } from "../lib/severity.js";
+
 function stripMention(text) {
   return text.replace(/<@[A-Z0-9_]+>/g, "").trim();
 }
@@ -29,16 +31,6 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-const SEVERITY_OPTIONS = ["minor", "medium", "critical"];
-
-function extractSeverity(text) {
-  // Match patterns like "- critical", "critical priority", "severity: minor", "medium severity", or trailing "critical"
-  const match = text.match(/[\s,\-\|]+(?:severity[:\s]+)?(minor|medium|critical)(?:\s+(?:priority|severity|issue))?\s*$|[\s,\-\|]+(minor|medium|critical)\s+(?:priority|severity)\s*$/i);
-  if (!match) return { description: text, severity: null };
-  const severity = (match[1] || match[2]).toLowerCase().replace(/^./, (c) => c.toUpperCase());
-  const description = text.slice(0, match.index).trim();
-  return { description, severity };
-}
 
 export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId }) {
   const pendingIssues = new Map();
