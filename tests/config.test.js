@@ -54,4 +54,25 @@ describe("loadConfig", () => {
     const { loadConfig } = await import("../src/config.js");
     expect(() => loadConfig()).toThrow("Missing required environment variable");
   });
+
+  it("defaults genderSheetTab to 'Gender Map' and genderCacheTtlDays to 7 when env vars are unset", async () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.GENDER_SHEET_TAB;
+    delete process.env.GENDER_CACHE_TTL_DAYS;
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.genderSheetTab).toBe("Gender Map");
+    expect(config.genderCacheTtlDays).toBe(7);
+  });
+
+  it("honors GENDER_SHEET_TAB and GENDER_CACHE_TTL_DAYS env overrides", async () => {
+    Object.assign(process.env, VALID_ENV, {
+      GENDER_SHEET_TAB: "Roster",
+      GENDER_CACHE_TTL_DAYS: "1",
+    });
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.genderSheetTab).toBe("Roster");
+    expect(config.genderCacheTtlDays).toBe(1);
+  });
 });

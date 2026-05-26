@@ -29,6 +29,9 @@ export function loadConfig() {
     }
   }
 
+  const ttlRaw = process.env.GENDER_CACHE_TTL_DAYS;
+  const genderCacheTtlDays = ttlRaw ? Number(ttlRaw) : 7;
+
   return {
     slackBotToken: process.env.SLACK_BOT_TOKEN,
     slackSigningSecret: process.env.SLACK_SIGNING_SECRET,
@@ -39,5 +42,7 @@ export function loadConfig() {
     googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN,
     groqApiKey: process.env.GROQ_API_KEY,
     eventQueueUrl: process.env.EVENT_QUEUE_URL,
+    genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
+    genderCacheTtlDays,
   };
 }
