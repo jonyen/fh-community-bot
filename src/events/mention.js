@@ -45,11 +45,22 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
   const pendingIssues = new Map();
   // Created issues, keyed by thread_ts → row ID
   const createdIssues = new Map();
+  // Threads where the bot has been @mentioned at least once
+  const engagedThreads = new Set();
 
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
 
     if (!channelIds.has(event.channel)) return;
+
+    const threadKeyEarly = event.thread_ts || event.ts;
+    const hasMention = /<@[A-Z0-9_]+>/.test(event.text || "");
+    if (hasMention) {
+      engagedThreads.add(threadKeyEarly);
+    } else if (event.thread_ts && !engagedThreads.has(threadKeyEarly)) {
+      // Thread reply in a thread the bot was never mentioned in — stay silent
+      return;
+    }
 
     // Acknowledge receipt immediately
     try {
