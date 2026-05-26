@@ -1,4 +1,4 @@
-# fh-maintenance-bot
+# fh-community-bot
 
 A Slack bot for managing facilities maintenance issue reporting and tracking. Mention the bot in a Slack channel to log issues, detect duplicates, and get AI-powered fix suggestions.
 
