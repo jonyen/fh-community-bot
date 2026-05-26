@@ -6,6 +6,8 @@ import { createSheetsService } from "../services/sheets.js";
 import { createGroqService } from "../services/groq.js";
 import { createDedupService } from "../services/dedup.js";
 import { createMentionHandler } from "../events/mention.js";
+import { createGenderMapService } from "../services/genderMap.js";
+import { createGenderHandler } from "../events/gender.js";
 
 let cached;
 
@@ -39,7 +41,15 @@ export function getDeps() {
     spreadsheetId: config.googleSheetId,
   });
 
-  cached = { client: slack, handler };
+  const genderMapService = createGenderMapService({
+    sheetsClient,
+    spreadsheetId: config.googleSheetId,
+    ttlMs: config.genderCacheTtlDays * 24 * 3600 * 1000,
+    tabName: config.genderSheetTab,
+  });
+  const genderHandler = createGenderHandler({ genderMapService });
+
+  cached = { client: slack, handler, genderHandler };
   return cached;
 }
 
