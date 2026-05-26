@@ -461,6 +461,41 @@ describe("MentionHandler", () => {
     expect(mockSheets.appendIssue).toHaveBeenCalled();
   });
 
+  it("ignores thread replies when bot was never mentioned in the thread", async () => {
+    await handler({
+      event: { channel: "C123", type: "message", text: "hey everyone", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSay).not.toHaveBeenCalled();
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+    expect(mockSheets.appendNote).not.toHaveBeenCalled();
+    expect(mockGroq.isMaintenanceRequest).not.toHaveBeenCalled();
+  });
+
+  it("responds to thread replies after a mention in the same thread (even without state)", async () => {
+    // Step 1: bot mentioned for a list command — no pending/created issue state created
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
+    ]);
+    await handler({
+      event: { channel: "C123", type: "app_mention", text: "<@U_BOT> list", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+    mockSay.mockClear();
+
+    // Step 2: thread reply with another command — bot should still respond because thread is engaged
+    await handler({
+      event: { channel: "C123", type: "message", text: "close #5", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
+  });
+
   it("handles sheets failure gracefully", async () => {
     mockSheets.getOpenIssues.mockRejectedValue(new Error("Sheets down"));
 
