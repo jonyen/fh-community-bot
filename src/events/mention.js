@@ -41,12 +41,46 @@ function extractSeverity(text) {
 }
 
 export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId }) {
-  // Pending issues waiting for severity reply, keyed by thread_ts
   const pendingIssues = new Map();
-  // Created issues, keyed by thread_ts → row ID
   const createdIssues = new Map();
-  // Threads where the bot has been @mentioned at least once
   const engagedThreads = new Set();
+  let botUserIdPromise = null;
+
+  async function getBotUserId(client) {
+    if (!botUserIdPromise) {
+      botUserIdPromise = client.auth.test().then((r) => r.user_id).catch((err) => {
+        console.error("auth.test failed:", err.message);
+        botUserIdPromise = null;
+        return null;
+      });
+    }
+    return botUserIdPromise;
+  }
+
+  async function threadHasBotMention(client, channel, threadTs) {
+    const botUserId = await getBotUserId(client);
+    if (!botUserId) return false;
+    const needle = `<@${botUserId}>`;
+    let cursor;
+    try {
+      do {
+        const res = await client.conversations.replies({
+          channel,
+          ts: threadTs,
+          limit: 200,
+          ...(cursor ? { cursor } : {}),
+        });
+        for (const m of res.messages || []) {
+          if ((m.text || "").includes(needle)) return true;
+        }
+        cursor = res.response_metadata?.next_cursor;
+      } while (cursor);
+    } catch (err) {
+      console.error("conversations.replies failed:", err.message);
+      return false;
+    }
+    return false;
+  }
 
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
@@ -58,8 +92,9 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     if (hasMention) {
       engagedThreads.add(threadKeyEarly);
     } else if (event.thread_ts && !engagedThreads.has(threadKeyEarly)) {
-      // Thread reply in a thread the bot was never mentioned in — stay silent
-      return;
+      const engaged = await threadHasBotMention(client, event.channel, event.thread_ts);
+      if (!engaged) return;
+      engagedThreads.add(threadKeyEarly);
     }
 
     // Acknowledge receipt immediately
