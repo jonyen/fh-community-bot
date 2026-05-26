@@ -33,7 +33,7 @@ Port the functionality of `~/Projects/gender-aliases` (Python slack-bolt Socket 
 2. **Data source:** new tab `Gender Map` on the existing `GOOGLE_SHEET_ID`. Reuses OAuth refresh-token auth path; no new secret.
 3. **Triggers:** keep gender-aliases originals (`!bros`/`@sis` and `@`-prefixed variants).
 4. **Cache:** in-memory module-scope only. No disk, no DynamoDB, no S3. TTL 7 days. Refilled on cold start or after `!refresh-genders`.
-5. **Channel scope:** triggers fire in **any channel the bot is a member of**. Does not honor the `SLACK_CHANNEL_IDS` allowlist (which remains gating the maintenance handler).
+5. **Channel scope:** triggers fire in **any channel (public or private) the bot is a member of**. Does not honor the `SLACK_CHANNEL_IDS` allowlist (which remains gating the maintenance handler). DMs are out of scope — the app does not subscribe to `message.im`.
 
 ## Architecture
 
@@ -104,16 +104,18 @@ Two new pieces:
 
 `shouldSkip` itself does not need changes — the gender route runs before `shouldSkip` is consulted.
 
-### Modified: `src/lambda/receiver.js`
+### Modified: `src/lambda/receiver.js` (optional prefilter)
 
-Currently enqueues every event into SQS. To bound queue volume now that we are accepting `message.channels` events:
+Currently enqueues every event. Today this is fine because the app is only subscribed to `app_mention` and thread-related events; once we subscribe to `message.channels`/`message.groups`, every public-channel message in shared channels enqueues an SQS message and a worker invocation, even if `dispatch` immediately drops it.
 
-- If `event.type === 'message'`, enqueue only if its text matches the gender regex (either trigger) **or** the existing mention/thread predicate already used by `shouldSkip` (mention pattern OR `thread_ts` present + not bot + not subtype).
-- Other event types unchanged.
+To bound that volume, add a cheap text-based prefilter in the receiver:
 
-This keeps the receiver as the cheap "drop chatter early" layer, so the SQS+worker path stays low-volume.
+- If `event.type === 'message'`, enqueue only if **(a)** text matches a gender regex (trigger or refresh), **(b)** text contains a `<@U...>` mention, or **(c)** `thread_ts` is present.
+- All other event types unchanged.
 
-**Trade-off acknowledged:** the gender regex now lives in two places (receiver prefilter and dispatch router). Acceptable — both import from a single `src/lib/gender-triggers.js` source of truth.
+The dispatch router remains the authoritative routing layer — the receiver prefilter is a perf optimization, not a correctness boundary.
+
+**Trade-off acknowledged:** the gender regex now lives in two places (receiver prefilter and dispatch router). Both import from a single `src/lib/gender-triggers.js` source of truth.
 
 ### New: `src/lib/gender-triggers.js`
 
