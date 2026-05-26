@@ -34,6 +34,12 @@ describe("MentionHandler", () => {
       users: {
         info: vi.fn().mockResolvedValue({ user: { real_name: "Test User", name: "testuser" } }),
       },
+      auth: {
+        test: vi.fn().mockResolvedValue({ user_id: "U_BOT" }),
+      },
+      conversations: {
+        replies: vi.fn().mockResolvedValue({ messages: [] }),
+      },
     };
     handler = createMentionHandler({
       sheetsService: mockSheets,
@@ -459,6 +465,84 @@ describe("MentionHandler", () => {
     });
 
     expect(mockSheets.appendIssue).toHaveBeenCalled();
+  });
+
+  it("ignores thread replies when bot was never mentioned in the thread", async () => {
+    await handler({
+      event: { channel: "C123", type: "message", text: "hey everyone", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSay).not.toHaveBeenCalled();
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+    expect(mockSheets.appendNote).not.toHaveBeenCalled();
+    expect(mockGroq.isMaintenanceRequest).not.toHaveBeenCalled();
+  });
+
+  it("responds to thread replies after a mention in the same thread (even without state)", async () => {
+    // Step 1: bot mentioned for a list command — no pending/created issue state created
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
+    ]);
+    await handler({
+      event: { channel: "C123", type: "app_mention", text: "<@U_BOT> list", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+    mockSay.mockClear();
+
+    // Step 2: thread reply with another command — bot should still respond because thread is engaged
+    await handler({
+      event: { channel: "C123", type: "message", text: "close #5", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
+  });
+
+  it("recovers engagement after cold start via slack thread lookup", async () => {
+    // Simulates fresh handler instance (cold start). No in-memory engagement.
+    // Thread root has bot mention in history.
+    mockClient.conversations.replies.mockResolvedValue({
+      messages: [
+        { text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+        { text: "How severe is this issue?", user: "U_BOT", ts: "1.1", bot_id: "B1" },
+      ],
+    });
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "5", description: "AC broken", submitter: "Alice", date: recentDate(1), status: "Open" },
+    ]);
+
+    await handler({
+      event: { channel: "C123", type: "message", text: "close #5", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockClient.conversations.replies).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "C123", ts: "1" })
+    );
+    expect(mockSheets.updateIssueStatus).toHaveBeenCalledWith("5", "Resolved");
+  });
+
+  it("stays silent after slack lookup confirms no prior bot mention", async () => {
+    mockClient.conversations.replies.mockResolvedValue({
+      messages: [
+        { text: "hey team", user: "U1", ts: "1" },
+        { text: "what's up", user: "U2", ts: "1.1" },
+      ],
+    });
+
+    await handler({
+      event: { channel: "C123", type: "message", text: "anyone there?", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSay).not.toHaveBeenCalled();
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
   });
 
   it("handles sheets failure gracefully", async () => {
