@@ -84,4 +84,53 @@ describe("receiver.handler", () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
     expect(sendMock.mock.calls[0][0].input.MessageBody).toBe(raw);
   });
+
+  function eventCallback(eventObj) {
+    return JSON.stringify({ type: "event_callback", event: eventObj });
+  }
+
+  it("enqueues a !bros plain message", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = eventCallback({ type: "message", channel: "C1", text: "!bros let's go", user: "U1", ts: "1" });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enqueues a thread reply with no mention", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = eventCallback({ type: "message", channel: "C1", thread_ts: "1", text: "more info", user: "U1" });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enqueues a top-level message with a Slack mention", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = eventCallback({ type: "message", channel: "C1", text: "<@U_BOT> hi", user: "U1", ts: "1" });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops ordinary top-level chatter (no trigger, no mention, no thread)", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = eventCallback({ type: "message", channel: "C1", text: "good morning everyone", user: "U1", ts: "1" });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("always enqueues app_mention events regardless of text", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = eventCallback({ type: "app_mention", channel: "C1", text: "<@U_BOT> hi", user: "U1", ts: "1" });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
 });
