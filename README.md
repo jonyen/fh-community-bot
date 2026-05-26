@@ -77,6 +77,37 @@ In the configured Slack channel:
 | `@bot close <description>` | Resolve an issue by description |
 | `@bot create new: <description>` | Force-create, bypassing duplicate detection |
 
+## Gender Aliases
+
+Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bros` / `@brothers` (pings members mapped to `male`) or `!sis` / `!sisters` / `@sis` / `@sisters` (pings `female`). `!refresh-genders` reloads the map from the sheet.
+
+Triggers fire in any public or private channel the bot is a member of. They do **not** honor `SLACK_CHANNEL_IDS` (that allowlist still gates the maintenance handler only).
+
+### Gender Map sheet tab
+
+Add a tab named `Gender Map` (override with `GENDER_SHEET_TAB`) to the spreadsheet at `GOOGLE_SHEET_ID`:
+
+| user_id     | gender |
+|-------------|--------|
+| U01ABC123   | male   |
+| U02DEF456   | female |
+
+- Row 1: header. Data starts at row 2.
+- Column A: Slack user ID. Find via the user's profile → `...` → Copy member ID.
+- Column B: literal `male` or `female` (case-insensitive on read).
+
+Rows with blank `user_id` or with `gender` outside `{male, female}` are skipped.
+
+The map is cached in memory for 7 days per warm Lambda container (override with `GENDER_CACHE_TTL_DAYS`). Cold starts always refetch. `!refresh-genders` invalidates the cache and refetches immediately.
+
+### Slack app prerequisites
+
+Before the gender feature works in production, update the Slack app config:
+
+- **OAuth scopes (bot):** add `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`. Reinstall the app afterwards.
+- **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
+- Invite the bot to each channel where these triggers should work.
+
 ## Project structure
 
 ```
