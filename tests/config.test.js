@@ -65,6 +65,21 @@ describe("loadConfig", () => {
     expect(config.genderCacheTtlDays).toBe(7);
   });
 
+  it("genderSheetId is null when GENDER_SHEET_ID is unset", async () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.GENDER_SHEET_ID;
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.genderSheetId).toBeNull();
+  });
+
+  it("reads GENDER_SHEET_ID when set", async () => {
+    Object.assign(process.env, VALID_ENV, { GENDER_SHEET_ID: "gender-sheet-xyz" });
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.genderSheetId).toBe("gender-sheet-xyz");
+  });
+
   it("honors GENDER_SHEET_TAB and GENDER_CACHE_TTL_DAYS env overrides", async () => {
     Object.assign(process.env, VALID_ENV, {
       GENDER_SHEET_TAB: "Roster",

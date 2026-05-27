@@ -41,13 +41,16 @@ export function getDeps() {
     spreadsheetId: config.googleSheetId,
   });
 
-  const genderMapService = createGenderMapService({
-    sheetsClient,
-    spreadsheetId: config.googleSheetId,
-    ttlMs: config.genderCacheTtlDays * 24 * 3600 * 1000,
-    tabName: config.genderSheetTab,
-  });
-  const genderHandler = createGenderHandler({ genderMapService });
+  let genderHandler;
+  if (config.genderSheetId) {
+    const genderMapService = createGenderMapService({
+      sheetsClient,
+      spreadsheetId: config.genderSheetId,
+      ttlMs: config.genderCacheTtlDays * 24 * 3600 * 1000,
+      tabName: config.genderSheetTab,
+    });
+    genderHandler = createGenderHandler({ genderMapService });
+  }
 
   cached = { client: slack, handler, genderHandler };
   return cached;

@@ -83,9 +83,13 @@ Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bro
 
 Triggers fire in any public or private channel the bot is a member of. They do **not** honor `SLACK_CHANNEL_IDS` (that allowlist still gates the maintenance handler only).
 
-### Gender Map sheet tab
+### Gender Map sheet
 
-Add a tab named `Gender Map` (override with `GENDER_SHEET_TAB`) to the spreadsheet at `GOOGLE_SHEET_ID`:
+Create a separate Google Sheet for the gender map (kept distinct from the maintenance spreadsheet). Set its ID as `GENDER_SHEET_ID`. The default tab name is `Gender Map`; override with `GENDER_SHEET_TAB`. The sheet must be shared with the same Google identity that issued `GOOGLE_REFRESH_TOKEN` (Viewer access is enough).
+
+If `GENDER_SHEET_ID` is unset, gender triggers are inert (the handler is not wired up) and the bot only responds to maintenance @mentions.
+
+Sheet layout:
 
 | user_id     | gender |
 |-------------|--------|
