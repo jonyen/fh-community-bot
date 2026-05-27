@@ -18,7 +18,7 @@ function readBody(event) {
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
 }
 
-function shouldEnqueue(parsed) {
+function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
   if (event.type !== "message") return true;
@@ -29,10 +29,27 @@ function shouldEnqueue(parsed) {
   return false;
 }
 
+function isFormEncoded(contentType) {
+  return (contentType || "").toLowerCase().startsWith("application/x-www-form-urlencoded");
+}
+
+function parseSlashCommand(body) {
+  const params = new URLSearchParams(body);
+  return {
+    command: params.get("command"),
+    user_id: params.get("user_id"),
+    channel_id: params.get("channel_id"),
+    team_id: params.get("team_id"),
+    response_url: params.get("response_url"),
+    text: params.get("text") || "",
+  };
+}
+
 export async function handler(event) {
   const body = readBody(event);
   const timestamp = getHeader(event.headers, "x-slack-request-timestamp");
   const signature = getHeader(event.headers, "x-slack-signature");
+  const contentType = getHeader(event.headers, "content-type");
 
   const ok = verifySlackSignature({
     secret: process.env.SLACK_SIGNING_SECRET,
@@ -42,6 +59,29 @@ export async function handler(event) {
   });
   if (!ok) {
     return { statusCode: 401, body: "invalid signature" };
+  }
+
+  if (isFormEncoded(contentType)) {
+    const slash = parseSlashCommand(body);
+    if (!slash.command || !slash.response_url) {
+      return { statusCode: 400, body: "invalid slash command payload" };
+    }
+    const envelope = {
+      type: "slash_command",
+      command: slash.command,
+      user_id: slash.user_id,
+      channel_id: slash.channel_id,
+      team_id: slash.team_id,
+      response_url: slash.response_url,
+      text: slash.text,
+    };
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: process.env.EVENT_QUEUE_URL,
+        MessageBody: JSON.stringify(envelope),
+      })
+    );
+    return { statusCode: 200, body: "" };
   }
 
   let parsed;
@@ -55,7 +95,7 @@ export async function handler(event) {
     return { statusCode: 200, body: parsed.challenge };
   }
 
-  if (!shouldEnqueue(parsed)) {
+  if (!shouldEnqueueEvent(parsed)) {
     return { statusCode: 200, body: "" };
   }
 

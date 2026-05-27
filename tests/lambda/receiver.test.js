@@ -133,4 +133,48 @@ describe("receiver.handler", () => {
     expect(res.statusCode).toBe(200);
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
+
+  it("enqueues a slash command envelope from a form-encoded payload", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body =
+      "token=secret&team_id=T1&channel_id=C1&user_id=U1&command=%2Frefresh-genders" +
+      "&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1%2F123%2Fabc";
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler({
+      body,
+      headers: {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(body, ts),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const enqueued = JSON.parse(sendMock.mock.calls[0][0].input.MessageBody);
+    expect(enqueued).toEqual({
+      type: "slash_command",
+      command: "/refresh-genders",
+      user_id: "U1",
+      channel_id: "C1",
+      team_id: "T1",
+      response_url: "https://hooks.slack.com/commands/T1/123/abc",
+      text: "",
+    });
+  });
+
+  it("400s a form-encoded payload missing command/response_url", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = "token=secret&user_id=U1";
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler({
+      body,
+      headers: {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(body, ts),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
 });

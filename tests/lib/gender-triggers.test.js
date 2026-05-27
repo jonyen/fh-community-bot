@@ -44,9 +44,9 @@ describe("GENDER_REFRESH_RE", () => {
 });
 
 describe("matchesGenderEvent", () => {
-  it("is true if either trigger or refresh matches", () => {
+  it("is true only when a gender ping trigger matches", () => {
     expect(matchesGenderEvent("hello !bros")).toBe(true);
-    expect(matchesGenderEvent("!refresh-genders")).toBe(true);
+    expect(matchesGenderEvent("!refresh-genders")).toBe(false);
     expect(matchesGenderEvent("just chatter")).toBe(false);
     expect(matchesGenderEvent("")).toBe(false);
     expect(matchesGenderEvent(undefined)).toBe(false);
