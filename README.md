@@ -89,18 +89,22 @@ Create a separate Google Sheet for the gender map (kept distinct from the mainte
 
 If `GENDER_SHEET_ID` is unset, gender triggers are inert (the handler is not wired up) and the bot only responds to maintenance @mentions.
 
-Sheet layout:
+Sheet layout (4 columns):
 
-| user_id     | gender |
-|-------------|--------|
-| U01ABC123   | male   |
-| U02DEF456   | female |
+| UID | gender | gpmail               | slack_id   |
+|-----|--------|----------------------|------------|
+| 25  | male   | andrew@example.com   | U01ABC123  |
+| 51  | female | billy@example.com    | U02DEF456  |
 
 - Row 1: header. Data starts at row 2.
-- Column A: Slack user ID. Find via the user's profile → `...` → Copy member ID.
-- Column B: literal `male` or `female` (case-insensitive on read).
+- Column A (`UID`): internal directory ID — not read by the bot.
+- Column B (`gender`): literal `male` or `female` (case-insensitive on read).
+- Column C (`gpmail`): email — used by `scripts/backfill-slack-ids.js` to populate column D.
+- Column D (`slack_id`): Slack user ID (`U...`). This is the column the bot uses to match against `conversations.members`.
 
-Rows with blank `user_id` or with `gender` outside `{male, female}` are skipped.
+Rows with a blank `slack_id` or with `gender` outside `{male, female}` are skipped.
+
+To backfill `slack_id` from `gpmail`, run `node scripts/backfill-slack-ids.js` locally (requires `users:read.email` scope on the bot token).
 
 The map is cached in memory for 7 days per warm Lambda container (override with `GENDER_CACHE_TTL_DAYS`). Cold starts always refetch. `!refresh-genders` invalidates the cache and refetches immediately.
 

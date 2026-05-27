@@ -17,11 +17,12 @@ describe("createGenderMapService", () => {
 
   beforeEach(() => {
     sheets = makeSheetsClient([
-      ["U01ABC123", "male"],
-      ["U02DEF456", "FEMALE"],
-      ["U03GHI789", "Other"],
-      ["", "male"],
-      ["U04JKL012"],
+      ["25", "male", "andrew@example.com", "U01ABC123"],
+      ["51", "FEMALE", "billy@example.com", "U02DEF456"],
+      ["52", "Other", "bliss@example.com", "U03GHI789"],
+      ["53", "male", "bo@example.com", ""],
+      ["54", "male", "blank-slack-col"],
+      ["55", "male", "trailing-space@example.com", "  U05WHITESPACE  "],
     ]);
     service = createGenderMapService({
       sheetsClient: sheets,
@@ -31,15 +32,16 @@ describe("createGenderMapService", () => {
     });
   });
 
-  it("parses valid rows, normalizes gender to lowercase, skips malformed", async () => {
+  it("parses valid rows, keys by slack_id, normalizes gender to lowercase, skips malformed", async () => {
     const map = await service.getMap();
     expect(map).toEqual({
       U01ABC123: "male",
       U02DEF456: "female",
+      U05WHITESPACE: "male",
     });
     expect(sheets.spreadsheets.values.get).toHaveBeenCalledWith({
       spreadsheetId: "sheet-1",
-      range: "'Gender Map'!A2:B",
+      range: "'Gender Map'!A2:D",
     });
   });
 
@@ -52,7 +54,7 @@ describe("createGenderMapService", () => {
   it("invalidate() forces a refetch and returns the entry count", async () => {
     await service.getMap();
     const count = await service.invalidate();
-    expect(count).toBe(2);
+    expect(count).toBe(3);
     expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(2);
   });
 
