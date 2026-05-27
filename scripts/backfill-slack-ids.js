@@ -23,6 +23,24 @@ async function main() {
   const rows = res.data.values || [];
   console.log(`[sheet] ${rows.length} data rows`);
 
+  async function tryLookup(email) {
+    try {
+      const r = await slack.users.lookupByEmail({ email });
+      return { ok: true, id: r.user.id };
+    } catch (err) {
+      return { ok: false, code: err.data?.error || err.message };
+    }
+  }
+
+  function fallbackEmail(email) {
+    const at = email.lastIndexOf("@");
+    if (at < 0) return null;
+    const local = email.slice(0, at);
+    const domain = email.slice(at + 1).toLowerCase();
+    if (domain === "acts2.network") return `${local}@gpmail.org`;
+    return null;
+  }
+
   const results = [];
   const misses = [];
   let i = 0;
@@ -34,15 +52,23 @@ async function main() {
       misses.push({ row: i + 1, reason: "no email" });
       continue;
     }
-    try {
-      const r = await slack.users.lookupByEmail({ email });
-      results.push(r.user.id);
-      console.log(`[${i}/${rows.length}] ${email} -> ${r.user.id}`);
-    } catch (err) {
-      const code = err.data?.error || err.message;
+    let r = await tryLookup(email);
+    let tried = email;
+    if (!r.ok && r.code === "users_not_found") {
+      const fb = fallbackEmail(email);
+      if (fb) {
+        const r2 = await tryLookup(fb);
+        tried = `${email} -> ${fb}`;
+        r = r2;
+      }
+    }
+    if (r.ok) {
+      results.push(r.id);
+      console.log(`[${i}/${rows.length}] ${tried} -> ${r.id}`);
+    } else {
       results.push("");
-      misses.push({ row: i + 1, email, reason: code });
-      console.log(`[${i}/${rows.length}] ${email} -> MISS (${code})`);
+      misses.push({ row: i + 1, email: tried, reason: r.code });
+      console.log(`[${i}/${rows.length}] ${tried} -> MISS (${r.code})`);
     }
   }
 
