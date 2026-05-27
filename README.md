@@ -81,7 +81,14 @@ In the configured Slack channel:
 
 Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bros` / `@brothers` (pings members mapped to `male`) or `!sis` / `!sisters` / `@sis` / `@sisters` (pings `female`). `!refresh-genders` reloads the map from the sheet.
 
-The bot strips the trigger token and reposts the remaining text inline with the mentions: `@bros hello` becomes `<@u1> <@u2> ... hello`. With no body (just `!bros`) the reply is mentions only.
+The bot inserts each mention list at the trigger token's position, preserving the rest of the message:
+
+- `@bros hello` → `<@u1> <@u2> ... hello`
+- `hello @bros` → `hello <@u1> <@u2> ...`
+- `@bros and @sis, hello` → `<@u1> <@u2> and <@v1> <@v2>, hello`
+- Bare `!bros` → mentions only.
+
+The bot posts the reply with the original sender's display name and avatar (via `chat:write.customize`), so the message looks like it came from the caller. If that scope is missing, the bot falls back to posting under its own identity.
 
 Triggers fire in any public or private channel the bot is a member of. They do **not** honor `SLACK_CHANNEL_IDS` (that allowlist still gates the maintenance handler only).
 
@@ -114,7 +121,7 @@ The map is cached in memory for 7 days per warm Lambda container (override with 
 
 Before the gender feature works in production, update the Slack app config:
 
-- **OAuth scopes (bot):** add `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`. Reinstall the app afterwards.
+- **OAuth scopes (bot):** add `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`, `users:read.email` (for the `scripts/backfill-slack-ids.js` script), and `chat:write.customize` (to post replies as the original sender). Reinstall the app afterwards.
 - **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
 - Invite the bot to each channel where these triggers should work.
 

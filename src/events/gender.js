@@ -1,4 +1,23 @@
-import { GENDER_REFRESH_RE, resolveTarget, stripTriggers } from "../lib/gender-triggers.js";
+import {
+  GENDER_REFRESH_RE,
+  referencedGenders,
+  formatGenderReply,
+} from "../lib/gender-triggers.js";
+
+async function fetchCallerPersona(client, userId) {
+  try {
+    const res = await client.users.info({ user: userId });
+    const u = res.user || {};
+    const profile = u.profile || {};
+    return {
+      username: profile.display_name || u.real_name || u.name || null,
+      icon_url: profile.image_72 || profile.image_48 || profile.image_192 || null,
+    };
+  } catch (err) {
+    console.warn(`[gender] users.info failed for ${userId}: ${err.message}`);
+    return null;
+  }
+}
 
 async function fetchAllMembers(client, channel) {
   const all = [];
@@ -28,8 +47,8 @@ export function createGenderHandler({ genderMapService }) {
       return;
     }
 
-    const target = resolveTarget(text);
-    if (!target) return;
+    const genders = referencedGenders(text);
+    if (genders.size === 0) return;
 
     let map;
     try {
@@ -47,14 +66,37 @@ export function createGenderHandler({ genderMapService }) {
       return;
     }
 
-    const targets = members.filter((u) => map[u] === target);
-    if (targets.length === 0) {
-      await say({ text: `No ${target} members configured for this channel.` });
+    const mentionsByGender = {};
+    for (const g of genders) {
+      const ids = members.filter((u) => map[u] === g);
+      mentionsByGender[g] = ids.length > 0 ? ids.map((u) => `<@${u}>`).join(" ") : null;
+    }
+
+    const empties = [...genders].filter((g) => !mentionsByGender[g]);
+    if (empties.length === genders.size) {
+      const label = empties.join("/");
+      await say({ text: `No ${label} members configured for this channel.` });
       return;
     }
 
-    const mentions = targets.map((u) => `<@${u}>`).join(" ");
-    const remainder = stripTriggers(text);
-    await say({ text: remainder ? `${mentions} ${remainder}` : mentions });
+    const replyText = formatGenderReply(text, mentionsByGender);
+
+    const persona = event.user ? await fetchCallerPersona(client, event.user) : null;
+    const msg = { text: replyText };
+    if (persona) {
+      if (persona.username) msg.username = persona.username;
+      if (persona.icon_url) msg.icon_url = persona.icon_url;
+    }
+    try {
+      await say(msg);
+    } catch (err) {
+      const code = err.data?.error;
+      if (code === "not_allowed_token_type" || code === "missing_scope") {
+        console.warn(`[gender] chat:write.customize unavailable (${code}); posting as bot`);
+        await say({ text: replyText });
+      } else {
+        throw err;
+      }
+    }
   };
 }
