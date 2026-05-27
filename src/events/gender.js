@@ -1,22 +1,7 @@
-import {
-  referencedGenders,
-  formatGenderReply,
-} from "../lib/gender-triggers.js";
+import { referencedGenders } from "../lib/gender-triggers.js";
 
-async function fetchCallerPersona(client, userId) {
-  try {
-    const res = await client.users.info({ user: userId });
-    const u = res.user || {};
-    const profile = u.profile || {};
-    return {
-      username: profile.display_name || u.real_name || u.name || null,
-      icon_url: profile.image_72 || profile.image_48 || profile.image_192 || null,
-    };
-  } catch (err) {
-    console.warn(`[gender] users.info failed for ${userId}: ${err.message}`);
-    return null;
-  }
-}
+const BOT_USERNAME = "Gender Aliases";
+const BOT_ICON_EMOJI = ":busts_in_silhouette:";
 
 async function sendSystemEphemeral({ client, channel, user, text, fallbackSay }) {
   if (user) {
@@ -25,8 +10,8 @@ async function sendSystemEphemeral({ client, channel, user, text, fallbackSay })
         channel,
         user,
         text,
-        username: "Gender Aliases",
-        icon_emoji: ":busts_in_silhouette:",
+        username: BOT_USERNAME,
+        icon_emoji: BOT_ICON_EMOJI,
       });
       return;
     } catch (err) {
@@ -55,7 +40,7 @@ export function createGenderHandler({ genderMapService }) {
   return async function handleGender({ event, say, client }) {
     const text = event.text || "";
     const genders = referencedGenders(text);
-    if (genders.size === 0) return;
+    if (genders.length === 0) return;
 
     let map;
     try {
@@ -79,37 +64,23 @@ export function createGenderHandler({ genderMapService }) {
       mentionsByGender[g] = ids.length > 0 ? ids.map((u) => `<@${u}>`).join(" ") : null;
     }
 
-    const empties = [...genders].filter((g) => !mentionsByGender[g]);
-    if (empties.length === genders.size) {
-      const label = empties.join("/");
+    const empties = genders.filter((g) => !mentionsByGender[g]);
+    if (empties.length === genders.length) {
       await sendSystemEphemeral({
         client,
         channel: event.channel,
         user: event.user,
-        text: `No ${label} members configured for this channel.`,
+        text: `No ${empties.join("/")} members configured for this channel.`,
         fallbackSay: say,
       });
       return;
     }
 
-    const replyText = formatGenderReply(text, mentionsByGender);
-
-    const persona = event.user ? await fetchCallerPersona(client, event.user) : null;
-    const msg = { text: replyText };
-    if (persona) {
-      if (persona.username) msg.username = persona.username;
-      if (persona.icon_url) msg.icon_url = persona.icon_url;
-    }
-    try {
-      await say(msg);
-    } catch (err) {
-      const code = err.data?.error;
-      if (code === "not_allowed_token_type" || code === "missing_scope") {
-        console.warn(`[gender] chat:write.customize unavailable (${code}); posting as bot`);
-        await say({ text: replyText });
-      } else {
-        throw err;
-      }
-    }
+    const parts = genders.map((g) => mentionsByGender[g]).filter(Boolean);
+    await say({
+      text: parts.join(" "),
+      username: BOT_USERNAME,
+      icon_emoji: BOT_ICON_EMOJI,
+    });
   };
 }
