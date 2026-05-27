@@ -89,4 +89,70 @@ describe("dispatchSlackEvent", () => {
     });
     expect(handler).toHaveBeenCalledTimes(1);
   });
+
+  it("routes a !bros message to genderHandler (top-level, no thread_ts)", async () => {
+    const handler = vi.fn();
+    const genderHandler = vi.fn().mockResolvedValue();
+    const client = makeClient();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "C1", text: "!bros let's go", user: "U1", ts: "1" } },
+      handler,
+      genderHandler,
+      client,
+    });
+    expect(genderHandler).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
+    const args = genderHandler.mock.calls[0][0];
+    await args.say({ text: "ping" });
+    expect(client.chat.postMessage).toHaveBeenCalledWith({ channel: "C1", text: "ping" });
+  });
+
+  it("routes !refresh-genders to genderHandler", async () => {
+    const handler = vi.fn();
+    const genderHandler = vi.fn().mockResolvedValue();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "C1", text: "!refresh-genders", user: "U1", ts: "1" } },
+      handler,
+      genderHandler,
+      client: makeClient(),
+    });
+    expect(genderHandler).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not route !bros to gender path when genderHandler is undefined", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "C1", text: "!bros", user: "U1", ts: "1" } },
+      handler,
+      client: makeClient(),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not route !bros from an app_mention event (gender is message-only)", async () => {
+    const handler = vi.fn().mockResolvedValue();
+    const genderHandler = vi.fn().mockResolvedValue();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "app_mention", channel: "C1", text: "<@U_BOT> !bros", user: "U1", ts: "1" } },
+      handler,
+      genderHandler,
+      client: makeClient(),
+    });
+    expect(genderHandler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("still routes non-gender thread messages to the maintenance handler", async () => {
+    const handler = vi.fn().mockResolvedValue();
+    const genderHandler = vi.fn();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "C1", thread_ts: "1", text: "more info", user: "U1" } },
+      handler,
+      genderHandler,
+      client: makeClient(),
+    });
+    expect(genderHandler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
 });

@@ -55,6 +55,7 @@ jobs:
               SlackSigningSecret="${{ secrets.SLACK_SIGNING_SECRET }}" \
               SlackChannelIds="${{ vars.SLACK_CHANNEL_IDS }}" \
               GoogleSheetId="${{ vars.GOOGLE_SHEET_ID }}" \
+              GenderSheetId="${{ vars.GENDER_SHEET_ID }}" \
               GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
