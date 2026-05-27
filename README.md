@@ -77,6 +77,45 @@ In the configured Slack channel:
 | `@bot close <description>` | Resolve an issue by description |
 | `@bot create new: <description>` | Force-create, bypassing duplicate detection |
 
+## Gender Aliases
+
+Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bros` / `@brothers` (pings members mapped to `male`) or `!sis` / `!sisters` / `@sis` / `@sisters` (pings `female`). `!refresh-genders` reloads the map from the sheet.
+
+Triggers fire in any public or private channel the bot is a member of. They do **not** honor `SLACK_CHANNEL_IDS` (that allowlist still gates the maintenance handler only).
+
+### Gender Map sheet
+
+Create a separate Google Sheet for the gender map (kept distinct from the maintenance spreadsheet). Set its ID as `GENDER_SHEET_ID`. The default tab name is `Gender Map`; override with `GENDER_SHEET_TAB`. The sheet must be shared with the same Google identity that issued `GOOGLE_REFRESH_TOKEN` (Viewer access is enough).
+
+If `GENDER_SHEET_ID` is unset, gender triggers are inert (the handler is not wired up) and the bot only responds to maintenance @mentions.
+
+Sheet layout (4 columns):
+
+| UID | gender | gpmail               | slack_id   |
+|-----|--------|----------------------|------------|
+| 25  | male   | andrew@example.com   | U01ABC123  |
+| 51  | female | billy@example.com    | U02DEF456  |
+
+- Row 1: header. Data starts at row 2.
+- Column A (`UID`): internal directory ID — not read by the bot.
+- Column B (`gender`): literal `male` or `female` (case-insensitive on read).
+- Column C (`gpmail`): email — used by `scripts/backfill-slack-ids.js` to populate column D.
+- Column D (`slack_id`): Slack user ID (`U...`). This is the column the bot uses to match against `conversations.members`.
+
+Rows with a blank `slack_id` or with `gender` outside `{male, female}` are skipped.
+
+To backfill `slack_id` from `gpmail`, run `node scripts/backfill-slack-ids.js` locally (requires `users:read.email` scope on the bot token).
+
+The map is cached in memory for 7 days per warm Lambda container (override with `GENDER_CACHE_TTL_DAYS`). Cold starts always refetch. `!refresh-genders` invalidates the cache and refetches immediately.
+
+### Slack app prerequisites
+
+Before the gender feature works in production, update the Slack app config:
+
+- **OAuth scopes (bot):** add `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`. Reinstall the app afterwards.
+- **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
+- Invite the bot to each channel where these triggers should work.
+
 ## Project structure
 
 ```

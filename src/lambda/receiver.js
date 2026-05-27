@@ -1,5 +1,6 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { verifySlackSignature } from "./slack-signature.js";
+import { matchesGenderEvent } from "../lib/gender-triggers.js";
 
 const sqs = new SQSClient({});
 
@@ -15,6 +16,17 @@ function getHeader(headers, name) {
 function readBody(event) {
   if (!event.body) return "";
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
+}
+
+function shouldEnqueue(parsed) {
+  const event = parsed.event;
+  if (!event) return false;
+  if (event.type !== "message") return true;
+  const text = event.text || "";
+  if (matchesGenderEvent(text)) return true;
+  if (/<@[A-Z0-9_]+>/.test(text)) return true;
+  if (event.thread_ts) return true;
+  return false;
 }
 
 export async function handler(event) {
@@ -41,6 +53,10 @@ export async function handler(event) {
 
   if (parsed.type === "url_verification") {
     return { statusCode: 200, body: parsed.challenge };
+  }
+
+  if (!shouldEnqueue(parsed)) {
+    return { statusCode: 200, body: "" };
   }
 
   await sqs.send(

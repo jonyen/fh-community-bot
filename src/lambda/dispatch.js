@@ -1,3 +1,5 @@
+import { matchesGenderEvent } from "../lib/gender-triggers.js";
+
 function shouldSkip(event) {
   if (event.type === "app_mention") return false;
 
@@ -11,9 +13,23 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, client }) {
   const event = slackEnvelope.event;
   if (!event) return;
+
+  if (
+    genderHandler &&
+    event.type === "message" &&
+    !event.bot_id &&
+    !event.subtype &&
+    matchesGenderEvent(event.text || "")
+  ) {
+    const sayTopLevel = (msg) =>
+      client.chat.postMessage({ channel: event.channel, ...msg });
+    await genderHandler({ event, say: sayTopLevel, client });
+    return;
+  }
+
   if (shouldSkip(event)) return;
 
   const say = (msg) =>
