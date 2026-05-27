@@ -75,7 +75,23 @@ export function createGenderHandler({ genderMapService }) {
     const empties = [...genders].filter((g) => !mentionsByGender[g]);
     if (empties.length === genders.size) {
       const label = empties.join("/");
-      await say({ text: `No ${label} members configured for this channel.` });
+      const text = `No ${label} members configured for this channel.`;
+      if (event.user) {
+        try {
+          await client.chat.postEphemeral({
+            channel: event.channel,
+            user: event.user,
+            text,
+            username: "Gender Aliases",
+            icon_emoji: ":busts_in_silhouette:",
+          });
+          return;
+        } catch (err) {
+          const code = err.data?.error || err.message;
+          console.warn(`[gender] postEphemeral failed (${code}); falling back to public reply`);
+        }
+      }
+      await say({ text });
       return;
     }
 

@@ -30,7 +30,10 @@ function makeClient({
   return {
     conversations,
     users,
-    chat: { postMessage: vi.fn().mockResolvedValue({}) },
+    chat: {
+      postMessage: vi.fn().mockResolvedValue({}),
+      postEphemeral: vi.fn().mockResolvedValue({ ok: true }),
+    },
   };
 }
 
@@ -103,7 +106,7 @@ describe("createGenderHandler", () => {
     expect(secondCall.cursor).toBe("c1");
   });
 
-  it("posts the empty-target message when no members match", async () => {
+  it("sends an ephemeral notice to the caller when no members match", async () => {
     service = makeService({ map: { U_FEMALE_1: "female" } });
     handler = createGenderHandler({ genderMapService: service });
     await handler({
@@ -111,7 +114,14 @@ describe("createGenderHandler", () => {
       say,
       client,
     });
-    expect(say.mock.calls[0][0].text).toBe("No male members configured for this channel.");
+    expect(client.chat.postEphemeral).toHaveBeenCalledWith({
+      channel: "C1",
+      user: "U_CALLER",
+      text: "No male members configured for this channel.",
+      username: "Gender Aliases",
+      icon_emoji: ":busts_in_silhouette:",
+    });
+    expect(say).not.toHaveBeenCalled();
   });
 
   it("works when caller is absent (mentions inserted at trigger position, no persona override)", async () => {
@@ -188,7 +198,7 @@ describe("createGenderHandler", () => {
     expect(say.mock.calls[0][0].text).toBe("<@U_MALE_1> <@U_MALE_2> and <@U_FEMALE_1>, hello");
   });
 
-  it("posts the empty-target message when ALL referenced genders have no members", async () => {
+  it("sends ephemeral when ALL referenced genders are empty", async () => {
     service = makeService({ map: {} });
     handler = createGenderHandler({ genderMapService: service });
     await handler({
@@ -196,7 +206,28 @@ describe("createGenderHandler", () => {
       say,
       client,
     });
-    expect(say.mock.calls[0][0].text).toBe("No male/female members configured for this channel.");
+    expect(client.chat.postEphemeral).toHaveBeenCalledWith({
+      channel: "C1",
+      user: "U_CALLER",
+      text: "No male/female members configured for this channel.",
+      username: "Gender Aliases",
+      icon_emoji: ":busts_in_silhouette:",
+    });
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("falls back to public reply when ephemeral fails", async () => {
+    service = makeService({ map: { U_FEMALE_1: "female" } });
+    handler = createGenderHandler({ genderMapService: service });
+    client.chat.postEphemeral = vi.fn().mockRejectedValue(
+      Object.assign(new Error("forbidden"), { data: { error: "channel_not_found" } })
+    );
+    await handler({
+      event: { type: "message", channel: "C1", user: "U_CALLER", text: "!bros", ts: "1" },
+      say,
+      client,
+    });
+    expect(say).toHaveBeenCalledWith({ text: "No male members configured for this channel." });
   });
 
   it("posts with caller username and icon_url override (persona)", async () => {
