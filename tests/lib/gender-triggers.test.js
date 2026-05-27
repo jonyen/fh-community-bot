@@ -4,6 +4,7 @@ import {
   GENDER_REFRESH_RE,
   matchesGenderEvent,
   resolveTarget,
+  stripTriggers,
 } from "../../src/lib/gender-triggers.js";
 
 describe("GENDER_TRIGGER_RE", () => {
@@ -72,5 +73,23 @@ describe("resolveTarget", () => {
     expect(resolveTarget("bros")).toBe(null);
     expect(resolveTarget("")).toBe(null);
     expect(resolveTarget(undefined)).toBe(null);
+  });
+});
+
+describe("stripTriggers", () => {
+  it.each([
+    ["@bros hello", "hello"],
+    ["!bros", ""],
+    ["hey @bros watch this", "hey watch this"],
+    ["@bros @sis foo", "foo"],
+    ["@BROTHERS check this out", "check this out"],
+    ["before @bros middle @sisters after", "before middle after"],
+    ["!refresh-genders please", "please"],
+    ["just chatter, no trigger", "just chatter, no trigger"],
+    ["   leading spaces @bros   ", "leading spaces"],
+    ["", ""],
+    [undefined, ""],
+  ])("strips %p -> %p", (text, expected) => {
+    expect(stripTriggers(text)).toBe(expected);
   });
 });
