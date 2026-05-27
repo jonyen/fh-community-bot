@@ -88,7 +88,10 @@ The bot inserts each mention list at the trigger token's position, preserving th
 - `@bros and @sis, hello` → `<@u1> <@u2> and <@v1> <@v2>, hello`
 - Bare `!bros` → mentions only.
 
-If no channel members match any referenced gender, the bot sends an ephemeral reply visible only to the caller, under the name **Gender Aliases** with a 👥 avatar.
+Ephemeral system notices (visible only to the caller) are sent under the name **Gender Aliases** with a 👥 avatar. These cover:
+
+- `!refresh-genders` success (`Refreshed gender map. N entries loaded.`) and failure replies.
+- "No `<gender>` members configured for this channel." when no match.
 
 The bot posts the reply with the original sender's display name and avatar (via `chat:write.customize`), so the message looks like it came from the caller. If that scope is missing, the bot falls back to posting under its own identity.
 

@@ -19,6 +19,25 @@ async function fetchCallerPersona(client, userId) {
   }
 }
 
+async function sendSystemEphemeral({ client, channel, user, text, fallbackSay }) {
+  if (user) {
+    try {
+      await client.chat.postEphemeral({
+        channel,
+        user,
+        text,
+        username: "Gender Aliases",
+        icon_emoji: ":busts_in_silhouette:",
+      });
+      return;
+    } catch (err) {
+      const code = err.data?.error || err.message;
+      console.warn(`[gender] postEphemeral failed (${code}); falling back to public reply`);
+    }
+  }
+  await fallbackSay({ text });
+}
+
 async function fetchAllMembers(client, channel) {
   const all = [];
   let cursor;
@@ -40,9 +59,21 @@ export function createGenderHandler({ genderMapService }) {
     if (GENDER_REFRESH_RE.test(text)) {
       try {
         const count = await genderMapService.invalidate();
-        await say({ text: `Refreshed gender map. ${count} entries loaded.` });
+        await sendSystemEphemeral({
+          client,
+          channel: event.channel,
+          user: event.user,
+          text: `Refreshed gender map. ${count} entries loaded.`,
+          fallbackSay: say,
+        });
       } catch (err) {
-        await say({ text: `Refresh failed: ${err.message}` });
+        await sendSystemEphemeral({
+          client,
+          channel: event.channel,
+          user: event.user,
+          text: `Refresh failed: ${err.message}`,
+          fallbackSay: say,
+        });
       }
       return;
     }
@@ -75,23 +106,13 @@ export function createGenderHandler({ genderMapService }) {
     const empties = [...genders].filter((g) => !mentionsByGender[g]);
     if (empties.length === genders.size) {
       const label = empties.join("/");
-      const text = `No ${label} members configured for this channel.`;
-      if (event.user) {
-        try {
-          await client.chat.postEphemeral({
-            channel: event.channel,
-            user: event.user,
-            text,
-            username: "Gender Aliases",
-            icon_emoji: ":busts_in_silhouette:",
-          });
-          return;
-        } catch (err) {
-          const code = err.data?.error || err.message;
-          console.warn(`[gender] postEphemeral failed (${code}); falling back to public reply`);
-        }
-      }
-      await say({ text });
+      await sendSystemEphemeral({
+        client,
+        channel: event.channel,
+        user: event.user,
+        text: `No ${label} members configured for this channel.`,
+        fallbackSay: say,
+      });
       return;
     }
 
