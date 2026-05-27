@@ -8,6 +8,7 @@ import { createDedupService } from "../services/dedup.js";
 import { createMentionHandler } from "../events/mention.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
+import { createSlashRefreshHandler } from "../events/slashRefresh.js";
 
 let cached;
 
@@ -42,6 +43,7 @@ export function getDeps() {
   });
 
   let genderHandler;
+  let slashRefreshHandler;
   if (config.genderSheetId) {
     const genderMapService = createGenderMapService({
       sheetsClient,
@@ -50,9 +52,10 @@ export function getDeps() {
       tabName: config.genderSheetTab,
     });
     genderHandler = createGenderHandler({ genderMapService });
+    slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
-  cached = { client: slack, handler, genderHandler };
+  cached = { client: slack, handler, genderHandler, slashRefreshHandler };
   return cached;
 }
 

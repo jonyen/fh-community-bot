@@ -1,5 +1,4 @@
 import {
-  GENDER_REFRESH_RE,
   referencedGenders,
   formatGenderReply,
 } from "../lib/gender-triggers.js";
@@ -55,29 +54,6 @@ async function fetchAllMembers(client, channel) {
 export function createGenderHandler({ genderMapService }) {
   return async function handleGender({ event, say, client }) {
     const text = event.text || "";
-
-    if (GENDER_REFRESH_RE.test(text)) {
-      try {
-        const count = await genderMapService.invalidate();
-        await sendSystemEphemeral({
-          client,
-          channel: event.channel,
-          user: event.user,
-          text: `Refreshed gender map. ${count} entries loaded.`,
-          fallbackSay: say,
-        });
-      } catch (err) {
-        await sendSystemEphemeral({
-          client,
-          channel: event.channel,
-          user: event.user,
-          text: `Refresh failed: ${err.message}`,
-          fallbackSay: say,
-        });
-      }
-      return;
-    }
-
     const genders = referencedGenders(text);
     if (genders.size === 0) return;
 

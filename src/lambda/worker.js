@@ -2,7 +2,7 @@ import { dispatchSlackEvent } from "./dispatch.js";
 import { getDeps } from "./clients.js";
 
 export async function handler(sqsEvent) {
-  const { client, handler: mentionHandler, genderHandler } = getDeps();
+  const { client, handler: mentionHandler, genderHandler, slashRefreshHandler } = getDeps();
 
   for (const record of sqsEvent.Records || []) {
     const slackEnvelope = JSON.parse(record.body);
@@ -10,6 +10,7 @@ export async function handler(sqsEvent) {
       slackEnvelope,
       handler: mentionHandler,
       genderHandler,
+      slashRefreshHandler,
       client,
     });
   }

@@ -11,7 +11,7 @@ function aliasToGender(alias) {
 
 export function matchesGenderEvent(text) {
   if (!text) return false;
-  return GENDER_TRIGGER_RE.test(text) || GENDER_REFRESH_RE.test(text);
+  return GENDER_TRIGGER_RE.test(text);
 }
 
 export function referencedGenders(text) {
