@@ -22,3 +22,11 @@ export function resolveTarget(text) {
   for (const a of matches) if (FEMALE_ALIASES.has(a)) return "female";
   return null;
 }
+
+export function stripTriggers(text) {
+  if (!text) return "";
+  return text
+    .replace(/(?:^|\s)[!@](?:bros|brothers|sis|sisters|refresh-genders)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}

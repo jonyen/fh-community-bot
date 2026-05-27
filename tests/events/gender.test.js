@@ -45,7 +45,7 @@ describe("createGenderHandler", () => {
     handler = createGenderHandler({ genderMapService: service });
   });
 
-  it("pings male members on !bros and excludes others", async () => {
+  it("pings male members on !bros and appends remaining text", async () => {
     await handler({
       event: { type: "message", channel: "C1", user: "U_CALLER", text: "!bros let's go", ts: "1" },
       say,
@@ -53,17 +53,26 @@ describe("createGenderHandler", () => {
     });
     expect(say).toHaveBeenCalledTimes(1);
     const arg = say.mock.calls[0][0];
-    expect(arg.text).toBe("<@U_CALLER> pinged males: <@U_MALE_1> <@U_MALE_2>");
+    expect(arg.text).toBe("<@U_MALE_1> <@U_MALE_2> let's go");
     expect(arg.thread_ts).toBeUndefined();
   });
 
-  it("pings female members on !sis", async () => {
+  it("pings female members on @sis with leading and trailing text", async () => {
     await handler({
-      event: { type: "message", channel: "C1", user: "U_CALLER", text: "hey !sis", ts: "1" },
+      event: { type: "message", channel: "C1", user: "U_CALLER", text: "hey @sis check this", ts: "1" },
       say,
       client,
     });
-    expect(say.mock.calls[0][0].text).toBe("<@U_CALLER> pinged females: <@U_FEMALE_1>");
+    expect(say.mock.calls[0][0].text).toBe("<@U_FEMALE_1> hey check this");
+  });
+
+  it("posts mentions only when there is no remaining text", async () => {
+    await handler({
+      event: { type: "message", channel: "C1", user: "U_CALLER", text: "!bros", ts: "1" },
+      say,
+      client,
+    });
+    expect(say.mock.calls[0][0].text).toBe("<@U_MALE_1> <@U_MALE_2>");
   });
 
   it("paginates conversations.members until cursor empty", async () => {
@@ -93,13 +102,13 @@ describe("createGenderHandler", () => {
     expect(say.mock.calls[0][0].text).toBe("No male members configured for this channel.");
   });
 
-  it("uses generic prefix when caller user is absent", async () => {
+  it("ignores caller and posts mentions plus remaining text", async () => {
     await handler({
-      event: { type: "message", channel: "C1", text: "!bros", ts: "1" },
+      event: { type: "message", channel: "C1", text: "!bros standup time", ts: "1" },
       say,
       client,
     });
-    expect(say.mock.calls[0][0].text).toBe("male ping: <@U_MALE_1> <@U_MALE_2>");
+    expect(say.mock.calls[0][0].text).toBe("<@U_MALE_1> <@U_MALE_2> standup time");
   });
 
   it("on !refresh-genders, invalidates and replies with count", async () => {
@@ -160,6 +169,6 @@ describe("createGenderHandler", () => {
       say,
       client,
     });
-    expect(say.mock.calls[0][0].text).toBe("<@U_CALLER> pinged males: <@U_MALE_1> <@U_MALE_2>");
+    expect(say.mock.calls[0][0].text).toBe("<@U_MALE_1> <@U_MALE_2>");
   });
 });

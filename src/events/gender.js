@@ -1,4 +1,4 @@
-import { GENDER_REFRESH_RE, resolveTarget } from "../lib/gender-triggers.js";
+import { GENDER_REFRESH_RE, resolveTarget, stripTriggers } from "../lib/gender-triggers.js";
 
 async function fetchAllMembers(client, channel) {
   const all = [];
@@ -54,7 +54,7 @@ export function createGenderHandler({ genderMapService }) {
     }
 
     const mentions = targets.map((u) => `<@${u}>`).join(" ");
-    const prefix = event.user ? `<@${event.user}> pinged ${target}s:` : `${target} ping:`;
-    await say({ text: `${prefix} ${mentions}` });
+    const remainder = stripTriggers(text);
+    await say({ text: remainder ? `${mentions} ${remainder}` : mentions });
   };
 }

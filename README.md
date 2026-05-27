@@ -81,6 +81,8 @@ In the configured Slack channel:
 
 Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bros` / `@brothers` (pings members mapped to `male`) or `!sis` / `!sisters` / `@sis` / `@sisters` (pings `female`). `!refresh-genders` reloads the map from the sheet.
 
+The bot strips the trigger token and reposts the remaining text inline with the mentions: `@bros hello` becomes `<@u1> <@u2> ... hello`. With no body (just `!bros`) the reply is mentions only.
+
 Triggers fire in any public or private channel the bot is a member of. They do **not** honor `SLACK_CHANNEL_IDS` (that allowlist still gates the maintenance handler only).
 
 ### Gender Map sheet
