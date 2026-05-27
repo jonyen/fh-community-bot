@@ -3,8 +3,8 @@ import {
   GENDER_TRIGGER_RE,
   GENDER_REFRESH_RE,
   matchesGenderEvent,
-  resolveTarget,
-  stripTriggers,
+  referencedGenders,
+  formatGenderReply,
 } from "../../src/lib/gender-triggers.js";
 
 describe("GENDER_TRIGGER_RE", () => {
@@ -53,43 +53,77 @@ describe("matchesGenderEvent", () => {
   });
 });
 
-describe("resolveTarget", () => {
-  it("returns 'male' for bros/brothers", () => {
-    expect(resolveTarget("!bros")).toBe("male");
-    expect(resolveTarget("@BROTHERS check this")).toBe("male");
+describe("referencedGenders", () => {
+  it("returns empty set on no match", () => {
+    expect(referencedGenders("just chatter")).toEqual(new Set());
+    expect(referencedGenders("")).toEqual(new Set());
+    expect(referencedGenders(undefined)).toEqual(new Set());
   });
 
-  it("returns 'female' for sis/sisters", () => {
-    expect(resolveTarget("!sis")).toBe("female");
-    expect(resolveTarget("hey @SISTERS")).toBe("female");
+  it("returns {male} for bros aliases", () => {
+    expect(referencedGenders("!bros")).toEqual(new Set(["male"]));
+    expect(referencedGenders("@BROTHERS check this")).toEqual(new Set(["male"]));
   });
 
-  it("prefers 'male' when both appear (matches Python precedence)", () => {
-    expect(resolveTarget("!bros !sis")).toBe("male");
-    expect(resolveTarget("!sis !bros")).toBe("male");
+  it("returns {female} for sis aliases", () => {
+    expect(referencedGenders("!sis")).toEqual(new Set(["female"]));
+    expect(referencedGenders("hey @SISTERS")).toEqual(new Set(["female"]));
   });
 
-  it("returns null on no match", () => {
-    expect(resolveTarget("bros")).toBe(null);
-    expect(resolveTarget("")).toBe(null);
-    expect(resolveTarget(undefined)).toBe(null);
+  it("returns {male, female} when both appear", () => {
+    expect(referencedGenders("@bros and @sis, hello")).toEqual(new Set(["male", "female"]));
+    expect(referencedGenders("@sis @bros")).toEqual(new Set(["male", "female"]));
   });
 });
 
-describe("stripTriggers", () => {
-  it.each([
-    ["@bros hello", "hello"],
-    ["!bros", ""],
-    ["hey @bros watch this", "hey watch this"],
-    ["@bros @sis foo", "foo"],
-    ["@BROTHERS check this out", "check this out"],
-    ["before @bros middle @sisters after", "before middle after"],
-    ["!refresh-genders please", "please"],
-    ["just chatter, no trigger", "just chatter, no trigger"],
-    ["   leading spaces @bros   ", "leading spaces"],
-    ["", ""],
-    [undefined, ""],
-  ])("strips %p -> %p", (text, expected) => {
-    expect(stripTriggers(text)).toBe(expected);
+describe("formatGenderReply", () => {
+  const MEN = "<@U1> <@U2>";
+  const WOMEN = "<@U9>";
+
+  it("inserts mentions at trigger position - leading", () => {
+    expect(formatGenderReply("@bros hello", { male: MEN })).toBe(`${MEN} hello`);
+  });
+
+  it("inserts mentions at trigger position - trailing", () => {
+    expect(formatGenderReply("hello @bros", { male: MEN })).toBe(`hello ${MEN}`);
+  });
+
+  it("inserts mentions at trigger position - middle", () => {
+    expect(formatGenderReply("hello @bros world", { male: MEN })).toBe(`hello ${MEN} world`);
+  });
+
+  it("substitutes each trigger inline when both genders referenced", () => {
+    expect(formatGenderReply("@bros and @sis, hello", { male: MEN, female: WOMEN })).toBe(
+      `${MEN} and ${WOMEN}, hello`
+    );
+  });
+
+  it("handles bare trigger only", () => {
+    expect(formatGenderReply("!bros", { male: MEN })).toBe(MEN);
+  });
+
+  it("returns concatenated mentions when text empty", () => {
+    expect(formatGenderReply("", { male: MEN })).toBe(MEN);
+    expect(formatGenderReply(undefined, { male: MEN, female: WOMEN })).toBe(`${MEN} ${WOMEN}`);
+  });
+
+  it("skips a trigger whose gender has no mentions", () => {
+    expect(formatGenderReply("@bros and @sis, hello", { male: MEN, female: null })).toBe(
+      `${MEN} and , hello`
+    );
+  });
+
+  it("strips a stray refresh token from the body", () => {
+    expect(formatGenderReply("@bros !refresh-genders hello", { male: MEN })).toBe(`${MEN} hello`);
+  });
+
+  it("collapses internal whitespace", () => {
+    expect(formatGenderReply("   spaces  @bros   trailing   ", { male: MEN })).toBe(
+      `spaces ${MEN} trailing`
+    );
+  });
+
+  it("is case-insensitive on trigger words", () => {
+    expect(formatGenderReply("@BROTHERS yo", { male: MEN })).toBe(`${MEN} yo`);
   });
 });
