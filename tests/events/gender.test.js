@@ -137,7 +137,7 @@ describe("createGenderHandler", () => {
     expect(client.users.info).not.toHaveBeenCalled();
   });
 
-  it("on !refresh-genders, invalidates and replies with count", async () => {
+  it("on !refresh-genders, invalidates and replies via ephemeral as Gender Aliases", async () => {
     await handler({
       event: { type: "message", channel: "C1", user: "U_CALLER", text: "!refresh-genders", ts: "1" },
       say,
@@ -145,7 +145,14 @@ describe("createGenderHandler", () => {
     });
     expect(service.invalidate).toHaveBeenCalledTimes(1);
     expect(client.conversations.members).not.toHaveBeenCalled();
-    expect(say.mock.calls[0][0].text).toBe("Refreshed gender map. 3 entries loaded.");
+    expect(client.chat.postEphemeral).toHaveBeenCalledWith({
+      channel: "C1",
+      user: "U_CALLER",
+      text: "Refreshed gender map. 3 entries loaded.",
+      username: "Gender Aliases",
+      icon_emoji: ":busts_in_silhouette:",
+    });
+    expect(say).not.toHaveBeenCalled();
   });
 
   it("refresh wins when both refresh and trigger appear", async () => {
@@ -179,14 +186,21 @@ describe("createGenderHandler", () => {
     expect(say.mock.calls[0][0].text).toBe("Could not list channel members: slack down");
   });
 
-  it("replies with refresh error message when invalidate throws", async () => {
+  it("sends refresh error as ephemeral when invalidate throws", async () => {
     service.invalidate = vi.fn().mockRejectedValue(new Error("network"));
     await handler({
       event: { type: "message", channel: "C1", user: "U_CALLER", text: "!refresh-genders", ts: "1" },
       say,
       client,
     });
-    expect(say.mock.calls[0][0].text).toBe("Refresh failed: network");
+    expect(client.chat.postEphemeral).toHaveBeenCalledWith({
+      channel: "C1",
+      user: "U_CALLER",
+      text: "Refresh failed: network",
+      username: "Gender Aliases",
+      icon_emoji: ":busts_in_silhouette:",
+    });
+    expect(say).not.toHaveBeenCalled();
   });
 
   it("substitutes both genders inline when both triggers appear", async () => {
