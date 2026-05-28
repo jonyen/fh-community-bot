@@ -1,4 +1,8 @@
+const BOT_USERNAME = "Gender Aliases";
+const BOT_ICON_EMOJI = ":busts_in_silhouette:";
+
 async function postResponseUrl(url, text) {
+  if (!url) return;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -14,7 +18,7 @@ async function postResponseUrl(url, text) {
 }
 
 export function createSlashRefreshHandler({ genderMapService }) {
-  return async function handleSlashRefresh({ envelope }) {
+  return async function handleSlashRefresh({ envelope, client }) {
     let text;
     try {
       const count = await genderMapService.invalidate();
@@ -22,6 +26,23 @@ export function createSlashRefreshHandler({ genderMapService }) {
     } catch (err) {
       text = `Refresh failed: ${err.message}`;
     }
+
+    if (client && envelope.channel_id && envelope.user_id) {
+      try {
+        await client.chat.postEphemeral({
+          channel: envelope.channel_id,
+          user: envelope.user_id,
+          text,
+          username: BOT_USERNAME,
+          icon_emoji: BOT_ICON_EMOJI,
+        });
+        return;
+      } catch (err) {
+        const code = err.data?.error || err.message;
+        console.warn(`[slash] postEphemeral failed (${code}); falling back to response_url`);
+      }
+    }
+
     await postResponseUrl(envelope.response_url, text);
   };
 }
