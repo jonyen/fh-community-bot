@@ -31,9 +31,13 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     !event.subtype &&
     matchesGenderEvent(event.text || "")
   ) {
-    const sayTopLevel = (msg) =>
-      client.chat.postMessage({ channel: event.channel, ...msg });
-    await genderHandler({ event, say: sayTopLevel, client });
+    const say = (msg) =>
+      client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: event.thread_ts,
+        ...msg,
+      });
+    await genderHandler({ event, say, client });
     return;
   }
 

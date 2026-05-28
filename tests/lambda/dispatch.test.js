@@ -107,6 +107,26 @@ describe("dispatchSlackEvent", () => {
     expect(client.chat.postMessage).toHaveBeenCalledWith({ channel: "C1", text: "ping" });
   });
 
+  it("threads the gender reply when !bros is posted in a thread", async () => {
+    const handler = vi.fn();
+    const genderHandler = vi.fn().mockResolvedValue();
+    const client = makeClient();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "C1", thread_ts: "1700.1", text: "!bros", user: "U1", ts: "1700.2" } },
+      handler,
+      genderHandler,
+      client,
+    });
+    expect(genderHandler).toHaveBeenCalledTimes(1);
+    const args = genderHandler.mock.calls[0][0];
+    await args.say({ text: "ping" });
+    expect(client.chat.postMessage).toHaveBeenCalledWith({
+      channel: "C1",
+      thread_ts: "1700.1",
+      text: "ping",
+    });
+  });
+
   it("does NOT route !refresh-genders typed in chat (slash command is the refresh path now)", async () => {
     const handler = vi.fn();
     const genderHandler = vi.fn();
