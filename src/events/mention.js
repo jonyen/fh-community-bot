@@ -258,7 +258,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
             ({ issue }) => `• #${issue.id} — *${issue.description}* (${issue.status})`
           );
           await say({
-            text: `Multiple issues match that description. Which one should I close?\n${lines.join("\n")}\n\nReply with \`@FH Maintenance close #<ID>\` to specify.`,
+            text: `Multiple issues match that description. Which one should I close?\n${lines.join("\n")}\n\nReply with \`@FH Community close #<ID>\` to specify.`,
             thread_ts: event.thread_ts || event.ts,
           });
         }
@@ -322,7 +322,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         const existing = openIssues.find((i) => i.id === duplicate.id);
         const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
         await say({
-          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\n<${docLink}|View in Google Sheets>\n\nIf this is a new issue, reply with \`@FH Maintenance create new: ${issueDescription}\``,
+          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\n<${docLink}|View in Google Sheets>\n\nIf this is a new issue, reply with \`@FH Community create new: ${issueDescription}\``,
           thread_ts: event.thread_ts || event.ts,
         });
         return;
