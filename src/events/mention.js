@@ -32,8 +32,11 @@ function findMatchingIssues(description, openIssues) {
 }
 
 
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId }) {
-  const pendingIssues = new Map();
+export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId, pendingStore }) {
+  // pendingStore persists issues awaiting a severity reply across Lambda
+  // containers (e.g. when the "How severe?" prompt and the reply land on
+  // different invocations). Falls back to an in-memory Map for tests/local use.
+  const pendingIssues = pendingStore || new Map();
   const createdIssues = new Map();
   const engagedThreads = new Set();
   let botUserIdPromise = null;
@@ -102,11 +105,15 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
     const description = stripMention(event.text || "");
     const threadKey = event.thread_ts || event.ts;
+    // Channel-scoped key for the persistent pending store: thread timestamps
+    // are only unique within a channel, so namespace by channel to avoid
+    // cross-channel collisions in the shared table.
+    const pendingKey = `${event.channel}:${threadKey}`;
 
     // Check if this is a severity reply for a pending issue. Accept the answer
     // from anyone in the thread (not just the original reporter) and tolerate
     // extra words around the keyword, e.g. "Medium but important to do it soon".
-    const pending = pendingIssues.get(threadKey);
+    const pending = await pendingIssues.get(pendingKey);
     if (pending) {
       const severity = parseSeverityReply(description);
       if (!severity) {
@@ -117,7 +124,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         return;
       }
 
-      pendingIssues.delete(threadKey);
+      await pendingIssues.delete(pendingKey);
 
       let id;
       try {
@@ -381,7 +388,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       console.log("[mention] done");
     } else {
       // Store pending issue and ask for severity
-      pendingIssues.set(threadKey, {
+      await pendingIssues.set(pendingKey, {
         user: event.user,
         reporterName,
         issueDescription,

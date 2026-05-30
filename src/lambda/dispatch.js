@@ -46,6 +46,9 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
   const say = (msg) =>
     client.chat.postMessage({
       channel: event.channel,
+      // Append a "(beta)" suffix to the bot's display name on maintenance
+      // replies via chat:write.customize, without renaming the Slack app.
+      username: "FH Maintenance (beta)",
       ...msg,
     });
 

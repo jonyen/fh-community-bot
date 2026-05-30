@@ -30,6 +30,7 @@ describe("dispatchSlackEvent", () => {
     await args.say({ text: "hello", thread_ts: "1" });
     expect(client.chat.postMessage).toHaveBeenCalledWith({
       channel: "C1",
+      username: "FH Maintenance (beta)",
       text: "hello",
       thread_ts: "1",
     });

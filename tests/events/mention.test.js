@@ -610,4 +610,76 @@ describe("MentionHandler", () => {
     );
     expect(mockGroq.isMaintenanceRequest).toHaveBeenCalledTimes(1);
   });
+
+  it("recovers a pending severity prompt across containers via a shared store", async () => {
+    // Simulate a shared, out-of-process store (e.g. DynamoDB) backing two
+    // separate handler instances — the "How severe?" prompt is served by one
+    // container and the reply by another.
+    const sharedStore = new Map();
+    const makeHandler = () =>
+      createMentionHandler({
+        sheetsService: mockSheets,
+        groqService: mockGroq,
+        dedupService: mockDedup,
+        channelIds: new Set(["C123"]),
+        spreadsheetId: "sheet-id",
+        pendingStore: sharedStore,
+      });
+
+    // Container A: report the issue and get prompted for severity
+    const handlerA = makeHandler();
+    await handlerA({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+
+    // Container B: a fresh instance (no in-memory state of its own) handles the
+    // severity reply, recovering the pending issue from the shared store. Its
+    // engagedThreads set is empty, so it confirms engagement via thread history
+    // (which contains the original @mention).
+    mockClient.conversations.replies.mockResolvedValue({
+      messages: [
+        { text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+        { text: "How severe is this issue?", user: "U_BOT", ts: "1.1", bot_id: "B1" },
+      ],
+    });
+    mockSay.mockClear();
+    const handlerB = makeHandler();
+    await handlerB({
+      event: { channel: "C123", text: "critical", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: "Critical", description: "lobby printer jammed" })
+    );
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Logged your issue") })
+    );
+    // The store entry is cleared once the issue is logged.
+    expect(sharedStore.size).toBe(0);
+  });
+
+  it("namespaces pending state by channel in the store", async () => {
+    const sharedStore = new Map();
+    handler = createMentionHandler({
+      sheetsService: mockSheets,
+      groqService: mockGroq,
+      dedupService: mockDedup,
+      channelIds: new Set(["C123"]),
+      spreadsheetId: "sheet-id",
+      pendingStore: sharedStore,
+    });
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect([...sharedStore.keys()]).toEqual(["C123:1"]);
+  });
 });
