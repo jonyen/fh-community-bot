@@ -5,7 +5,6 @@ import { loadConfig } from "../config.js";
 import { createSheetsService } from "../services/sheets.js";
 import { createGroqService } from "../services/groq.js";
 import { createDedupService } from "../services/dedup.js";
-import { createPendingStore } from "../services/pendingStore.js";
 import { createMentionHandler } from "../events/mention.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
@@ -35,17 +34,12 @@ export function getDeps() {
   const groqService = createGroqService(groqClient);
   const dedupService = createDedupService(groqService);
 
-  const pendingStore = config.pendingTableName
-    ? createPendingStore({ tableName: config.pendingTableName })
-    : undefined;
-
   const handler = createMentionHandler({
     sheetsService,
     groqService,
     dedupService,
     channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
-    pendingStore,
   });
 
   let genderHandler;
