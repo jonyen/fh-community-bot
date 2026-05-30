@@ -42,7 +42,6 @@ export function loadConfig() {
     googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN,
     groqApiKey: process.env.GROQ_API_KEY,
     eventQueueUrl: process.env.EVENT_QUEUE_URL,
-    pendingTableName: process.env.PENDING_TABLE_NAME || null,
     genderSheetId: process.env.GENDER_SHEET_ID || null,
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
