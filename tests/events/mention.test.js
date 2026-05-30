@@ -561,4 +561,53 @@ describe("MentionHandler", () => {
       })
     );
   });
+
+  it("accepts a severity reply with extra words around the keyword", async () => {
+    // Step 1: report the issue — bot asks for severity
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    // Step 2: answer with the severity embedded in a sentence
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "Medium but important to do it soon", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: "Medium" })
+    );
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Logged your issue") })
+    );
+  });
+
+  it("accepts a severity reply from a different user in the thread", async () => {
+    // Step 1: U1 reports the issue — bot asks for severity
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+    expect(mockGroq.isMaintenanceRequest).toHaveBeenCalledTimes(1);
+
+    // Step 2: a *different* user answers the severity question
+    mockSay.mockClear();
+    await handler({
+      event: { channel: "C123", text: "medium", user: "U2", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    // The reply is handled as the severity answer (credited to the original
+    // reporter), not re-classified as a brand-new maintenance request.
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: "Medium", reporter: "Test User" })
+    );
+    expect(mockGroq.isMaintenanceRequest).toHaveBeenCalledTimes(1);
+  });
 });
