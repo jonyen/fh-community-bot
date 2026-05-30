@@ -18,14 +18,19 @@ Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
                   EventQueue (SQS) ──▶ WorkerFn (Lambda)
                                               │
                                               ▼
-                              Groq · Google Sheets · Slack Web API
+                    Groq · Google Sheets · Slack Web API · DynamoDB
 ```
 
-Two AWS Lambdas. SQS in between for the 3-second Slack ack budget. No VPC, no database.
+Two AWS Lambdas. SQS in between for the 3-second Slack ack budget. No VPC. A
+single on-demand DynamoDB table holds short-lived conversation state (issues
+awaiting a severity reply), keyed by `channel:thread` with a TTL so abandoned
+prompts expire automatically. Because the worker runs as concurrent, ephemeral
+Lambda containers, this state can't live in process memory — the "How severe?"
+prompt and the user's reply may be handled by different containers.
 
 ## Tech Stack
 
-- AWS Lambda (Node 22, arm64), SQS, CloudWatch Logs
+- AWS Lambda (Node 22, arm64), SQS, DynamoDB, CloudWatch Logs
 - AWS SAM for IaC
 - GitHub Actions + OIDC for deploys
 - [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
@@ -58,6 +63,7 @@ npm test
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token |
 | `GROQ_API_KEY` | Groq API key (`gsk_...`) |
+| `PENDING_TABLE_NAME` | _(optional)_ DynamoDB table for pending severity prompts. Set automatically in deploys; unset locally falls back to in-memory state. |
 
 To generate a Google refresh token:
 
@@ -139,6 +145,7 @@ src/
   services/sheets.js         # Google Sheets CRUD
   services/groq.js           # LLM client
   services/dedup.js          # duplicate detection
+  services/pendingStore.js   # DynamoDB store for pending severity prompts
   lambda/
     receiver.js              # entry: verify Slack sig, enqueue to SQS
     worker.js                # entry: SQS → dispatch
