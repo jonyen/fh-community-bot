@@ -1,4 +1,4 @@
-import { extractSeverity, SEVERITY_OPTIONS } from "../lib/severity.js";
+import { extractSeverity, parseSeverityReply } from "../lib/severity.js";
 
 function stripMention(text) {
   return text.replace(/<@[A-Z0-9_]+>/g, "").trim();
@@ -103,11 +103,13 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     const description = stripMention(event.text || "");
     const threadKey = event.thread_ts || event.ts;
 
-    // Check if this is a severity reply for a pending issue
+    // Check if this is a severity reply for a pending issue. Accept the answer
+    // from anyone in the thread (not just the original reporter) and tolerate
+    // extra words around the keyword, e.g. "Medium but important to do it soon".
     const pending = pendingIssues.get(threadKey);
-    if (pending && event.user === pending.user) {
-      const severityLower = description.toLowerCase();
-      if (!SEVERITY_OPTIONS.includes(severityLower)) {
+    if (pending) {
+      const severity = parseSeverityReply(description);
+      if (!severity) {
         await say({
           text: "Please reply with one of: *Minor*, *Medium*, or *Critical*.",
           thread_ts: threadKey,
@@ -115,7 +117,6 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         return;
       }
 
-      const severity = severityLower.replace(/^./, (c) => c.toUpperCase());
       pendingIssues.delete(threadKey);
 
       let id;
