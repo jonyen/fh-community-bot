@@ -34,22 +34,6 @@ Resources:
         deadLetterTargetArn: !GetAtt EventDLQ.Arn
         maxReceiveCount: 3
 
-  # Holds maintenance issues awaiting a severity reply, keyed by channel+thread.
-  # Records auto-expire via the `ttl` attribute so abandoned prompts clear out.
-  PendingTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: pk
-          AttributeType: S
-      KeySchema:
-        - AttributeName: pk
-          KeyType: HASH
-      TimeToLiveSpecification:
-        AttributeName: ttl
-        Enabled: true
-
   ReceiverFn:
     Type: AWS::Serverless::Function
     Properties:
@@ -88,10 +72,6 @@ Resources:
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
           GROQ_API_KEY:           !Ref GroqApiKey
-          PENDING_TABLE_NAME:     !Ref PendingTable
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref PendingTable
       Events:
         FromQueue:
           Type: SQS

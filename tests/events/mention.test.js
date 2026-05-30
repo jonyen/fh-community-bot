@@ -504,11 +504,13 @@ describe("MentionHandler", () => {
 
   it("recovers engagement after cold start via slack thread lookup", async () => {
     // Simulates fresh handler instance (cold start). No in-memory engagement.
-    // Thread root has bot mention in history.
+    // Thread root has bot mention in history and the issue is already logged
+    // (no pending severity), so a follow-up command runs normally.
     mockClient.conversations.replies.mockResolvedValue({
       messages: [
         { text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
         { text: "How severe is this issue?", user: "U_BOT", ts: "1.1", bot_id: "B1" },
+        { text: "Logged your issue (severity: *Medium*).", user: "U_BOT", ts: "1.2", bot_id: "B1" },
       ],
     });
     mockSheets.getOpenIssues.mockResolvedValue([
@@ -611,11 +613,7 @@ describe("MentionHandler", () => {
     expect(mockGroq.isMaintenanceRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("recovers a pending severity prompt across containers via a shared store", async () => {
-    // Simulate a shared, out-of-process store (e.g. DynamoDB) backing two
-    // separate handler instances — the "How severe?" prompt is served by one
-    // container and the reply by another.
-    const sharedStore = new Map();
+  it("recovers a pending severity prompt across containers from the thread", async () => {
     const makeHandler = () =>
       createMentionHandler({
         sheetsService: mockSheets,
@@ -623,10 +621,9 @@ describe("MentionHandler", () => {
         dedupService: mockDedup,
         channelIds: new Set(["C123"]),
         spreadsheetId: "sheet-id",
-        pendingStore: sharedStore,
       });
 
-    // Container A: report the issue and get prompted for severity
+    // Container A: report the issue and get prompted for severity.
     const handlerA = makeHandler();
     await handlerA({
       event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
@@ -635,14 +632,13 @@ describe("MentionHandler", () => {
     });
     expect(mockSheets.appendIssue).not.toHaveBeenCalled();
 
-    // Container B: a fresh instance (no in-memory state of its own) handles the
-    // severity reply, recovering the pending issue from the shared store. Its
-    // engagedThreads set is empty, so it confirms engagement via thread history
-    // (which contains the original @mention).
+    // Container B: a fresh instance with no in-memory state. The severity reply
+    // is recovered purely from the Slack thread transcript: the bot asked for
+    // severity and hasn't logged yet, so "critical" completes the issue.
     mockClient.conversations.replies.mockResolvedValue({
       messages: [
         { text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
-        { text: "How severe is this issue?", user: "U_BOT", ts: "1.1", bot_id: "B1" },
+        { text: "How severe is this issue? Please reply with one of: *minor*, *medium*, or *critical*.", user: "U_BOT", ts: "1.1", bot_id: "B1" },
       ],
     });
     mockSay.mockClear();
@@ -654,32 +650,38 @@ describe("MentionHandler", () => {
     });
 
     expect(mockSheets.appendIssue).toHaveBeenCalledWith(
-      expect.objectContaining({ severity: "Critical", description: "lobby printer jammed" })
+      expect.objectContaining({ severity: "Critical", description: "lobby printer jammed", reporter: "Test User" })
     );
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("Logged your issue") })
     );
-    // The store entry is cleared once the issue is logged.
-    expect(sharedStore.size).toBe(0);
   });
 
-  it("namespaces pending state by channel in the store", async () => {
-    const sharedStore = new Map();
-    handler = createMentionHandler({
+  it("does not re-log from the thread once the issue is already logged", async () => {
+    // Thread shows the prompt AND a prior "Logged your issue" confirmation, so a
+    // later "critical" reply must NOT create a second issue — it's recovered as
+    // already-resolved and falls through (here, to a note on the created issue).
+    mockClient.conversations.replies.mockResolvedValue({
+      messages: [
+        { text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+        { text: "How severe is this issue? Please reply with one of: *minor*, *medium*, or *critical*.", user: "U_BOT", ts: "1.1", bot_id: "B1" },
+        { text: "Logged your issue (severity: *Critical*).", user: "U_BOT", ts: "1.2", bot_id: "B1" },
+      ],
+    });
+
+    const freshHandler = createMentionHandler({
       sheetsService: mockSheets,
       groqService: mockGroq,
       dedupService: mockDedup,
       channelIds: new Set(["C123"]),
       spreadsheetId: "sheet-id",
-      pendingStore: sharedStore,
     });
-
-    await handler({
-      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+    await freshHandler({
+      event: { channel: "C123", type: "message", text: "and the lid is cracked too", user: "U1", ts: "2", thread_ts: "1" },
       say: mockSay,
       client: mockClient,
     });
 
-    expect([...sharedStore.keys()]).toEqual(["C123:1"]);
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
   });
 });

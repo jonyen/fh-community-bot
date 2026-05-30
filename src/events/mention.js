@@ -32,11 +32,17 @@ function findMatchingIssues(description, openIssues) {
 }
 
 
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId, pendingStore }) {
-  // pendingStore persists issues awaiting a severity reply across Lambda
-  // containers (e.g. when the "How severe?" prompt and the reply land on
-  // different invocations). Falls back to an in-memory Map for tests/local use.
-  const pendingIssues = pendingStore || new Map();
+// Distinctive substrings of the bot's own messages, used to reconstruct
+// conversation state from the Slack thread transcript (the source of truth).
+const SEVERITY_PROMPT = "How severe is this issue?";
+const LOGGED_CONFIRMATION = "Logged your issue";
+
+export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId }) {
+  // In-memory caches are warm-path optimizations only. The Slack thread itself
+  // is the source of truth: a severity reply handled by a different or cold
+  // Lambda container (where these caches are empty) is recovered by reading the
+  // thread — see recoverPendingFromThread.
+  const pendingIssues = new Map();
   const createdIssues = new Map();
   const engagedThreads = new Set();
   let botUserIdPromise = null;
@@ -52,10 +58,8 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     return botUserIdPromise;
   }
 
-  async function threadHasBotMention(client, channel, threadTs) {
-    const botUserId = await getBotUserId(client);
-    if (!botUserId) return false;
-    const needle = `<@${botUserId}>`;
+  async function fetchThreadReplies(client, channel, threadTs) {
+    const messages = [];
     let cursor;
     try {
       do {
@@ -65,16 +69,67 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
           limit: 200,
           ...(cursor ? { cursor } : {}),
         });
-        for (const m of res.messages || []) {
-          if ((m.text || "").includes(needle)) return true;
-        }
+        for (const m of res.messages || []) messages.push(m);
         cursor = res.response_metadata?.next_cursor;
       } while (cursor);
     } catch (err) {
       console.error("conversations.replies failed:", err.message);
-      return false;
+      return null;
     }
-    return false;
+    return messages;
+  }
+
+  function isBotMessage(message, botUserId) {
+    return Boolean(message.bot_id) || (botUserId && message.user === botUserId);
+  }
+
+  function threadHasBotMention(messages, botUserId) {
+    if (!botUserId || !messages) return false;
+    const needle = `<@${botUserId}>`;
+    return messages.some((m) => (m.text || "").includes(needle));
+  }
+
+  // Reconstruct the pending-severity state from a thread transcript. Returns a
+  // pending descriptor when the bot has asked for severity and has not yet
+  // logged the issue; otherwise null. Used when the in-memory cache misses
+  // (cold start / a reply routed to a different container).
+  async function recoverPendingFromThread({ messages, botUserId, client }) {
+    if (!messages || messages.length === 0) return null;
+
+    let askedSeverity = false;
+    let alreadyLogged = false;
+    for (const m of messages) {
+      if (!isBotMessage(m, botUserId)) continue;
+      const text = m.text || "";
+      if (text.includes(SEVERITY_PROMPT)) askedSeverity = true;
+      if (text.includes(LOGGED_CONFIRMATION)) alreadyLogged = true;
+    }
+    if (!askedSeverity || alreadyLogged) return null;
+
+    // The thread root is the original report; its text (minus the @mention) is
+    // the issue description and its author is the reporter.
+    const root = messages[0];
+    const issueDescription = stripMention(root.text || "");
+    if (!issueDescription) return null;
+
+    let reporterName = root.user;
+    try {
+      const userInfo = await client.users.info({ user: root.user });
+      reporterName = userInfo.user.real_name || userInfo.user.name || root.user;
+    } catch (err) {
+      console.error("Failed to fetch user info:", err.message);
+    }
+
+    let suggestion = null;
+    try {
+      suggestion = await groqService.suggestFix(issueDescription);
+    } catch (err) {
+      console.error("suggestFix failed:", err.message);
+    }
+
+    // duplicate is null on recovery: dedup ran (if at all) when the issue was
+    // first reported, and we don't re-run it here.
+    return { user: root.user, reporterName, issueDescription, suggestion, duplicate: null };
   }
 
   return async function handleMention({ event, say, client }) {
@@ -84,11 +139,21 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
     const threadKeyEarly = event.thread_ts || event.ts;
     const hasMention = /<@[A-Z0-9_]+>/.test(event.text || "");
-    if (hasMention) {
-      engagedThreads.add(threadKeyEarly);
-    } else if (event.thread_ts && !engagedThreads.has(threadKeyEarly)) {
-      const engaged = await threadHasBotMention(client, event.channel, event.thread_ts);
-      if (!engaged) return;
+
+    // For a thread reply without an @mention and not known-engaged, we read the
+    // thread transcript to (a) confirm the bot is engaged in this thread and
+    // (b) recover any pending-severity state lost with a cold/other container.
+    // Fetch once and reuse for both.
+    let threadMessages = null;
+    let botUserId = null;
+    const needsThreadLookup = !hasMention && event.thread_ts && !engagedThreads.has(threadKeyEarly);
+    if (needsThreadLookup) {
+      botUserId = await getBotUserId(client);
+      threadMessages = await fetchThreadReplies(client, event.channel, event.thread_ts);
+      if (!threadHasBotMention(threadMessages, botUserId)) return;
+    }
+
+    if (hasMention || needsThreadLookup) {
       engagedThreads.add(threadKeyEarly);
     }
 
@@ -105,15 +170,20 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
     const description = stripMention(event.text || "");
     const threadKey = event.thread_ts || event.ts;
-    // Channel-scoped key for the persistent pending store: thread timestamps
-    // are only unique within a channel, so namespace by channel to avoid
-    // cross-channel collisions in the shared table.
-    const pendingKey = `${event.channel}:${threadKey}`;
 
     // Check if this is a severity reply for a pending issue. Accept the answer
     // from anyone in the thread (not just the original reporter) and tolerate
     // extra words around the keyword, e.g. "Medium but important to do it soon".
-    const pending = await pendingIssues.get(pendingKey);
+    // The in-memory cache is a warm-path optimization; on a miss we reconstruct
+    // the pending state from the Slack thread (the source of truth).
+    let pending = pendingIssues.get(threadKey);
+    if (!pending && event.thread_ts) {
+      if (!threadMessages) {
+        botUserId = botUserId || (await getBotUserId(client));
+        threadMessages = await fetchThreadReplies(client, event.channel, event.thread_ts);
+      }
+      pending = await recoverPendingFromThread({ messages: threadMessages, botUserId, client });
+    }
     if (pending) {
       const severity = parseSeverityReply(description);
       if (!severity) {
@@ -124,7 +194,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         return;
       }
 
-      await pendingIssues.delete(pendingKey);
+      pendingIssues.delete(threadKey);
 
       let id;
       try {
@@ -387,8 +457,10 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       await say({ text: responseText, thread_ts: threadKey });
       console.log("[mention] done");
     } else {
-      // Store pending issue and ask for severity
-      await pendingIssues.set(pendingKey, {
+      // Cache pending issue (warm-path) and ask for severity. If this prompt
+      // and the reply land on different containers, the reply is recovered from
+      // the thread transcript instead — see recoverPendingFromThread.
+      pendingIssues.set(threadKey, {
         user: event.user,
         reporterName,
         issueDescription,
