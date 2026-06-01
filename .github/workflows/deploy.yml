@@ -59,4 +59,8 @@ jobs:
               GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
-              GroqApiKey="${{ secrets.GROQ_API_KEY }}"
+              GroqApiKey="${{ secrets.GROQ_API_KEY }}" \
+              SlackBotUserId="${{ secrets.SLACK_BOT_USER_ID }}" \
+              BballChannels="${{ vars.BBALL_CHANNEL_IDS }}" \
+              GitSha="${{ github.sha }}" \
+              GithubRunNumber="${{ github.run_number }}"
