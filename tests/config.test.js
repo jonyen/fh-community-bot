@@ -90,4 +90,32 @@ describe("loadConfig", () => {
     expect(config.genderSheetTab).toBe("Roster");
     expect(config.genderCacheTtlDays).toBe(1);
   });
+
+  it("exposes optional bball config with defaults", async () => {
+    const prev = { ...process.env };
+    Object.assign(process.env, VALID_ENV);
+    process.env.SLACK_BOT_USER_ID = "UBOT";
+    process.env.BBALL_CHANNEL_IDS = "C1, C2";
+    delete process.env.GIT_SHA;
+    delete process.env.GITHUB_RUN_NUMBER;
+    const { loadConfig } = await import("../src/config.js");
+    const cfg = loadConfig();
+    expect(cfg.slackBotUserId).toBe("UBOT");
+    expect(cfg.bballChannelIds).toEqual(["C1", "C2"]);
+    expect(cfg.gitSha).toBe("unknown");
+    expect(cfg.githubRunNumber).toBe("unknown");
+    process.env = prev;
+  });
+
+  it("defaults bball config to empty/null when unset", async () => {
+    const prev = { ...process.env };
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.SLACK_BOT_USER_ID;
+    delete process.env.BBALL_CHANNEL_IDS;
+    const { loadConfig } = await import("../src/config.js");
+    const cfg = loadConfig();
+    expect(cfg.slackBotUserId).toBeNull();
+    expect(cfg.bballChannelIds).toEqual([]);
+    process.env = prev;
+  });
 });

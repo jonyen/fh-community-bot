@@ -11,6 +11,13 @@ const REQUIRED = [
   "GROQ_API_KEY",
 ];
 
+function parseOptionalChannelList(raw) {
+  return (raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function parseChannelIds(raw) {
   const ids = (raw || "")
     .split(",")
@@ -45,5 +52,9 @@ export function loadConfig() {
     genderSheetId: process.env.GENDER_SHEET_ID || null,
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
+    slackBotUserId: process.env.SLACK_BOT_USER_ID || null,
+    bballChannelIds: parseOptionalChannelList(process.env.BBALL_CHANNEL_IDS),
+    gitSha: process.env.GIT_SHA || "unknown",
+    githubRunNumber: process.env.GITHUB_RUN_NUMBER || "unknown",
   };
 }
