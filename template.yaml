@@ -12,6 +12,11 @@ Parameters:
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
   GroqApiKey:           { Type: String, NoEcho: true }
+  SlackBotUserId:       { Type: String, Default: "" }
+  BballChannels:        { Type: String, Default: "" }
+  ScheduleExpression:   { Type: String, Default: "cron(0 8 ? * TUE,THU *)" }
+  GitSha:               { Type: String, Default: "unknown" }
+  GithubRunNumber:      { Type: String, Default: "unknown" }
 
 Globals:
   Function:
@@ -72,6 +77,10 @@ Resources:
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
           GROQ_API_KEY:           !Ref GroqApiKey
+          SLACK_BOT_USER_ID:      !Ref SlackBotUserId
+          BBALL_CHANNEL_IDS:      !Ref BballChannels
+          GIT_SHA:                !Ref GitSha
+          GITHUB_RUN_NUMBER:      !Ref GithubRunNumber
       Events:
         FromQueue:
           Type: SQS
@@ -84,6 +93,57 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${WorkerFn}
       RetentionInDays: 14
+
+  PostMessageFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/postMessage.handler
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN:   !Ref SlackBotToken
+          SLACK_BOT_USER_ID: !Ref SlackBotUserId
+          BBALL_CHANNEL_IDS: !Ref BballChannels
+
+  PostMessageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PostMessageFn}
+      RetentionInDays: 14
+
+  PostScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokePostMessage
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt PostMessageFn.Arn
+
+  PostSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: fh-bball-post-schedule
+      Description: Tue/Thu 8am ET basketball roll-call (DST-aware)
+      ScheduleExpression: !Ref ScheduleExpression
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt PostMessageFn.Arn
+        RoleArn: !GetAtt PostScheduleRole.Arn
 
 Outputs:
   FunctionUrl:
