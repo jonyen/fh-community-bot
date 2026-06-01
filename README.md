@@ -8,6 +8,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification
 - **Fix suggestions** — AI-powered quick-fix recommendations for common issues
 - **Issue management** — list open issues, close/resolve by ID or description
+- **Basketball roll-call** — twice-weekly auto-post (Tue/Thu 8am ET) with RSVP-via-reaction roster and `/ball` slash command
 
 ## Architecture
 
@@ -58,6 +59,8 @@ npm test
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token |
 | `GROQ_API_KEY` | Groq API key (`gsk_...`) |
+| `SLACK_BOT_USER_ID` | The bot's own Slack user ID — used to locate/filter the bot's roll-call messages |
+| `BBALL_CHANNEL_IDS` | Comma-separated channel IDs the scheduled basketball post targets |
 
 To generate a Google refresh token:
 
@@ -130,21 +133,64 @@ Before the gender feature works in production, update the Slack app config:
 - **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
 - Invite the bot to each channel where these triggers should work.
 
+## Basketball roll-call
+
+A twice-weekly "are you playing?" post auto-fires every Tuesday and Thursday at 8 am ET. Members RSVP by reacting to the post; the bot keeps a live roster in the message body.
+
+### How it works
+
+The `PostSchedule` EventBridge Scheduler (`cron(0 8 ? * TUE,THU *)`, `America/New_York`) triggers `PostMessageFn` (a separate Lambda) which posts the roll-call message to every channel listed in `BBALL_CHANNEL_IDS`. Reactions on that message are delivered to the main Slack app → `ReceiverFn` → SQS → `WorkerFn`, which edits the message to reflect the updated roster.
+
+| Emoji | Reaction name(s) | Meaning |
+|---|---|---|
+| 🏀 / ✅ / 👍 | `basketball`, `white_check_mark`, `+1` | **In** |
+| ❌ / 👎 | `x`, `-1`, `nope` | **Out** |
+| anything else | — | **Maybe** |
+
+### `/ball` slash command
+
+| Subcommand | Description |
+|---|---|
+| `/ball <message>` | Post a roll-call message immediately (plain post) |
+| `/ball edit <message>` | Edit the most recent roll-call message |
+| `/ball delete` | Delete the most recent roll-call message |
+| `/ball info` | Show the current deploy SHA and run number |
+
+### Changing the schedule
+
+Edit the `ScheduleExpression` parameter default in `template.yaml` and redeploy. There is no runtime `/ball schedule` control — the template is the single source of truth.
+
+### Migration from ffx-bball-bot
+
+Full design and rationale: [`docs/superpowers/specs/2026-06-01-fold-ffx-bball-bot-design.md`](docs/superpowers/specs/2026-06-01-fold-ffx-bball-bot-design.md)
+
+One-time manual cutover steps (in order):
+
+1. **Slack app** — in the surviving fh Slack app: add `reaction_added` and `reaction_removed` event subscriptions; add the `/ball` slash command pointing at the fh `ReceiverFn` Function URL; union the OAuth scopes ffx required (`reactions:read`, `users:read`, `channels:history`) onto the fh app. Reinstall the app if scopes changed.
+2. **Schedule cutover** ⚠️ — copy the live `ScheduleExpression` from the old `ffx-bball-bot` EventBridge schedule into the fh deploy (template default or a `--parameter-overrides` override), then deploy. Once you have confirmed the fh post fires correctly, **delete or disable the old `ffx-bball-bot` CloudFormation stack** so its schedule no longer fires. Both stacks post until the old one is gone — do not skip this step.
+3. **Archive repo** — archive the `ffx-bball-bot` GitHub repo. Optionally remove the local `../ffx-bball-bot` checkout.
+
 ## Project structure
 
 ```
 src/
   config.js                  # env loading
   events/mention.js          # @mention business logic (Slack-runtime-agnostic)
+  events/ball.js             # /ball slash-command handler
+  events/reaction.js         # reaction_added/removed → roster update
   services/sheets.js         # Google Sheets CRUD
   services/groq.js           # LLM client
   services/dedup.js          # duplicate detection
+  services/weather.js        # weather fetch (used in roll-call post)
+  lib/formatMessage.js       # roll-call message formatter
+  lib/categorize.js          # reaction → In/Out/Maybe categorizer
   lambda/
     receiver.js              # entry: verify Slack sig, enqueue to SQS
     worker.js                # entry: SQS → dispatch
-    dispatch.js              # SQS record → (event, say, client) → mention handler
+    dispatch.js              # SQS record → (event, say, client) → handler
     clients.js               # cold-start dep wiring
     slack-signature.js       # HMAC verification
+    postMessage.js           # entry: EventBridge → post roll-call
 template.yaml                # SAM
 samconfig.toml               # SAM defaults
 .github/workflows/deploy.yml # CI/CD
