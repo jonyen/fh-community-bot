@@ -13,7 +13,7 @@ async function postResponseUrl(url, text) {
 }
 
 export async function sendEphemeral({ client, channel, user, responseUrl, text }) {
-  if (client && channel && user) {
+  if (client && user) {
     try {
       await client.chat.postEphemeral({ channel, user, text });
       return;
