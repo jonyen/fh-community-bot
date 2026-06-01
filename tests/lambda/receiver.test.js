@@ -134,6 +134,18 @@ describe("receiver.handler", () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
+  it("enqueues reaction_added events (non-message event type)", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = eventCallback({ type: "reaction_added", item: { type: "message", channel: "C1", ts: "9.9" }, user: "U1" });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const call = sendMock.mock.calls[0][0];
+    expect(call.input.QueueUrl).toBe("https://sqs.example/q");
+    expect(call.input.MessageBody).toBe(body);
+  });
+
   it("enqueues a slash command envelope from a form-encoded payload", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const body =
