@@ -220,4 +220,44 @@ describe("dispatchSlackEvent", () => {
     });
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it("routes /ball slash envelope to ballHandler with the client", async () => {
+    const ballHandler = vi.fn().mockResolvedValue();
+    const client = makeClient();
+    const envelope = { type: "slash_command", command: "/ball", text: "tonight 7pm", user_id: "U1", channel_id: "C1" };
+    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), ballHandler, client });
+    expect(ballHandler).toHaveBeenCalledTimes(1);
+    expect(ballHandler.mock.calls[0][0].envelope).toBe(envelope);
+    expect(ballHandler.mock.calls[0][0].client).toBe(client);
+  });
+
+  it("does not route /ball when no ballHandler is provided", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({ slackEnvelope: { type: "slash_command", command: "/ball" }, handler, client: makeClient() });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("routes reaction_added to reactionHandler", async () => {
+    const reactionHandler = vi.fn().mockResolvedValue();
+    const client = makeClient();
+    const event = { type: "reaction_added", item: { channel: "C1", ts: "9.9" }, user: "U1" };
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler: vi.fn(), reactionHandler, client });
+    expect(reactionHandler).toHaveBeenCalledTimes(1);
+    expect(reactionHandler.mock.calls[0][0].event).toBe(event);
+    expect(reactionHandler.mock.calls[0][0].client).toBe(client);
+  });
+
+  it("routes reaction_removed to reactionHandler", async () => {
+    const reactionHandler = vi.fn().mockResolvedValue();
+    const event = { type: "reaction_removed", item: { channel: "C1", ts: "9.9" }, user: "U1" };
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler: vi.fn(), reactionHandler, client: makeClient() });
+    expect(reactionHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not route reactions to the maintenance handler", async () => {
+    const handler = vi.fn();
+    const event = { type: "reaction_added", item: { channel: "C1", ts: "9.9" }, user: "U1" };
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler, client: makeClient() });
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
