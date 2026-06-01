@@ -9,6 +9,9 @@ import { createMentionHandler } from "../events/mention.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
 import { createSlashRefreshHandler } from "../events/slashRefresh.js";
+import { fetchWeather } from "../services/weather.js";
+import { createBallHandler } from "../events/ball.js";
+import { createReactionHandler } from "../events/reaction.js";
 
 let cached;
 
@@ -55,7 +58,15 @@ export function getDeps() {
     slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
-  cached = { client: slack, handler, genderHandler, slashRefreshHandler };
+  const ballHandler = createBallHandler({
+    fetchWeather,
+    botUserId: config.slackBotUserId,
+    gitSha: config.gitSha,
+    runNumber: config.githubRunNumber,
+  });
+  const reactionHandler = createReactionHandler({ botUserId: config.slackBotUserId });
+
+  cached = { client: slack, handler, genderHandler, slashRefreshHandler, ballHandler, reactionHandler };
   return cached;
 }
 
