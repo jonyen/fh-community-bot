@@ -8,7 +8,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification
 - **Fix suggestions** — AI-powered quick-fix recommendations for common issues
 - **Issue management** — list open issues, close/resolve by ID or description
-- **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet (first photo shown as an inline thumbnail)
+- **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
 
 ## Architecture
 
@@ -75,13 +75,18 @@ node scripts/get-google-token.js <client_id> <client_secret>
 
 ## Photos
 
-Users can attach photos to a maintenance report (or to any reply in the issue's thread). Each image is copied from Slack into a Google Drive folder and referenced in the sheet: the first photo renders as an inline `=IMAGE()` thumbnail (column I), and every photo is listed as a clickable link (column J), which also grows as more photos are added in the thread.
+Users can attach photos to a maintenance report (or to any reply in the issue's thread). Each image is copied from Slack into a Google Drive folder and listed as a clickable link in the sheet's **Photos** column (column I), which grows as more photos are added in the thread.
+
+The links are **internal**: the uploaded files are not made public (the Workspace org blocks "anyone with link" sharing), so they open for people who can already see the Drive folder / spreadsheet. There is no inline thumbnail — Google Sheets' `=IMAGE()` can only render publicly accessible images, which this setup intentionally avoids.
 
 One-time setup:
 
-1. **Regenerate the Google refresh token** with Drive access. `scripts/get-google-token.js` now requests both the Sheets scope and `drive.file` (which lets the app manage only the files it creates). Re-run it and update `GOOGLE_REFRESH_TOKEN`.
-2. **Create a Drive folder** for issue photos, share it with the same Google identity that issued the refresh token, and set its ID as `GOOGLE_DRIVE_FOLDER_ID`. If unset, photos upload to the account's Drive root.
-3. **Add the `files:read` Slack OAuth scope** (needed to download uploaded files) and reinstall the app.
+1. **Regenerate the Google refresh token** with Drive access. `scripts/get-google-token.js` requests both the Sheets scope and `drive.file` (which lets the app manage only the files it creates). The `google-token` GitHub workflow does this entirely from CI. Update `GOOGLE_REFRESH_TOKEN` afterward.
+2. **Enable the Google Drive API** in the Cloud project (it's separate from the Sheets API).
+3. **Create a Drive folder** for issue photos, share it (and/or the spreadsheet) with the people who should see the photos, give the token's Google identity edit access, and set the folder ID as the `GOOGLE_DRIVE_FOLDER_ID` repo variable. If unset, photos upload to the account's Drive root.
+4. **Add the `files:read` Slack OAuth scope** (needed to download uploaded files) and reinstall the app.
+
+Run the `verify-drive` workflow any time to confirm the token can upload into the configured folder.
 
 The Event Subscriptions already in place for the gender feature (`message.channels` / `message.groups`) also deliver the `file_share` events that carry photos, so no additional event subscriptions are needed.
 

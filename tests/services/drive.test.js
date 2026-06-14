@@ -19,7 +19,7 @@ describe("DriveService", () => {
     service = createDriveService(mockDrive, "FOLDER1");
   });
 
-  it("uploads into the configured folder and returns image + view URLs", async () => {
+  it("uploads into the configured folder and returns the view URL", async () => {
     const result = await service.uploadPhoto({
       buffer: Buffer.from("img-bytes"),
       name: "leak.jpg",
@@ -35,18 +35,14 @@ describe("DriveService", () => {
     );
     expect(result).toEqual({
       fileId: "FILE123",
-      imageUrl: "https://lh3.googleusercontent.com/d/FILE123",
       viewUrl: "https://drive.google.com/file/d/FILE123/view",
     });
   });
 
-  it("shares the uploaded file anyone-with-link reader", async () => {
+  it("does not set a public sharing permission", async () => {
     await service.uploadPhoto({ buffer: Buffer.from("x"), name: "a.png", mimeType: "image/png" });
 
-    expect(mockDrive.permissions.create).toHaveBeenCalledWith({
-      fileId: "FILE123",
-      requestBody: { role: "reader", type: "anyone" },
-    });
+    expect(mockDrive.permissions.create).not.toHaveBeenCalled();
   });
 
   it("omits parents when no folder is configured", async () => {

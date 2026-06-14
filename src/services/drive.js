@@ -13,14 +13,11 @@ export function createDriveService(driveClient, folderId) {
 
     const fileId = res.data.id;
 
-    await driveClient.permissions.create({
-      fileId,
-      requestBody: { role: "reader", type: "anyone" },
-    });
-
+    // No public permission is set: the org disallows "anyone with link" sharing,
+    // and these links are for internal viewers who can already see the folder
+    // (the file inherits the folder's sharing).
     return {
       fileId,
-      imageUrl: `https://lh3.googleusercontent.com/d/${fileId}`,
       viewUrl: res.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
     };
   }
