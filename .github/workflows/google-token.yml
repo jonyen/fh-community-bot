@@ -1,0 +1,38 @@
+name: google-token
+
+# Re-issue the Google OAuth refresh token (Sheets + Drive scopes) from CI, where
+# the GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET secrets are readable. Two runs:
+#   1. Run with no input  -> logs the consent URL.
+#   2. Sign in, copy the `code` from the localhost redirect, run again with it
+#      in `auth_code` -> logs the new refresh token to paste into the secret.
+on:
+  workflow_dispatch:
+    inputs:
+      auth_code:
+        description: "Leave blank to get the sign-in URL. After signing in, paste the redirect code (or full localhost URL) here to mint the token."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  token:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Issue / exchange Google OAuth token
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          AUTH_CODE: ${{ inputs.auth_code }}
+        run: node scripts/google-token-ci.js
