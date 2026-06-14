@@ -5,7 +5,9 @@ function shouldSkip(event) {
 
   if (event.type === "message") {
     if (!event.thread_ts) return true;
-    if (event.bot_id || event.subtype) return true;
+    if (event.bot_id) return true;
+    // Allow file_share (photo uploads) through; skip other subtypes (edits, joins, etc.)
+    if (event.subtype && event.subtype !== "file_share") return true;
     if (/<@[A-Z0-9_]+>/.test(event.text || "")) return true;
     return false;
   }

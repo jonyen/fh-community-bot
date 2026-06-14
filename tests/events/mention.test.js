@@ -21,6 +21,7 @@ describe("MentionHandler", () => {
       appendIssue: vi.fn().mockResolvedValue("1"),
       updateIssueStatus: vi.fn().mockResolvedValue({}),
       appendNote: vi.fn().mockResolvedValue({}),
+      appendPhotos: vi.fn().mockResolvedValue({}),
     };
     mockGroq = {
       suggestFix: vi.fn().mockResolvedValue("Try restarting it."),
@@ -683,5 +684,89 @@ describe("MentionHandler", () => {
     });
 
     expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+  });
+
+  describe("photos", () => {
+    let mockPhotoService;
+    let photoHandler;
+
+    beforeEach(() => {
+      mockPhotoService = {
+        collectPhotos: vi.fn().mockResolvedValue([
+          { imageUrl: "https://lh3.googleusercontent.com/d/A", viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
+        ]),
+      };
+      photoHandler = createMentionHandler({
+        sheetsService: mockSheets,
+        groqService: mockGroq,
+        dedupService: mockDedup,
+        channelIds: new Set(["C123"]),
+        spreadsheetId: "sheet-id",
+        photoService: mockPhotoService,
+      });
+    });
+
+    it("attaches photos when the issue is created with inline severity", async () => {
+      const files = [{ id: "F1", name: "a.jpg", mimetype: "image/jpeg", url_private_download: "u1" }];
+      await photoHandler({
+        event: { channel: "C123", text: "<@U_BOT> water leak - critical", user: "U1", ts: "1", files },
+        say: mockSay,
+        client: mockClient,
+      });
+
+      expect(mockPhotoService.collectPhotos).toHaveBeenCalledWith(files);
+      expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          photos: [
+            { imageUrl: "https://lh3.googleusercontent.com/d/A", viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
+          ],
+        })
+      );
+    });
+
+    it("attaches the original report's photos after a severity reply", async () => {
+      const files = [{ id: "F1", name: "a.jpg", mimetype: "image/jpeg", url_private_download: "u1" }];
+      // Step 1: report with a photo, no severity -> bot asks for severity, photo deferred
+      await photoHandler({
+        event: { channel: "C123", text: "<@U_BOT> water leak", user: "U1", ts: "1", files },
+        say: mockSay,
+        client: mockClient,
+      });
+      expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+
+      // Step 2: severity reply (no files of its own)
+      await photoHandler({
+        event: { channel: "C123", text: "critical", user: "U1", ts: "2", thread_ts: "1" },
+        say: mockSay,
+        client: mockClient,
+      });
+
+      expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ photos: [expect.objectContaining({ name: "a.jpg" })] })
+      );
+    });
+
+    it("appends a photo-only thread reply to an existing issue", async () => {
+      // Step 1: create the issue
+      await photoHandler({
+        event: { channel: "C123", text: "<@U_BOT> water leak - critical", user: "U1", ts: "1" },
+        say: mockSay,
+        client: mockClient,
+      });
+      mockSay.mockClear();
+
+      // Step 2: photo-only reply (no text)
+      const files = [{ id: "F2", name: "more.jpg", mimetype: "image/jpeg", url_private_download: "u2" }];
+      await photoHandler({
+        event: { channel: "C123", text: "", user: "U1", ts: "3", thread_ts: "1", files },
+        say: mockSay,
+        client: mockClient,
+      });
+
+      expect(mockSheets.appendPhotos).toHaveBeenCalledWith("1", [expect.objectContaining({ name: "a.jpg" })]);
+      expect(mockSay).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining("photo"), thread_ts: "1" })
+      );
+    });
   });
 });

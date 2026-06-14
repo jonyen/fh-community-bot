@@ -40,6 +40,7 @@ export function loadConfig() {
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN,
+    googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID || null,
     groqApiKey: process.env.GROQ_API_KEY,
     eventQueueUrl: process.env.EVENT_QUEUE_URL,
     genderSheetId: process.env.GENDER_SHEET_ID || null,
