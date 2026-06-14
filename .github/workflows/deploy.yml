@@ -46,7 +46,16 @@ jobs:
         run: sam build
 
       - name: SAM deploy
+        env:
+          GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
         run: |
+          # Only pass the optional GoogleDriveFolderId override when it's set —
+          # SAM rejects an empty `Key=` value rather than falling back to the
+          # template Default.
+          OPTIONAL_PARAMS=()
+          if [ -n "$GOOGLE_DRIVE_FOLDER_ID" ]; then
+            OPTIONAL_PARAMS+=("GoogleDriveFolderId=$GOOGLE_DRIVE_FOLDER_ID")
+          fi
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
@@ -60,4 +69,4 @@ jobs:
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
               GroqApiKey="${{ secrets.GROQ_API_KEY }}" \
-              GoogleDriveFolderId="${{ vars.GOOGLE_DRIVE_FOLDER_ID }}"
+              "${OPTIONAL_PARAMS[@]}"
