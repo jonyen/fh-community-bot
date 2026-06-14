@@ -37,7 +37,7 @@ function findMatchingIssues(description, openIssues) {
 const SEVERITY_PROMPT = "How severe is this issue?";
 const LOGGED_CONFIRMATION = "Logged your issue";
 
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId }) {
+export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId, photoService }) {
   // In-memory caches are warm-path optimizations only. The Slack thread itself
   // is the source of truth: a severity reply handled by a different or cold
   // Lambda container (where these caches are empty) is recovered by reading the
@@ -56,6 +56,16 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       });
     }
     return botUserIdPromise;
+  }
+
+  async function collectPhotos(files) {
+    if (!photoService || !files || files.length === 0) return [];
+    try {
+      return await photoService.collectPhotos(files);
+    } catch (err) {
+      console.error("collectPhotos failed:", err.message);
+      return [];
+    }
   }
 
   async function fetchThreadReplies(client, channel, threadTs) {
@@ -129,7 +139,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
     // duplicate is null on recovery: dedup ran (if at all) when the issue was
     // first reported, and we don't re-run it here.
-    return { user: root.user, reporterName, issueDescription, suggestion, duplicate: null };
+    return { user: root.user, reporterName, issueDescription, suggestion, duplicate: null, files: root.files || [] };
   }
 
   return async function handleMention({ event, say, client }) {
@@ -196,12 +206,15 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
 
       pendingIssues.delete(threadKey);
 
+      const photos = await collectPhotos([...(pending.files || []), ...(event.files || [])]);
+
       let id;
       try {
         id = await sheetsService.appendIssue({
           reporter: pending.reporterName,
           description: pending.issueDescription,
           severity,
+          ...(photos.length ? { photos } : {}),
         });
       } catch {
         await say({
@@ -232,22 +245,32 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       return;
     }
 
-    // If this is a thread reply for a created issue and not a command, append as a note
+    // If this is a thread reply for a created issue and not a command, append the
+    // text as a note and/or attach any photos.
     const issueRowId = createdIssues.get(threadKey);
-    if (issueRowId && event.thread_ts && description) {
-      // Don't treat list/close/create commands as notes
-      const isCommand = /\b(list|show|what are|open requests|open issues|status)\b/i.test(description)
-        || /^(?:close|resolve|mark as resolved)\s+/i.test(description)
-        || /^create new:\s*/i.test(description);
+    if (issueRowId && event.thread_ts) {
+      const isCommand =
+        description &&
+        (/\b(list|show|what are|open requests|open issues|status)\b/i.test(description) ||
+          /^(?:close|resolve|mark as resolved)\s+/i.test(description) ||
+          /^create new:\s*/i.test(description));
+
       if (!isCommand) {
-        try {
-          await sheetsService.appendNote(issueRowId, description);
-          await say({ text: "Got it, added that to the notes.", thread_ts: threadKey });
-        } catch (err) {
-          console.error("Sheets error:", err.message);
-          await say({ text: "Couldn't update the notes right now.", thread_ts: threadKey });
+        const photos = await collectPhotos(event.files);
+        if (description || photos.length) {
+          try {
+            if (description) await sheetsService.appendNote(issueRowId, description);
+            if (photos.length) await sheetsService.appendPhotos(issueRowId, photos);
+            const text = description
+              ? "Got it, added that to the notes."
+              : "Got it, added that photo to the issue.";
+            await say({ text, thread_ts: threadKey });
+          } catch (err) {
+            console.error("Sheets error:", err.message);
+            await say({ text: "Couldn't update the notes right now.", thread_ts: threadKey });
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -422,12 +445,15 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     if (inlineSeverity) {
       // Severity provided inline — create issue immediately
       console.log("[mention] appending issue (inline severity)...");
+      const photos = await collectPhotos(event.files);
+
       let id;
       try {
         id = await sheetsService.appendIssue({
           reporter: reporterName,
           description: issueDescription,
           severity: inlineSeverity,
+          ...(photos.length ? { photos } : {}),
         });
       } catch {
         await say({
@@ -466,6 +492,7 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
         issueDescription,
         suggestion,
         duplicate,
+        files: event.files || [],
       });
 
       console.log("[mention] asking for severity...");
