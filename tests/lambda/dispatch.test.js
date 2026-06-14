@@ -242,6 +242,26 @@ describe("dispatchSlackEvent", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it("skips a file_share thread reply that contains an @mention (handled by app_mention path)", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({
+      slackEnvelope: {
+        event: {
+          type: "message",
+          subtype: "file_share",
+          channel: "C1",
+          thread_ts: "1",
+          text: "<@U_BOT> see photo",
+          user: "U1",
+          files: [{ id: "F1", mimetype: "image/jpeg" }],
+        },
+      },
+      handler,
+      client: makeClient(),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("still skips a file_share that is not a thread reply", async () => {
     const handler = vi.fn();
     await dispatchSlackEvent({
