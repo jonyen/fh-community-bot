@@ -2,3 +2,6 @@ node_modules/
 .env
 samconfig.local.toml
 .aws-sam/
+
+# Runtime output from scripts/google-token-ci.js
+google-auth-url.txt

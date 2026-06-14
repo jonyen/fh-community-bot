@@ -36,3 +36,13 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           AUTH_CODE: ${{ inputs.auth_code }}
         run: node scripts/google-token-ci.js
+
+      # Phase 1 only: the consent URL embeds the client_id (masked in logs), so
+      # hand it over as an artifact instead, where it isn't scrubbed.
+      - name: Upload sign-in URL
+        if: ${{ inputs.auth_code == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-auth-url
+          path: google-auth-url.txt
+          if-no-files-found: warn
