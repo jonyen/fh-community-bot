@@ -13,7 +13,13 @@
  *                                             the full localhost redirect URL.
  */
 
+import { writeFileSync } from "node:fs";
 import { google } from "googleapis";
+
+// Phase 1 writes the consent URL here so the workflow can upload it as an
+// artifact. GitHub masks the client_id (a secret) in LOGS, but artifact file
+// contents are not scrubbed, so the downloaded URL stays usable.
+const AUTH_URL_FILE = "google-auth-url.txt";
 
 const clientId = process.env.GOOGLE_CLIENT_ID;
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -55,15 +61,19 @@ if (!authCodeRaw.trim()) {
     prompt: "consent",
     scope: SCOPES,
   });
-  console.log("\n=== STEP 1 — open this URL, sign in, and approve ===\n");
-  console.log(authUrl);
+  writeFileSync(AUTH_URL_FILE, authUrl + "\n");
+  console.log("\n=== STEP 1 — get the sign-in URL ===\n");
   console.log(
-    "\nSign in with the Google account that owns the spreadsheet and the Drive\n" +
-      "folder. Google then redirects to http://localhost:3456/?code=...  The page\n" +
-      "will fail to load — that is expected. Copy the FULL address-bar URL (or just\n" +
-      "the code= value) and re-run this workflow, pasting it into the 'auth_code'\n" +
-      "input.\n"
+    "The URL contains the client_id, which GitHub masks in these logs. Download\n" +
+      "the 'google-auth-url' artifact from this run instead — it has the real URL.\n\n" +
+      "Open it, sign in with the Google account that owns the spreadsheet and the\n" +
+      "Drive folder, and approve. Google then redirects to http://localhost:3456/?code=...\n" +
+      "The page will fail to load — that is expected. Copy the FULL address-bar URL\n" +
+      "(or just the code= value) and re-run this workflow with it in the 'auth_code'\n" +
+      "input.\n\n" +
+      "(masked preview below — use the artifact, not this:)\n"
   );
+  console.log(authUrl);
 } else {
   const code = extractCode(authCodeRaw);
   let tokens;
