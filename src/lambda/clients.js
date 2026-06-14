@@ -3,6 +3,8 @@ import { google } from "googleapis";
 import OpenAI from "openai";
 import { loadConfig } from "../config.js";
 import { createSheetsService } from "../services/sheets.js";
+import { createDriveService } from "../services/drive.js";
+import { createPhotoService } from "../lib/photos.js";
 import { createGroqService } from "../services/groq.js";
 import { createDedupService } from "../services/dedup.js";
 import { createMentionHandler } from "../events/mention.js";
@@ -26,6 +28,12 @@ export function getDeps() {
   oauth2Client.setCredentials({ refresh_token: config.googleRefreshToken });
   const sheetsClient = google.sheets({ version: "v4", auth: oauth2Client });
   const sheetsService = createSheetsService(sheetsClient, config.googleSheetId);
+  const driveClient = google.drive({ version: "v3", auth: oauth2Client });
+  const driveService = createDriveService(driveClient, config.googleDriveFolderId);
+  const photoService = createPhotoService({
+    driveService,
+    slackBotToken: config.slackBotToken,
+  });
 
   const groqClient = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
@@ -40,6 +48,7 @@ export function getDeps() {
     dedupService,
     channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
+    photoService,
   });
 
   let genderHandler;

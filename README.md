@@ -8,6 +8,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification
 - **Fix suggestions** — AI-powered quick-fix recommendations for common issues
 - **Issue management** — list open issues, close/resolve by ID or description
+- **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet (first photo shown as an inline thumbnail)
 
 ## Architecture
 
@@ -64,12 +65,25 @@ npm test
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token |
 | `GROQ_API_KEY` | Groq API key (`gsk_...`) |
+| `GOOGLE_DRIVE_FOLDER_ID` | (Optional) Drive folder ID for uploaded issue photos |
 
 To generate a Google refresh token:
 
 ```bash
 node scripts/get-google-token.js <client_id> <client_secret>
 ```
+
+## Photos
+
+Users can attach photos to a maintenance report (or to any reply in the issue's thread). Each image is copied from Slack into a Google Drive folder and referenced in the sheet: the first photo renders as an inline `=IMAGE()` thumbnail (column I), and every photo is listed as a clickable link (column J), which also grows as more photos are added in the thread.
+
+One-time setup:
+
+1. **Regenerate the Google refresh token** with Drive access. `scripts/get-google-token.js` now requests both the Sheets scope and `drive.file` (which lets the app manage only the files it creates). Re-run it and update `GOOGLE_REFRESH_TOKEN`.
+2. **Create a Drive folder** for issue photos, share it with the same Google identity that issued the refresh token, and set its ID as `GOOGLE_DRIVE_FOLDER_ID`. If unset, photos upload to the account's Drive root.
+3. **Add the `files:read` Slack OAuth scope** (needed to download uploaded files) and reinstall the app.
+
+The Event Subscriptions already in place for the gender feature (`message.channels` / `message.groups`) also deliver the `file_share` events that carry photos, so no additional event subscriptions are needed.
 
 ## Usage
 

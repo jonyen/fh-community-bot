@@ -59,4 +59,5 @@ jobs:
               GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
-              GroqApiKey="${{ secrets.GROQ_API_KEY }}"
+              GroqApiKey="${{ secrets.GROQ_API_KEY }}" \
+              GoogleDriveFolderId="${{ vars.GOOGLE_DRIVE_FOLDER_ID }}"

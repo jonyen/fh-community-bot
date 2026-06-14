@@ -8,7 +8,7 @@
  * Usage:
  *   node scripts/get-google-token.js <client_id> <client_secret>
  *
- * This will open a browser for you to sign in and grant Sheets access.
+ * This will open a browser for you to sign in and grant Sheets + Drive access.
  * The refresh token will be printed to the console — paste it into your .env.
  */
 
@@ -36,7 +36,10 @@ const oauth2Client = new google.auth.OAuth2(
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: "offline",
   prompt: "consent",
-  scope: ["https://www.googleapis.com/auth/spreadsheets"],
+  scope: [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+  ],
 });
 
 // Start a temporary local server to receive the OAuth callback

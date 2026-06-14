@@ -11,6 +11,7 @@ Parameters:
   GoogleClientId:       { Type: String, NoEcho: true }
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
+  GoogleDriveFolderId:  { Type: String, Default: "" }
   GroqApiKey:           { Type: String, NoEcho: true }
 
 Globals:
@@ -71,6 +72,7 @@ Resources:
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
+          GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
           GROQ_API_KEY:           !Ref GroqApiKey
       Events:
         FromQueue:
