@@ -47,6 +47,8 @@ describe("SheetsService", () => {
           inCharge: "Bob",
           status: "Open",
           notes: "",
+          photoThumb: "",
+          photoLinks: "",
         },
       ]);
     });
@@ -75,12 +77,7 @@ describe("SheetsService", () => {
           requests: [
             {
               insertDimension: {
-                range: {
-                  sheetId: 0,
-                  dimension: "ROWS",
-                  startIndex: 4,
-                  endIndex: 5,
-                },
+                range: { sheetId: 0, dimension: "ROWS", startIndex: 4, endIndex: 5 },
               },
             },
           ],
@@ -88,12 +85,87 @@ describe("SheetsService", () => {
       });
       expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith({
         spreadsheetId: "sheet-id",
-        range: "'Maintenance Request'!A5:H5",
+        range: "'Maintenance Request'!A5:J5",
         valueInputOption: "USER_ENTERED",
         requestBody: {
-          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", ""]],
+          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", "", "", ""]],
         },
       });
+    });
+
+    it("writes a thumbnail formula and links when photos are present", async () => {
+      await service.appendIssue({
+        reporter: "U789",
+        description: "Water leak",
+        severity: "Medium",
+        photos: [
+          { imageUrl: "https://lh3.googleusercontent.com/d/A", viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
+          { imageUrl: "https://lh3.googleusercontent.com/d/B", viewUrl: "https://drive.google.com/file/d/B/view", name: "b.jpg" },
+        ],
+      });
+
+      expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          range: "'Maintenance Request'!A5:J5",
+          requestBody: {
+            values: [[
+              expect.any(String), "U789", "Water leak", "Medium", "=TODAY()-A5", "", "Need to Assign", "",
+              '=IMAGE("https://lh3.googleusercontent.com/d/A")',
+              "https://drive.google.com/file/d/A/view\nhttps://drive.google.com/file/d/B/view",
+            ]],
+          },
+        })
+      );
+    });
+  });
+
+  describe("appendPhotos", () => {
+    it("sets the thumbnail when empty and appends links", async () => {
+      mockSheets.spreadsheets.values.get.mockResolvedValue({ data: { values: [["", ""]] } });
+
+      await service.appendPhotos("5", [
+        { imageUrl: "https://lh3.googleusercontent.com/d/A", viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
+      ]);
+
+      expect(mockSheets.spreadsheets.values.get).toHaveBeenCalledWith({
+        spreadsheetId: "sheet-id",
+        range: "'Maintenance Request'!I5:J5",
+        valueRenderOption: "FORMULA",
+      });
+      expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith({
+        spreadsheetId: "sheet-id",
+        range: "'Maintenance Request'!I5:J5",
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [['=IMAGE("https://lh3.googleusercontent.com/d/A")', "https://drive.google.com/file/d/A/view"]],
+        },
+      });
+    });
+
+    it("keeps the existing thumbnail and appends to existing links", async () => {
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: { values: [['=IMAGE("https://lh3.googleusercontent.com/d/OLD")', "https://drive.google.com/file/d/OLD/view"]] },
+      });
+
+      await service.appendPhotos("5", [
+        { imageUrl: "https://lh3.googleusercontent.com/d/NEW", viewUrl: "https://drive.google.com/file/d/NEW/view", name: "new.jpg" },
+      ]);
+
+      expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestBody: {
+            values: [[
+              '=IMAGE("https://lh3.googleusercontent.com/d/OLD")',
+              "https://drive.google.com/file/d/OLD/view\nhttps://drive.google.com/file/d/NEW/view",
+            ]],
+          },
+        })
+      );
+    });
+
+    it("does nothing when there are no photos", async () => {
+      await service.appendPhotos("5", []);
+      expect(mockSheets.spreadsheets.values.update).not.toHaveBeenCalled();
     });
   });
 
