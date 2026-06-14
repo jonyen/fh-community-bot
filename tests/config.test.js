@@ -90,4 +90,14 @@ describe("loadConfig", () => {
     expect(config.genderSheetTab).toBe("Roster");
     expect(config.genderCacheTtlDays).toBe(1);
   });
+
+  it("googleDriveFolderId is null when unset and reads it when set", async () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.GOOGLE_DRIVE_FOLDER_ID;
+    const { loadConfig } = await import("../src/config.js");
+    expect(loadConfig().googleDriveFolderId).toBeNull();
+
+    process.env.GOOGLE_DRIVE_FOLDER_ID = "FOLDER1";
+    expect(loadConfig().googleDriveFolderId).toBe("FOLDER1");
+  });
 });
