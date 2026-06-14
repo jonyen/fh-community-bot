@@ -693,7 +693,7 @@ describe("MentionHandler", () => {
     beforeEach(() => {
       mockPhotoService = {
         collectPhotos: vi.fn().mockResolvedValue([
-          { imageUrl: "https://lh3.googleusercontent.com/d/A", viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
+          { viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
         ]),
       };
       photoHandler = createMentionHandler({
@@ -718,7 +718,7 @@ describe("MentionHandler", () => {
       expect(mockSheets.appendIssue).toHaveBeenCalledWith(
         expect.objectContaining({
           photos: [
-            { imageUrl: "https://lh3.googleusercontent.com/d/A", viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
+            { viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
           ],
         })
       );

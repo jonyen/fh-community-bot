@@ -23,7 +23,6 @@ export function createPhotoService({ driveService, slackBotToken, fetchImpl = fe
         });
 
         photos.push({
-          imageUrl: uploaded.imageUrl,
           viewUrl: uploaded.viewUrl,
           name: file.name || uploaded.fileId,
         });

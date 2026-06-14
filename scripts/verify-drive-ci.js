@@ -45,13 +45,7 @@ try {
   });
   fileId = res.data.id;
   console.log(`OK  created file ${fileId} (parents: ${JSON.stringify(res.data.parents)})`);
-
-  await drive.permissions.create({
-    fileId,
-    requestBody: { role: "reader", type: "anyone" },
-  });
-  console.log("OK  set anyone-with-link reader permission");
-  console.log(`OK  thumbnail URL would be https://lh3.googleusercontent.com/d/${fileId}`);
+  console.log(`OK  view link: ${res.data.webViewLink}`);
 } catch (err) {
   console.error(`\nFAILED: ${err.message}`);
   if (/File not found|insufficient|not found/i.test(err.message)) {

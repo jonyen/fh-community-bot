@@ -45,7 +45,6 @@ describe("PhotoService", () => {
     );
     expect(photos).toEqual([
       {
-        imageUrl: "https://lh3.googleusercontent.com/d/id-leak.jpg",
         viewUrl: "https://drive.google.com/file/d/id-leak.jpg/view",
         name: "leak.jpg",
       },

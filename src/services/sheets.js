@@ -1,8 +1,8 @@
-// Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTO, J=PHOTO LINKS
+// Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTOS
 // Data starts at row 5 (rows 1-4 are headers/metadata)
 const SHEET_NAME = "Maintenance Request";
 const DATA_START_ROW = 5;
-const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:J`;
+const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:I`;
 
 function parseRow(row, rowIndex) {
   return {
@@ -15,16 +15,13 @@ function parseRow(row, rowIndex) {
     inCharge: row[5] || "",
     status: row[6] || "",
     notes: row[7] || "",
-    photoThumb: row[8] || "",
-    photoLinks: row[9] || "",
+    photos: row[8] || "",
   };
 }
 
-function photoThumbFormula(photos) {
-  if (!photos || photos.length === 0) return "";
-  return `=IMAGE("${photos[0].imageUrl}")`;
-}
-
+// Photos are stored as newline-separated Drive links (Sheets auto-linkifies
+// them). No =IMAGE() thumbnail: the org blocks public sharing, and IMAGE()
+// can only fetch publicly accessible URLs.
 function photoLinksText(photos) {
   if (!photos || photos.length === 0) return "";
   return photos.map((p) => p.viewUrl).join("\n");
@@ -86,12 +83,12 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     // Write data into the newly inserted row
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:J${DATA_START_ROW}`,
+      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:I${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [[
           today, reporter, description, severity || "", `=TODAY()-A${DATA_START_ROW}`, "", "Need to Assign", "",
-          photoThumbFormula(photos), photoLinksText(photos),
+          photoLinksText(photos),
         ]],
       },
     });
@@ -131,25 +128,20 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
 
   async function appendPhotos(rowId, photos) {
     if (!photos || photos.length === 0) return;
-    const range = `'${SHEET_NAME}'!I${rowId}:J${rowId}`;
+    const range = `'${SHEET_NAME}'!I${rowId}`;
     const res = await sheetsClient.spreadsheets.values.get({
       spreadsheetId,
       range,
-      valueRenderOption: "FORMULA",
     });
-    const existing = (res.data.values && res.data.values[0]) || [];
-    const existingThumb = existing[0] || "";
-    const existingLinks = existing[1] || "";
-
-    const thumb = existingThumb || photoThumbFormula(photos);
+    const existing = (res.data.values && res.data.values[0] && res.data.values[0][0]) || "";
     const newLinks = photoLinksText(photos);
-    const links = existingLinks ? `${existingLinks}\n${newLinks}` : newLinks;
+    const links = existing ? `${existing}\n${newLinks}` : newLinks;
 
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId,
       range,
       valueInputOption: "USER_ENTERED",
-      requestBody: { values: [[thumb, links]] },
+      requestBody: { values: [[links]] },
     });
   }
 
