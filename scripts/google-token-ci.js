@@ -39,6 +39,7 @@ const REDIRECT_URI = "http://localhost:3456";
 const SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/calendar",
 ];
 
 const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI);
