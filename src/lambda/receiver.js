@@ -1,6 +1,7 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { verifySlackSignature } from "./slack-signature.js";
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
+import { matchesReservationIntent } from "../lib/reservation-triggers.js";
 
 const sqs = new SQSClient({});
 
@@ -24,6 +25,7 @@ function shouldEnqueueEvent(parsed) {
   if (event.type !== "message") return true;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
+  if (matchesReservationIntent(text)) return true;
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
   if (event.thread_ts) return true;
   return false;

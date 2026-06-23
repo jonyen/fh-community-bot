@@ -1,4 +1,5 @@
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
+import { matchesReservationIntent } from "../lib/reservation-triggers.js";
 
 function shouldSkip(event) {
   if (event.type === "app_mention") return false;
@@ -15,10 +16,12 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, reservationHandler, client }) {
   if (slackEnvelope.type === "slash_command") {
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
+    } else if (reservationHandler && (slackEnvelope.command === "/reserve" || slackEnvelope.command === "/check")) {
+      await reservationHandler.handleSlash({ envelope: slackEnvelope, client });
     }
     return;
   }
@@ -40,6 +43,18 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
         ...msg,
       });
     await genderHandler({ event, say, client });
+    return;
+  }
+
+  if (
+    reservationHandler &&
+    (event.type === "app_mention" || (event.type === "message" && event.thread_ts)) &&
+    !event.bot_id &&
+    matchesReservationIntent(event.text || "")
+  ) {
+    const say = (msg) =>
+      client.chat.postMessage({ channel: event.channel, ...msg });
+    await reservationHandler.handleMention({ event, say, client });
     return;
   }
 
