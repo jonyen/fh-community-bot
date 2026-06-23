@@ -37,6 +37,8 @@ write); the conflict is reported back.
 - Suggesting alternative free slots (reject-only; no suggestions).
 - Managing the room/resource catalog in-app (catalog comes from env vars).
 - Booking external/non-managed locations (`National Mall`, `Online`, `various`).
+- The **kitchen reservation** system — a distinct sheet and booking model with
+  its own design: [`2026-06-23-kitchen-reservations-design.md`](./2026-06-23-kitchen-reservations-design.md).
 
 ## Key facts discovered during design
 
