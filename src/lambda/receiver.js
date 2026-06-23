@@ -1,7 +1,6 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { verifySlackSignature } from "./slack-signature.js";
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
-import { matchesReservationIntent } from "../lib/reservation-triggers.js";
 
 const sqs = new SQSClient({});
 
@@ -25,7 +24,10 @@ function shouldEnqueueEvent(parsed) {
   if (event.type !== "message") return true;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
-  if (matchesReservationIntent(text)) return true;
+  // Reservation @mentions are app_mention events (already enqueued above);
+  // threaded reservation replies are caught by the thread_ts check below. A
+  // bare top-level message is intentionally NOT enqueued — dispatch has no
+  // handler for it, so enqueuing would only burn an SQS round-trip.
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
   if (event.thread_ts) return true;
   return false;
