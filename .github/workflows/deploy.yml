@@ -48,13 +48,30 @@ jobs:
       - name: SAM deploy
         env:
           GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
+          # JSON-valued reservation overrides go through env so their embedded
+          # quotes/spaces survive into a single quoted argv element.
+          RESERVATIONS_SHEET_ID: ${{ vars.RESERVATIONS_SHEET_ID }}
+          RESERVATION_ROOMS: ${{ vars.RESERVATION_ROOMS }}
+          RESOURCE_CALENDARS: ${{ vars.RESOURCE_CALENDARS }}
+          VENUE_CALENDARS: ${{ vars.VENUE_CALENDARS }}
         run: |
-          # Only pass the optional GoogleDriveFolderId override when it's set —
-          # SAM rejects an empty `Key=` value rather than falling back to the
-          # template Default.
+          # Only pass optional overrides when set — SAM rejects an empty `Key=`
+          # value rather than falling back to the template Default.
           OPTIONAL_PARAMS=()
           if [ -n "$GOOGLE_DRIVE_FOLDER_ID" ]; then
             OPTIONAL_PARAMS+=("GoogleDriveFolderId=$GOOGLE_DRIVE_FOLDER_ID")
+          fi
+          if [ -n "$RESERVATIONS_SHEET_ID" ]; then
+            OPTIONAL_PARAMS+=("ReservationsSheetId=$RESERVATIONS_SHEET_ID")
+          fi
+          if [ -n "$RESERVATION_ROOMS" ]; then
+            OPTIONAL_PARAMS+=("ReservationRooms=$RESERVATION_ROOMS")
+          fi
+          if [ -n "$RESOURCE_CALENDARS" ]; then
+            OPTIONAL_PARAMS+=("ResourceCalendars=$RESOURCE_CALENDARS")
+          fi
+          if [ -n "$VENUE_CALENDARS" ]; then
+            OPTIONAL_PARAMS+=("VenueCalendars=$VENUE_CALENDARS")
           fi
           sam deploy \
             --no-confirm-changeset \
