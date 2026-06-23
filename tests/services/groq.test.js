@@ -119,3 +119,28 @@ describe("GroqService", () => {
   });
 
 });
+
+describe("parseReservationRequest", () => {
+  it("returns parsed JSON from the model", async () => {
+    const client = { chat: { completions: { create: vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"intent":"reserve","target":"FH MPR","date":"2026-06-26","startTime":"7:00 PM","endTime":"10:00 PM","what":"Practice","who":"College"}' } }],
+    }) } } };
+    const svc = createGroqService(client);
+    const out = await svc.parseReservationRequest("book the MPR friday 7-10pm for practice", "2026-06-23T12:00:00Z");
+    expect(out).toMatchObject({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM" });
+  });
+
+  it("returns null on bad JSON", async () => {
+    const client = { chat: { completions: { create: vi.fn().mockResolvedValue({
+      choices: [{ message: { content: "not json" } }],
+    }) } } };
+    const svc = createGroqService(client);
+    expect(await svc.parseReservationRequest("hi", "2026-06-23T12:00:00Z")).toBeNull();
+  });
+
+  it("returns null when the API throws", async () => {
+    const client = { chat: { completions: { create: vi.fn().mockRejectedValue(new Error("boom")) } } };
+    const svc = createGroqService(client);
+    expect(await svc.parseReservationRequest("x", "2026-06-23T12:00:00Z")).toBeNull();
+  });
+});

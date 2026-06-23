@@ -1,4 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { loadConfig } from "../src/config.js";
+
+describe("loadConfig reservations vars", () => {
+  const base = {
+    SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C1", GOOGLE_SHEET_ID: "s",
+    GOOGLE_CLIENT_ID: "c", GOOGLE_CLIENT_SECRET: "cs", GOOGLE_REFRESH_TOKEN: "r", GROQ_API_KEY: "g",
+  };
+  let saved;
+  beforeEach(() => { saved = { ...process.env }; Object.assign(process.env, base); });
+  afterEach(() => { process.env = saved; });
+
+  it("defaults reservations config to null/empty when unset", () => {
+    delete process.env.RESERVATIONS_SHEET_ID;
+    const cfg = loadConfig();
+    expect(cfg.reservationsSheetId).toBeNull();
+  });
+
+  it("parses room and calendar JSON when set", () => {
+    process.env.RESERVATIONS_SHEET_ID = "RS1";
+    process.env.RESERVATION_ROOMS = JSON.stringify({ rooms: ["FH MPR"], aliases: { mpr: "FH MPR" } });
+    process.env.RESOURCE_CALENDARS = JSON.stringify({ projector: "cal@x" });
+    const cfg = loadConfig();
+    expect(cfg.reservationsSheetId).toBe("RS1");
+    expect(cfg.reservationRooms.rooms).toEqual(["FH MPR"]);
+    expect(cfg.resourceCalendars).toEqual({ projector: "cal@x" });
+  });
+});
 
 describe("loadConfig", () => {
   const VALID_ENV = {
