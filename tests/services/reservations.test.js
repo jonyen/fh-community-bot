@@ -78,3 +78,29 @@ describe("makeRoomReservation", () => {
     expect(values[6]).toBe("FH MPR");   // LOCATION
   });
 });
+
+describe("listRoom", () => {
+  it("returns ISO dateIso and formatted times for matching room events", async () => {
+    const weekEvents = [
+      { rowIndex: 1, date: { month: 6, day: 24 }, startMin: 18 * 60, endMin: 19 * 60, allDay: false, location: "FH MPR", what: "Practice" },
+    ];
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue(weekEvents),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const roomMatcher = createRoomMatcher(["FH MPR"], {});
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn() },
+      roomMatcher,
+      resourceCalendars: {},
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const result = await service.listRoom({ room: "FH MPR", fromIso: "2026-06-24", toIso: "2026-06-24" });
+    expect(result).toHaveLength(1);
+    expect(result[0].dateIso).toBe("2026-06-24");
+    expect(result[0].startTime).toBe("6:00 PM");
+    expect(result[0].what).toBe("Practice");
+  });
+});

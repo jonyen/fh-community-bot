@@ -1,6 +1,6 @@
 // src/services/reservations.js
 import { selectTabForDate } from "../lib/reservation-tabs.js";
-import { parseTimeToMinutes, formatMinutes } from "../lib/reservation-time.js";
+import { parseTimeToMinutes, formatMinutes, inferYear } from "../lib/reservation-time.js";
 import { createRoomMatcher } from "../lib/reservation-rooms.js";
 import { findRoomConflicts } from "../lib/reservation-overlap.js";
 
@@ -42,7 +42,7 @@ export function createReservationsService({ sheetService, calendarService, roomM
     const events = all
       .filter((e) => sameDate(e.date, dateIso))
       .map((e) => ({ ...e, room: roomMatcher.match(e.location) }));
-    return { tab, events };
+    return { tab, events, all };
   }
 
   async function checkRoom({ room, dateIso, startTime, endTime }) {
@@ -57,13 +57,12 @@ export function createReservationsService({ sheetService, calendarService, roomM
     const startMin = parseTimeToMinutes(startTime);
     const endMin = parseTimeToMinutes(endTime);
     if (startMin === null || endMin === null) return { ok: false, reason: "unparseable time" };
-    const { tab, events } = await eventsForDate(dateIso);
+    const { tab, events, all } = await eventsForDate(dateIso);
     if (!tab) return { ok: false, reason: "no week tab for that date" };
     const { conflicts } = findRoomConflicts({ room, startMin, endMin }, events);
     if (conflicts.length > 0) return { ok: false, reason: "conflict", conflicts };
 
     // chronological insertion point: first row on/after this date whose start is later
-    const all = await sheetService.readWeekEvents(tab);
     let insertAt = all.length + 1; // default end (account for header at 0)
     for (const e of all) {
       const laterSameDay = sameDate(e.date, dateIso) && e.startMin !== null && e.startMin > startMin;
@@ -91,8 +90,13 @@ export function createReservationsService({ sheetService, calendarService, roomM
       const events = await sheetService.readWeekEvents(tab);
       for (const e of events) {
         if (roomMatcher.match(e.location) !== room) continue;
+        let dateIso = "";
+        if (e.date) {
+          const year = inferYear(e.date.month, e.date.day, now());
+          dateIso = `${year}-${String(e.date.month).padStart(2, "0")}-${String(e.date.day).padStart(2, "0")}`;
+        }
         out.push({
-          dateIso: `${e.date ? e.date.month : "?"}/${e.date ? e.date.day : "?"}`,
+          dateIso,
           startTime: e.startMin !== null ? formatMinutes(e.startMin) : "",
           endTime: e.endMin !== null ? formatMinutes(e.endMin) : "",
           what: e.what,
