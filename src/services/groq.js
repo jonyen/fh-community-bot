@@ -14,6 +14,8 @@ Respond "yes" ONLY if the message describes a specific physical/facilities probl
 
 Respond with ONLY "yes" or "no". Do not explain.`;
 
+const SYSTEM_PROMPT_RESERVATION = `You convert a community member's reservation message into JSON. The reference date is provided. Output ONLY a JSON object with keys: intent ("check" | "list" | "reserve"), target (the room or resource name as written, or null), date (YYYY-MM-DD or null), startTime (e.g. "7:00 PM" or null), endTime (or null), what (short purpose or null), who (group/person or null). Resolve relative dates ("friday", "next week") against the reference date. Output no prose, only JSON.`;
+
 export function createGroqService(client) {
   async function suggestFix(issueDescription) {
     try {
@@ -94,5 +96,25 @@ export function createGroqService(client) {
     }
   }
 
-  return { suggestFix, checkDuplicate, isMaintenanceRequest };
+  async function parseReservationRequest(text, referenceDateIso) {
+    try {
+      const res = await client.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT_RESERVATION },
+          { role: "user", content: `Reference date: ${referenceDateIso}\nMessage: ${text}` },
+        ],
+        max_tokens: 256,
+      });
+      const raw = res.choices[0].message.content.trim();
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      if (jsonStart === -1 || jsonEnd === -1) return null;
+      return JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+    } catch {
+      return null;
+    }
+  }
+
+  return { suggestFix, checkDuplicate, isMaintenanceRequest, parseReservationRequest };
 }
