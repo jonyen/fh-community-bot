@@ -24,6 +24,10 @@ function shouldEnqueueEvent(parsed) {
   if (event.type !== "message") return true;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
+  // Reservation @mentions are app_mention events (already enqueued above);
+  // threaded reservation replies are caught by the thread_ts check below. A
+  // bare top-level message is intentionally NOT enqueued — dispatch has no
+  // handler for it, so enqueuing would only burn an SQS round-trip.
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
   if (event.thread_ts) return true;
   return false;

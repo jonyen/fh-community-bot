@@ -11,6 +11,11 @@ import { createMentionHandler } from "../events/mention.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
 import { createSlashRefreshHandler } from "../events/slashRefresh.js";
+import { createReservationsSheetService } from "../services/reservationsSheet.js";
+import { createCalendarService } from "../services/calendar.js";
+import { createReservationsService } from "../services/reservations.js";
+import { createRoomMatcher } from "../lib/reservation-rooms.js";
+import { createReservationHandler } from "../events/reservations.js";
 
 let cached;
 
@@ -64,7 +69,35 @@ export function getDeps() {
     slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
-  cached = { client: slack, handler, genderHandler, slashRefreshHandler };
+  let reservationHandler;
+  if (config.reservationsSheetId) {
+    const reservationsSheetClient = google.sheets({ version: "v4", auth: oauth2Client });
+    const reservationsSheetService = createReservationsSheetService(
+      reservationsSheetClient,
+      config.reservationsSheetId
+    );
+    const calendarClient = google.calendar({ version: "v3", auth: oauth2Client });
+    const calendarService = createCalendarService(calendarClient);
+    const roomMatcher = createRoomMatcher(
+      config.reservationRooms.rooms || [],
+      config.reservationRooms.aliases || {}
+    );
+    const reservationsService = createReservationsService({
+      sheetService: reservationsSheetService,
+      calendarService,
+      roomMatcher,
+      resourceCalendars: config.resourceCalendars,
+      venueCalendars: config.venueCalendars,
+      now: () => new Date(),
+    });
+    reservationHandler = createReservationHandler({
+      reservationsService,
+      groqService,
+      now: () => new Date(),
+    });
+  }
+
+  cached = { client: slack, handler, genderHandler, slashRefreshHandler, reservationHandler };
   return cached;
 }
 
