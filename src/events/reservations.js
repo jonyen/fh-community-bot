@@ -50,9 +50,10 @@ export function createReservationHandler({ reservationsService, groqService, now
           : `${target.name} has a conflict:\n${conflictText(chk.conflicts)}` });
       return;
     }
-    // resource (calendar) path is intentionally minimal in v1
+    // Resource (calendar-backed) booking is recognized but not yet live —
+    // reply honestly rather than implying it worked.
     await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
-      text: `Resource "${target.name}" handling is configured via calendars; ask an admin if this fails.` });
+      text: `"${target.name}" is a tracked resource, but resource booking isn't live yet — I can only check/book rooms for now.` });
   }
 
   async function handleMention({ event, say }) {
