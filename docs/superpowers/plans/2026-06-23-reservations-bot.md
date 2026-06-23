@@ -17,7 +17,7 @@
 - **Tests:** Vitest, `import { describe, it, expect, vi, beforeEach } from "vitest";`, files under `tests/<mirror>/<name>.test.js`. Run with `npm test`.
 - **Reject-only conflicts:** a detected conflict means NO write and a reply listing the conflict. Never suggest alternatives.
 - **Handler gating:** the reservation handler is wired only when `RESERVATIONS_SHEET_ID` is set (mirrors gender gating on `GENDER_SHEET_ID` in `src/lambda/clients.js`).
-- **Slack reply persona:** reservation replies post with `username: "Reservations"` (matches the gender handler's `username` override pattern).
+- **Slack reply persona:** reservation replies post with `username: "Reservations (beta)"` — the Slack app name carries a "(beta)" suffix (the maintenance handler posts as `"FH Maintenance (beta)"`), so the reservations persona matches.
 - **Source of truth:** spec `docs/superpowers/specs/2026-06-23-reservations-bot-design.md`.
 
 ---
@@ -1214,7 +1214,7 @@ describe("ReservationHandler.handleMention", () => {
     reservationsService.checkRoom.mockResolvedValue({ available: true, conflicts: [], skipped: 0 });
     await handler.handleMention({ event: { text: "is the MPR free friday 7-10pm?", channel: "C1", ts: "1.1" }, say });
     expect(say).toHaveBeenCalledWith(expect.objectContaining({
-      thread_ts: "1.1", username: "Reservations", text: expect.stringContaining("available"),
+      thread_ts: "1.1", username: "Reservations (beta)", text: expect.stringContaining("available"),
     }));
   });
 
@@ -1244,7 +1244,7 @@ Expected: FAIL — import cannot be resolved.
 
 ```javascript
 // src/events/reservations.js
-const BOT_USERNAME = "Reservations";
+const BOT_USERNAME = "Reservations (beta)";
 const BOT_ICON_EMOJI = ":calendar:";
 
 function conflictText(conflicts) {
@@ -1765,5 +1765,5 @@ git commit -m "feat(reservations): add Calendar scope to Google token flow"
 - **One-app intent routing** (the architecture gap): Task 5 trigger + Task 11 dispatch fallthrough to maintenance. ✓
 - **Auth scope re-mint**: Task 13. ✓
 - **Gating on env var**: Task 12 mirrors gender gating. ✓
-- **Bot persona "Reservations"**: Task 10 `username` override. ✓
+- **Bot persona "Reservations (beta)"**: Task 10 `username` override (matches the app's "(beta)" naming). ✓
 - **Deferred**: exact room list, resource calendar ids, `/reserve` arg grammar (Groq NL covers parsing) — left as config TODOs per spec, flagged in Final verification.
