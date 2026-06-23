@@ -11,6 +11,7 @@ Parameters:
   ReservationsSheetId:  { Type: String, Default: "" }
   ReservationRooms:     { Type: String, Default: "" }
   ResourceCalendars:    { Type: String, Default: "" }
+  VenueCalendars:       { Type: String, Default: "" }
   GoogleClientId:       { Type: String, NoEcho: true }
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
@@ -75,6 +76,7 @@ Resources:
           RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
           RESERVATION_ROOMS:     !Ref ReservationRooms
           RESOURCE_CALENDARS:    !Ref ResourceCalendars
+          VENUE_CALENDARS:       !Ref VenueCalendars
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken

@@ -5,6 +5,13 @@ import { createRoomMatcher } from "../lib/reservation-rooms.js";
 import { findRoomConflicts } from "../lib/reservation-overlap.js";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const VENUE_TZ = "America/New_York";
+
+function isoFromDateMinutes(dateIso, minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const m = String(minutes % 60).padStart(2, "0");
+  return `${dateIso}T${h}:${m}:00`;
+}
 
 function formatDateCell(dateIso) {
   const d = new Date(`${dateIso}T12:00:00Z`);
@@ -16,7 +23,7 @@ function sameDate(eventDate, dateIso) {
   return eventDate && eventDate.month === d.getUTCMonth() + 1 && eventDate.day === d.getUTCDate();
 }
 
-export function createReservationsService({ sheetService, calendarService, roomMatcher, resourceCalendars, now }) {
+export function createReservationsService({ sheetService, calendarService, roomMatcher, resourceCalendars, venueCalendars = {}, now }) {
   // Resource calendars are keyed by their full Google resource title
   // (e.g. "DMV Accessories-Popcorn Machine"). Build a forgiving matcher over
   // those titles so a user phrase ("popcorn machine") resolves via the same
@@ -73,7 +80,24 @@ export function createReservationsService({ sheetService, calendarService, roomM
       "", "", what || "", room, who || "", "", "", "", "",
     ];
     await sheetService.insertRow(tab, insertAt, values);
-    return { ok: true };
+
+    let mirrored = false;
+    const venueCalendarId = venueCalendars[room];
+    if (venueCalendarId) {
+      try {
+        await calendarService.insertEvent(venueCalendarId, {
+          summary: `${what || "Reservation"}${who ? ` (${who})` : ""}`,
+          startIso: isoFromDateMinutes(dateIso, startMin),
+          endIso: isoFromDateMinutes(dateIso, endMin),
+          description: "Mirrored from OneStop sheet by the reservations bot.",
+          timeZone: VENUE_TZ,
+        });
+        mirrored = true;
+      } catch (err) {
+        console.warn(`[reservations] venue mirror failed for ${room}: ${err.message}`);
+      }
+    }
+    return { ok: true, mirrored };
   }
 
   async function listRoom({ room, fromIso, toIso }) {

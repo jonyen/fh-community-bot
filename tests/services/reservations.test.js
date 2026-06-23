@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsService } from "../../src/services/reservations.js";
 import { createRoomMatcher } from "../../src/lib/reservation-rooms.js";
 
-function makeService(weekEvents, tabs = ["6/22-6/26 M-F", "6/27-6/28 S-Su"]) {
+function makeService(weekEvents, tabs = ["6/22-6/26 M-F", "6/27-6/28 S-Su"], venueCalendars = {}) {
   const sheetService = {
     listScheduleTabs: vi.fn().mockResolvedValue(tabs),
     readWeekEvents: vi.fn().mockResolvedValue(weekEvents),
@@ -15,6 +15,7 @@ function makeService(weekEvents, tabs = ["6/22-6/26 M-F", "6/27-6/28 S-Su"]) {
     calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn() },
     roomMatcher,
     resourceCalendars: { "projector": "cal_projector" },
+    venueCalendars,
     now: () => new Date("2026-06-23T12:00:00Z"),
   });
   return { service, sheetService };
@@ -76,6 +77,67 @@ describe("makeRoomReservation", () => {
     expect(rowIndex0).toBe(2);
     expect(values[0]).toBe("6/24 Wed"); // DATE formatted M/D Ddd (2026-06-24 is a Wednesday)
     expect(values[6]).toBe("FH MPR");   // LOCATION
+  });
+
+  it("mirrors a successful room booking to the venue calendar", async () => {
+    const calInsert = vi.fn().mockResolvedValue({ id: "evt1" });
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue([]),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: calInsert },
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars: {},
+      venueCalendars: { "FH MPR": "venue_cal_mpr" },
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const res = await service.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "7:00 PM", what: "Practice", who: "College" });
+    expect(res.ok).toBe(true);
+    expect(res.mirrored).toBe(true);
+    expect(calInsert).toHaveBeenCalledWith("venue_cal_mpr", expect.objectContaining({
+      summary: expect.stringContaining("Practice"), timeZone: "America/New_York",
+    }));
+  });
+
+  it("still succeeds (mirrored:false) when the room has no venue calendar", async () => {
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue([]),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn() },
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars: {},
+      venueCalendars: {},
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const res = await service.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "7:00 PM", what: "Practice" });
+    expect(res.ok).toBe(true);
+    expect(res.mirrored).toBe(false);
+  });
+
+  it("still returns ok when the mirror call throws (sheet is truth)", async () => {
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue([]),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn().mockRejectedValue(new Error("cal down")) },
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars: {},
+      venueCalendars: { "FH MPR": "venue_cal_mpr" },
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const res = await service.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "7:00 PM", what: "Practice" });
+    expect(res.ok).toBe(true);
+    expect(res.mirrored).toBe(false);
   });
 });
 

@@ -53,5 +53,8 @@ export function loadConfig() {
     resourceCalendars: process.env.RESOURCE_CALENDARS
       ? JSON.parse(process.env.RESOURCE_CALENDARS)
       : {},
+    venueCalendars: process.env.VENUE_CALENDARS
+      ? JSON.parse(process.env.VENUE_CALENDARS)
+      : {},
   };
 }

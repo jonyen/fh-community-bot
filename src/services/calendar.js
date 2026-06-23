@@ -23,15 +23,13 @@ export function createCalendarService(calendarClient) {
     return busy.length > 0;
   }
 
-  async function insertEvent(calendarId, { summary, startIso, endIso, description }) {
+  async function insertEvent(calendarId, { summary, startIso, endIso, description, timeZone }) {
+    const start = { dateTime: startIso };
+    const end = { dateTime: endIso };
+    if (timeZone) { start.timeZone = timeZone; end.timeZone = timeZone; }
     const res = await calendarClient.events.insert({
       calendarId,
-      requestBody: {
-        summary,
-        description: description || "",
-        start: { dateTime: startIso },
-        end: { dateTime: endIso },
-      },
+      requestBody: { summary, description: description || "", start, end },
     });
     return { id: res.data.id };
   }

@@ -39,4 +39,15 @@ describe("CalendarService", () => {
     expect(res).toEqual({ id: "evt123" });
     expect(mockCal.events.insert).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "cal1" }));
   });
+
+  it("insertEvent forwards an optional timeZone on start and end", async () => {
+    mockCal.events.insert.mockResolvedValue({ data: { id: "evtTZ" } });
+    await service.insertEvent("cal1", {
+      summary: "Room", startIso: "2026-06-26T19:00:00", endIso: "2026-06-26T22:00:00",
+      description: "", timeZone: "America/New_York",
+    });
+    const arg = mockCal.events.insert.mock.calls[0][0];
+    expect(arg.requestBody.start).toEqual({ dateTime: "2026-06-26T19:00:00", timeZone: "America/New_York" });
+    expect(arg.requestBody.end).toEqual({ dateTime: "2026-06-26T22:00:00", timeZone: "America/New_York" });
+  });
 });
