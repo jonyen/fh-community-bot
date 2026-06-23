@@ -46,5 +46,12 @@ export function loadConfig() {
     genderSheetId: process.env.GENDER_SHEET_ID || null,
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
+    reservationsSheetId: process.env.RESERVATIONS_SHEET_ID || null,
+    reservationRooms: process.env.RESERVATION_ROOMS
+      ? JSON.parse(process.env.RESERVATION_ROOMS)
+      : { rooms: [], aliases: {} },
+    resourceCalendars: process.env.RESOURCE_CALENDARS
+      ? JSON.parse(process.env.RESOURCE_CALENDARS)
+      : {},
   };
 }

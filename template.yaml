@@ -8,6 +8,9 @@ Parameters:
   SlackChannelIds:      { Type: CommaDelimitedList }
   GoogleSheetId:        { Type: String }
   GenderSheetId:        { Type: String, Default: "" }
+  ReservationsSheetId:  { Type: String, Default: "" }
+  ReservationRooms:     { Type: String, Default: "" }
+  ResourceCalendars:    { Type: String, Default: "" }
   GoogleClientId:       { Type: String, NoEcho: true }
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
@@ -69,6 +72,9 @@ Resources:
           SLACK_CHANNEL_IDS:      !Join [",", !Ref SlackChannelIds]
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GENDER_SHEET_ID:        !Ref GenderSheetId
+          RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
+          RESERVATION_ROOMS:     !Ref ReservationRooms
+          RESOURCE_CALENDARS:    !Ref ResourceCalendars
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
