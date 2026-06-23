@@ -1064,7 +1064,7 @@ Expected: FAIL — import cannot be resolved.
 // src/services/reservations.js
 import { selectTabForDate } from "../lib/reservation-tabs.js";
 import { parseTimeToMinutes, formatMinutes } from "../lib/reservation-time.js";
-import { normalizeLocation } from "../lib/reservation-rooms.js";
+import { createRoomMatcher } from "../lib/reservation-rooms.js";
 import { findRoomConflicts } from "../lib/reservation-overlap.js";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1080,11 +1080,19 @@ function sameDate(eventDate, dateIso) {
 }
 
 export function createReservationsService({ sheetService, calendarService, roomMatcher, resourceCalendars, now }) {
+  // Resource calendars are keyed by their full Google resource title
+  // (e.g. "DMV Accessories-Popcorn Machine"). Build a forgiving matcher over
+  // those titles so a user phrase ("popcorn machine") resolves via the same
+  // normalize+substring logic the room matcher uses.
+  const resourceMatcher = createRoomMatcher(Object.keys(resourceCalendars || {}), {});
+
   function classifyTarget(target) {
     const room = roomMatcher.match(target);
     if (room) return { kind: "room", name: room };
-    const norm = normalizeLocation(target);
-    if (resourceCalendars[norm]) return { kind: "resource", name: norm, calendarId: resourceCalendars[norm] };
+    const resourceTitle = resourceMatcher.match(target);
+    if (resourceTitle) {
+      return { kind: "resource", name: resourceTitle, calendarId: resourceCalendars[resourceTitle] };
+    }
     return { kind: "unmanaged", name: target };
   }
 
@@ -1740,6 +1748,179 @@ Run it from the project dir. Expected: a list of calendars with ids (these ids p
 ```bash
 git add scripts/get-google-token.js scripts/google-token-ci.js
 git commit -m "feat(reservations): add Calendar scope to Google token flow"
+```
+
+---
+
+### Task 14: Mirror room reservations to the venue calendar
+
+**Context:** Decision (user): the OneStop sheet is the source of truth for rooms; the DMV Venues Google Calendar is a **mirror**. So a successful room booking writes the sheet row (Task 9) AND creates a matching event on the room's venue calendar. Availability/conflict checks stay sheet-only (Task 9 unchanged). The venue calendar is best-effort: a mirror failure must NOT fail or undo the sheet booking (the sheet is truth).
+
+**Files:**
+- Modify: `src/services/calendar.js` (+ test) — `insertEvent` accepts an optional `timeZone`.
+- Modify: `src/services/reservations.js` (+ test) — `makeRoomReservation` mirrors to the venue calendar.
+- Modify: `src/lambda/clients.js`, `src/config.js`, `template.yaml`, `.env.example` — wire `VENUE_CALENDARS`.
+
+**Interfaces:**
+- Consumes: `calendarService.insertEvent` (Task 7), `venueCalendars` map `{ "<canonical room>": "<calendarId>" }`.
+- `createReservationsService` gains a `venueCalendars` dep (default `{}`). `makeRoomReservation` returns `{ ok, mirrored: boolean }` (mirrored false when no venue mapping or the mirror call failed).
+
+- [ ] **Step 1: Extend `insertEvent` with a timeZone — write the failing test**
+
+Add to `tests/services/calendar.test.js`:
+
+```javascript
+  it("insertEvent forwards an optional timeZone on start and end", async () => {
+    mockCal.events.insert.mockResolvedValue({ data: { id: "evtTZ" } });
+    await service.insertEvent("cal1", {
+      summary: "Room", startIso: "2026-06-26T19:00:00", endIso: "2026-06-26T22:00:00",
+      description: "", timeZone: "America/New_York",
+    });
+    const arg = mockCal.events.insert.mock.calls[0][0];
+    expect(arg.requestBody.start).toEqual({ dateTime: "2026-06-26T19:00:00", timeZone: "America/New_York" });
+    expect(arg.requestBody.end).toEqual({ dateTime: "2026-06-26T22:00:00", timeZone: "America/New_York" });
+  });
+```
+
+- [ ] **Step 2: Run it — confirm it fails** (`timeZone` not forwarded).
+
+Run: `npx vitest run tests/services/calendar.test.js`
+
+- [ ] **Step 3: Update `insertEvent` in `src/services/calendar.js`**
+
+```javascript
+  async function insertEvent(calendarId, { summary, startIso, endIso, description, timeZone }) {
+    const start = { dateTime: startIso };
+    const end = { dateTime: endIso };
+    if (timeZone) { start.timeZone = timeZone; end.timeZone = timeZone; }
+    const res = await calendarClient.events.insert({
+      calendarId,
+      requestBody: { summary, description: description || "", start, end },
+    });
+    return { id: res.data.id };
+  }
+```
+
+- [ ] **Step 4: Run the calendar test — confirm pass** (existing cases still green; the no-timeZone case must still omit `timeZone`).
+
+- [ ] **Step 5: Mirror logic — write the failing test**
+
+Add to `tests/services/reservations.test.js` a `makeService` that also passes `venueCalendars` and a calendar spy. Extend the existing `makeService` helper to accept and forward `venueCalendars`, and assert:
+
+```javascript
+  it("mirrors a successful room booking to the venue calendar", async () => {
+    const calInsert = vi.fn().mockResolvedValue({ id: "evt1" });
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue([]),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: calInsert },
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars: {},
+      venueCalendars: { "FH MPR": "venue_cal_mpr" },
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const res = await service.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "7:00 PM", what: "Practice", who: "College" });
+    expect(res.ok).toBe(true);
+    expect(res.mirrored).toBe(true);
+    expect(calInsert).toHaveBeenCalledWith("venue_cal_mpr", expect.objectContaining({
+      summary: expect.stringContaining("Practice"), timeZone: "America/New_York",
+    }));
+  });
+
+  it("still succeeds (mirrored:false) when the room has no venue calendar", async () => {
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue([]),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn() },
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars: {},
+      venueCalendars: {},
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const res = await service.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "7:00 PM", what: "Practice" });
+    expect(res.ok).toBe(true);
+    expect(res.mirrored).toBe(false);
+  });
+
+  it("still returns ok when the mirror call throws (sheet is truth)", async () => {
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(["6/22-6/26 M-F"]),
+      readWeekEvents: vi.fn().mockResolvedValue([]),
+      insertRow: vi.fn().mockResolvedValue(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn().mockRejectedValue(new Error("cal down")) },
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars: {},
+      venueCalendars: { "FH MPR": "venue_cal_mpr" },
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    const res = await service.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "7:00 PM", what: "Practice" });
+    expect(res.ok).toBe(true);
+    expect(res.mirrored).toBe(false);
+  });
+```
+
+- [ ] **Step 6: Run — confirm the new cases fail.**
+
+- [ ] **Step 7: Update `src/services/reservations.js`**
+
+Add `venueCalendars = {}` to the destructured deps. Add a helper and mirror after a successful sheet insert:
+
+```javascript
+const VENUE_TZ = "America/New_York";
+
+function isoFromDateMinutes(dateIso, minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const m = String(minutes % 60).padStart(2, "0");
+  return `${dateIso}T${h}:${m}:00`;
+}
+```
+
+At the end of `makeRoomReservation`, after `await sheetService.insertRow(...)`:
+
+```javascript
+    let mirrored = false;
+    const venueCalendarId = venueCalendars[room];
+    if (venueCalendarId) {
+      try {
+        await calendarService.insertEvent(venueCalendarId, {
+          summary: `${what || "Reservation"}${who ? ` (${who})` : ""}`,
+          startIso: isoFromDateMinutes(dateIso, startMin),
+          endIso: isoFromDateMinutes(dateIso, endMin),
+          description: "Mirrored from OneStop sheet by the reservations bot.",
+          timeZone: VENUE_TZ,
+        });
+        mirrored = true;
+      } catch (err) {
+        console.warn(`[reservations] venue mirror failed for ${room}: ${err.message}`);
+      }
+    }
+    return { ok: true, mirrored };
+```
+
+- [ ] **Step 8: Run the reservations test — confirm pass.** Then `npm test`.
+
+- [ ] **Step 9: Wire `VENUE_CALENDARS`** (mirrors the Task 12 pattern):
+  - `src/config.js`: `venueCalendars: process.env.VENUE_CALENDARS ? JSON.parse(process.env.VENUE_CALENDARS) : {}`.
+  - `src/lambda/clients.js`: pass `venueCalendars: config.venueCalendars` into `createReservationsService`.
+  - `template.yaml`: add `VenueCalendars: { Type: String, Default: "" }` param + `VENUE_CALENDARS: !Ref VenueCalendars` env var on WorkerFn.
+  - `.env.example`: add `VENUE_CALENDARS={}`.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/services/calendar.js tests/services/calendar.test.js src/services/reservations.js tests/services/reservations.test.js src/config.js src/lambda/clients.js template.yaml .env.example
+git commit -m "feat(reservations): mirror room bookings to the venue calendar"
 ```
 
 ---
