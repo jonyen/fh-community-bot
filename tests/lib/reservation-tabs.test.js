@@ -30,4 +30,8 @@ describe("selectTabForDate", () => {
     expect(selectTabForDate(tabs, new Date("2026-06-27T12:00:00Z"))).toBe("6/27-6/28 S-Su"));
   it("returns null when no tab covers the date", () =>
     expect(selectTabForDate(tabs, new Date("2026-08-01T12:00:00Z"))).toBeNull());
+  it("selects a cross-year tab (Dec->Jan)", () =>
+    expect(selectTabForDate(["12/29-1/2 M-F"], new Date("2026-12-31T12:00:00Z"))).toBe("12/29-1/2 M-F"));
+  it("selects a cross-year tab from the January side", () =>
+    expect(selectTabForDate(["12/29-1/2 M-F"], new Date("2027-01-01T12:00:00Z"))).toBe("12/29-1/2 M-F"));
 });

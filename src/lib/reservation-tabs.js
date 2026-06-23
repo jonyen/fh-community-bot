@@ -25,7 +25,10 @@ export function selectTabForDate(tabNames, date) {
     let start = Date.UTC(startYear, parsed.start.month - 1, parsed.start.day);
     let endYear = inferYear(parsed.end.month, parsed.end.day, date);
     let end = Date.UTC(endYear, parsed.end.month - 1, parsed.end.day, 23, 59, 59);
-    if (end < start) end += Date.UTC(1971, 0, 1) - Date.UTC(1970, 0, 1); // wrap a year
+    if (end < start) {
+      endYear += 1;
+      end = Date.UTC(endYear, parsed.end.month - 1, parsed.end.day, 23, 59, 59);
+    }
     if (t >= start && t <= end) return name;
   }
   return null;

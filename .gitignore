@@ -5,3 +5,8 @@ samconfig.local.toml
 
 # Runtime output from scripts/google-token-ci.js
 google-auth-url.txt
+
+# Local agent scratch / worktrees (never commit)
+.claire/
+.claude/worktrees/
+.superpowers/
