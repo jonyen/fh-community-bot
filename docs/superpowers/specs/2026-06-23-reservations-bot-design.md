@@ -1,7 +1,7 @@
 # Reservations Bot for the FH Community — Design
 
 **Date:** 2026-06-23
-**Status:** Draft, pending user review
+**Status:** Approved, pending implementation plan
 
 ## Summary
 
