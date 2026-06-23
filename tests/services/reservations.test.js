@@ -79,6 +79,29 @@ describe("makeRoomReservation", () => {
     expect(values[6]).toBe("FH MPR");   // LOCATION
   });
 
+  it("inserts after last same-day row using true rowIndex in multi-day sparse tab", async () => {
+    const sparseEvents = [
+      { rowIndex: 1, date: { month: 6, day: 24 }, startMin: 10 * 60, endMin: 11 * 60, allDay: false, location: "FH MPR", what: "AM" },
+      { rowIndex: 2, date: { month: 6, day: 24 }, startMin: 13 * 60, endMin: 14 * 60, allDay: false, location: "Childcare Room", what: "PM" },
+      { rowIndex: 5, date: { month: 6, day: 25 }, startMin: 9 * 60, endMin: 10 * 60, allDay: false, location: "FH MPR", what: "Next day" },
+    ];
+    // Book FH MPR on 6/24 at 9:00 PM — latest on 6/24, no later same-day row
+    const { service: svc1, sheetService: ss1 } = makeService(sparseEvents);
+    const res1 = await svc1.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-24", startTime: "9:00 PM", endTime: "10:00 PM", what: "Late", who: "Test" });
+    expect(res1.ok).toBe(true);
+    const [, rowIndex1] = ss1.insertRow.mock.calls[0];
+    // Should insert after last 6/24 row (rowIndex 2) → insertAt = 3, NOT all.length+1 (4) and NOT into the 6/25 block
+    expect(rowIndex1).toBe(3);
+
+    // Book FH MPR on 6/25 at 11:00 PM — latest on 6/25 (last day in tab)
+    const { service: svc2, sheetService: ss2 } = makeService(sparseEvents);
+    const res2 = await svc2.makeRoomReservation({ room: "FH MPR", dateIso: "2026-06-25", startTime: "11:00 PM", endTime: "11:59 PM", what: "EndOfDay", who: "Test" });
+    expect(res2.ok).toBe(true);
+    const [, rowIndex2] = ss2.insertRow.mock.calls[0];
+    // Should insert after last 6/25 row (rowIndex 5) → insertAt = 6
+    expect(rowIndex2).toBe(6);
+  });
+
   it("mirrors a successful room booking to the venue calendar", async () => {
     const calInsert = vi.fn().mockResolvedValue({ id: "evt1" });
     const sheetService = {

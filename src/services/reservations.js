@@ -69,11 +69,16 @@ export function createReservationsService({ sheetService, calendarService, roomM
     const { conflicts } = findRoomConflicts({ room, startMin, endMin }, events);
     if (conflicts.length > 0) return { ok: false, reason: "conflict", conflicts };
 
-    // chronological insertion point: first row on/after this date whose start is later
-    let insertAt = all.length + 1; // default end (account for header at 0)
-    for (const e of all) {
-      const laterSameDay = sameDate(e.date, dateIso) && e.startMin !== null && e.startMin > startMin;
-      if (laterSameDay) { insertAt = e.rowIndex; break; }
+    // chronological insertion point within the target day's block
+    const sameDayRows = all.filter((e) => sameDate(e.date, dateIso));
+    let insertAt;
+    const laterRow = sameDayRows.find((e) => e.startMin !== null && e.startMin > startMin);
+    if (laterRow) {
+      insertAt = laterRow.rowIndex;
+    } else if (sameDayRows.length > 0) {
+      insertAt = sameDayRows[sameDayRows.length - 1].rowIndex + 1;
+    } else {
+      insertAt = all.length ? all[all.length - 1].rowIndex + 1 : 1;
     }
     const values = [
       formatDateCell(dateIso), formatMinutes(startMin), formatMinutes(endMin),
