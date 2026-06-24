@@ -68,7 +68,7 @@ describe("ReservationHandler.handleSlash /list", () => {
     expect(arg.text).toContain("Worktime");
   });
 
-  it("groups results by day with a bold date header and indented events", async () => {
+  it("renders results as a monospace table grouped by day", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: null });
     reservationsService.listReservations.mockResolvedValue([
       { dateIso: "2026-06-24", startTime: "1:00 PM", endTime: "2:00 PM", location: "FH MPR", what: "Worktime" },
@@ -77,15 +77,19 @@ describe("ReservationHandler.handleSlash /list", () => {
     ]);
     await handler.handleSlash({ envelope: envelope("everything this week"), client });
     const text = client.chat.postEphemeral.mock.calls[0][0].text;
-    expect(text).toContain("*Wed 6/24*");
-    expect(text).toContain("*Thu 6/25*");
-    expect(text).toContain("  • 1:00 PM–2:00 PM · FH MPR · Worktime");
-    expect(text).toContain("  • 6:00 PM–9:00 PM · Childcare Room · Dinner");
-    // a blank line separates day groups
-    expect(text).toContain("· Dinner\n\n*Thu 6/25*");
+    expect(text).toContain("```"); // code block for monospace alignment
+    expect(text).toContain("Wed 6/24");
+    expect(text).toContain("Thu 6/25");
+    // aligned columns: time, room, what (padding between is flexible)
+    expect(text).toMatch(/1:00 PM–2:00 PM\s+FH MPR\s+Worktime/);
+    expect(text).toMatch(/6:00 PM–9:00 PM\s+Childcare Room\s+Dinner/);
+    // "FH MPR" is padded (to the width of "Childcare Room") so the WHAT column aligns
+    expect(text).toMatch(/FH MPR {2,}Worktime/);
+    // blank line between day groups
+    expect(text).toMatch(/Dinner\n\nThu 6\/25/);
   });
 
-  it("drops placeholder rows (what is '-') and omits '-' location fields", async () => {
+  it("drops placeholder rows (what is '-') and omits '-' fields in the table", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: "2026-06-24" });
     reservationsService.listReservations.mockResolvedValue([
       { dateIso: "2026-06-24", startTime: "12:00 AM", endTime: "11:59 PM", location: "-", what: "E-Sabbath" },
@@ -93,9 +97,10 @@ describe("ReservationHandler.handleSlash /list", () => {
     ]);
     await handler.handleSlash({ envelope: envelope("tomorrow"), client });
     const text = client.chat.postEphemeral.mock.calls[0][0].text;
-    expect(text).toContain("  • 12:00 AM–11:59 PM · E-Sabbath"); // no "· -" location segment
-    expect(text).not.toContain("· -"); // no hyphen-only fields anywhere
-    expect(text).not.toContain("· E-Sabbath ·"); // location omitted, not blank-joined
+    expect(text).toContain("12:00 AM–11:59 PM"); // the real (E-Sabbath) row is kept
+    expect(text).toContain("E-Sabbath");
+    expect(text).not.toContain("1:00 PM"); // the placeholder ("-") row is dropped
+    expect(text).not.toMatch(/ - (?:\s|$)/); // no lone "-" placeholder field rendered
   });
 
   it("replies 'no reservations' when every row is a placeholder", async () => {
@@ -113,7 +118,7 @@ describe("ReservationHandler.handleSlash /list", () => {
       { dateIso: "2026-06-24", startTime: "", endTime: "", location: "Various", what: "Bros LG" },
     ]);
     await handler.handleSlash({ envelope: envelope("tomorrow"), client });
-    expect(client.chat.postEphemeral.mock.calls[0][0].text).toContain("  • time TBD · Various · Bros LG");
+    expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/time TBD\s+Various\s+Bros LG/);
   });
 
   it("defaults to a 7-day window when no date is given", async () => {
