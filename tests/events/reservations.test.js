@@ -259,4 +259,45 @@ describe("ReservationHandler.handleChannelMessage", () => {
     expect(combined).toContain("can I book the MPR friday?");
     expect(combined).toContain("7 to 10 pm for practice");
   });
+
+  it("answers a history request with the last-used event", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "history", target: "popcorn machine" });
+    reservationsService.resourceLastUsed = vi.fn().mockResolvedValue({
+      status: "ok", resourceName: "DMV Accessories-Popcorn Machine",
+      lastUse: { summary: "Halloween Fest", startIso: "2024-10-31T14:00:00Z", endIso: "2024-10-31T16:00:00Z" },
+    });
+    await handler.handleChannelMessage({ event: msg({ text: "when was the popcorn machine last used" }), client });
+    const arg = client.chat.postMessage.mock.calls[0][0];
+    expect(arg).toMatchObject({ channel: "Cres", thread_ts: "100.1", username: "Reservations (beta)" });
+    expect(arg.text).toContain("Popcorn Machine");
+    expect(arg.text).toContain("last used");
+    expect(arg.text).toContain("Halloween Fest");
+  });
+
+  it("asks which resource when the history query is ambiguous", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "history", target: "tech set" });
+    reservationsService.resourceLastUsed = vi.fn().mockResolvedValue({
+      status: "ambiguous",
+      candidates: ["DMV Tech Equipment-G-Tech Set 1", "DMV Tech Equipment-G-Tech Set 2"],
+    });
+    await handler.handleChannelMessage({ event: msg({ text: "who used the tech set last" }), client });
+    const text = client.chat.postMessage.mock.calls[0][0].text;
+    expect(text.toLowerCase()).toContain("which");
+    expect(text).toContain("Tech Set 1");
+    expect(text).toContain("Tech Set 2");
+  });
+
+  it("says it doesn't track an unknown resource", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "history", target: "spaceship" });
+    reservationsService.resourceLastUsed = vi.fn().mockResolvedValue({ status: "unknown", query: "spaceship" });
+    await handler.handleChannelMessage({ event: msg({ text: "who used the spaceship last" }), client });
+    expect(client.chat.postMessage.mock.calls[0][0].text.toLowerCase()).toContain("don't track");
+  });
+
+  it("reports no recorded usage when the resource has no events", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "history", target: "popcorn machine" });
+    reservationsService.resourceLastUsed = vi.fn().mockResolvedValue({ status: "ok", resourceName: "DMV Accessories-Popcorn Machine", lastUse: null });
+    await handler.handleChannelMessage({ event: msg({ text: "when was the popcorn machine last used" }), client });
+    expect(client.chat.postMessage.mock.calls[0][0].text.toLowerCase()).toContain("no recorded usage");
+  });
 });

@@ -12,6 +12,21 @@ function fmtListDate(dateIso) {
   return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
 }
 
+function resourceLabel(title) {
+  return String(title).replace(/^\(vehicle\)-/, "").replace(/^DMV [^-]*-(?:G-)?/, "").trim();
+}
+function fmtFullDate(iso) {
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00Z`);
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCMonth() + 1}/${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+function historyText(res) {
+  if (res.status === "unknown") return `I don't track a resource called "${res.query}".`;
+  if (res.status === "ambiguous") return `Which one did you mean: ${res.candidates.map(resourceLabel).join(", ")}?`;
+  if (res.status === "error") return `Couldn't reach the calendar for ${resourceLabel(res.resourceName)} right now.`;
+  if (!res.lastUse) return `No recorded usage for ${resourceLabel(res.resourceName)}.`;
+  return `${resourceLabel(res.resourceName)} was last used ${fmtFullDate(res.lastUse.startIso)} — ${res.lastUse.summary}.`;
+}
+
 function conflictText(conflicts) {
   return conflicts.map((c) => `• ${c.what || "(busy)"}`).join("\n");
 }
@@ -198,6 +213,12 @@ export function createReservationHandler({ reservationsService, groqService, now
 
     const thread_ts = event.thread_ts || event.ts;
     const say = (msg) => client.chat.postMessage({ channel: event.channel, thread_ts, ...msg });
+
+    if (parsed.intent === "history") {
+      const res = await reservationsService.resourceLastUsed(parsed.target || "");
+      await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: historyText(res) });
+      return;
+    }
 
     if (parsed.intent === "list") {
       await replyForList(parsed, say);
