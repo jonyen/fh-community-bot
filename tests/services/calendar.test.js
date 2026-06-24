@@ -50,4 +50,40 @@ describe("CalendarService", () => {
     expect(arg.requestBody.start).toEqual({ dateTime: "2026-06-26T19:00:00", timeZone: "America/New_York" });
     expect(arg.requestBody.end).toEqual({ dateTime: "2026-06-26T22:00:00", timeZone: "America/New_York" });
   });
+
+  it("lastEvent returns the most recent event in the window", async () => {
+    mockCal.events.list.mockResolvedValue({ data: { items: [
+      { summary: "Old", start: { dateTime: "2025-01-01T10:00:00Z" }, end: { dateTime: "2025-01-01T11:00:00Z" } },
+      { summary: "Recent", start: { dateTime: "2025-08-29T18:00:00Z" }, end: { dateTime: "2025-08-29T20:00:00Z" } },
+    ] } });
+    const out = await service.lastEvent("cal1");
+    expect(out).toEqual({ summary: "Recent", startIso: "2025-08-29T18:00:00Z", endIso: "2025-08-29T20:00:00Z" });
+    const arg = mockCal.events.list.mock.calls[0][0];
+    expect(arg).toMatchObject({ calendarId: "cal1", singleEvents: true, orderBy: "startTime" });
+    expect(typeof arg.timeMin).toBe("string");
+    expect(typeof arg.timeMax).toBe("string");
+    expect(arg.timeMin < arg.timeMax).toBe(true);
+  });
+
+  it("lastEvent returns null when there are no events", async () => {
+    mockCal.events.list.mockResolvedValue({ data: { items: [] } });
+    expect(await service.lastEvent("cal1")).toBeNull();
+  });
+
+  it("lastEvent handles all-day events (date instead of dateTime)", async () => {
+    mockCal.events.list.mockResolvedValue({ data: { items: [
+      { summary: "Camp", start: { date: "2025-08-06" }, end: { date: "2025-08-07" } },
+    ] } });
+    expect(await service.lastEvent("cal1")).toEqual({ summary: "Camp", startIso: "2025-08-06", endIso: "2025-08-07" });
+  });
+
+  it("lastEvent paginates and returns the most recent across pages", async () => {
+    mockCal.events.list
+      .mockResolvedValueOnce({ data: { items: [ { summary: "Old", start: { dateTime: "2025-01-01T10:00:00Z" }, end: { dateTime: "2025-01-01T11:00:00Z" } } ], nextPageToken: "p2" } })
+      .mockResolvedValueOnce({ data: { items: [ { summary: "Newest", start: { dateTime: "2025-09-01T10:00:00Z" }, end: { dateTime: "2025-09-01T11:00:00Z" } } ] } });
+    const out = await service.lastEvent("cal1");
+    expect(out.summary).toBe("Newest");
+    expect(mockCal.events.list).toHaveBeenCalledTimes(2);
+    expect(mockCal.events.list.mock.calls[1][0]).toMatchObject({ pageToken: "p2" });
+  });
 });

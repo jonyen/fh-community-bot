@@ -20,6 +20,7 @@ Choose intent:
 - "reserve": the person wants to BOOK a room (e.g. "book the MPR friday 7-10pm", "can I reserve the childcare room saturday for cleaning").
 - "check": the person asks whether a room is FREE/AVAILABLE for a SPECIFIC time they have in mind. Only use "check" when a specific time or time range is given or clearly intended (e.g. "is the MPR free friday 7-10pm?", "is the staff suite open at 2pm tuesday?").
 - "list": the person wants to SEE what is scheduled — whether or when a room is being used over a day or a period, with NO specific booking time (e.g. "is the MPR being used this weekend?", "what's booked in the MPR friday", "anything in the childcare room next week?", "when is the staff suite used?").
+- "history": the person asks who/when/where a resource was LAST used or who has it (e.g. "who used the speaker set last?", "when was Tech Set 1 last used?", "where's the popcorn machine?"). target is the resource name.
 - "none": the message is not about reservations (greetings, thanks, off-topic chat).
 
 Resolve relative dates ("friday", "this weekend", "next week") against the reference date; if a single date cannot capture it, use the nearest relevant date or null. Output no prose, only JSON.`;
