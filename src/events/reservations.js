@@ -14,6 +14,43 @@ function conflictText(conflicts) {
   return conflicts.map((c) => `• ${c.what || "(busy)"}`).join("\n");
 }
 
+// The OneStop sheet uses "-" as a placeholder for "not applicable". Treat it
+// (and blanks) as empty so they don't render as noise like "· - · -".
+function cleanField(v) {
+  const t = String(v || "").trim();
+  return t === "-" ? "" : t;
+}
+
+// An event is worth listing only if it has a real description ("what").
+// Placeholder rows whose "what" is empty/"-" are dropped.
+function hasContent(i) {
+  return cleanField(i.what) !== "";
+}
+
+// Group already-sorted (date, then start) reservation items into a readable
+// Slack message: a bold date header per day, events indented below it, days
+// separated by a blank line. Empty/"-" fields are omitted.
+function formatGroupedByDay(items) {
+  const groups = [];
+  const byDate = new Map();
+  for (const i of items) {
+    if (!byDate.has(i.dateIso)) {
+      const group = { dateIso: i.dateIso, rows: [] };
+      byDate.set(i.dateIso, group);
+      groups.push(group);
+    }
+    const time =
+      i.startTime && i.endTime
+        ? `${i.startTime}–${i.endTime}`
+        : i.startTime || i.endTime || "time TBD";
+    const segments = [time, cleanField(i.location), cleanField(i.what)].filter(Boolean);
+    byDate.get(i.dateIso).rows.push(`  • ${segments.join(" · ")}`);
+  }
+  return groups
+    .map((g) => `*${fmtListDate(g.dateIso)}*\n${g.rows.join("\n")}`)
+    .join("\n\n");
+}
+
 export function createReservationHandler({ reservationsService, groqService, now }) {
   async function replyForParsed(parsed, say, thread_ts, opts = {}) {
     if (!parsed) {
@@ -95,7 +132,7 @@ export function createReservationHandler({ reservationsService, groqService, now
       if (t.kind === "room") room = t.name;
       else note = ` (couldn't match "${parsed.target}" to a room — showing all)`;
     }
-    const items = await reservationsService.listReservations({ room, fromIso, toIso });
+    const items = (await reservationsService.listReservations({ room, fromIso, toIso })).filter(hasContent);
     const scope = room || "all rooms";
     const window = fromIso === toIso ? fromIso : `${fromIso} … ${toIso}`;
     if (!items.length) {
@@ -103,11 +140,8 @@ export function createReservationHandler({ reservationsService, groqService, now
         text: `No reservations found for ${scope}, ${window}.${note}` });
       return;
     }
-    const lines = items
-      .map((i) => `• ${fmtListDate(i.dateIso)} ${i.startTime}–${i.endTime} — ${i.location} — ${i.what}`)
-      .join("\n");
     await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
-      text: `Reservations for ${scope}, ${window}:${note}\n${lines}` });
+      text: `Reservations for ${scope}, ${window}:${note}\n\n${formatGroupedByDay(items)}` });
   }
 
   async function handleMention({ event, say }) {

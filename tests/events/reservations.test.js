@@ -68,6 +68,54 @@ describe("ReservationHandler.handleSlash /list", () => {
     expect(arg.text).toContain("Worktime");
   });
 
+  it("groups results by day with a bold date header and indented events", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: null });
+    reservationsService.listReservations.mockResolvedValue([
+      { dateIso: "2026-06-24", startTime: "1:00 PM", endTime: "2:00 PM", location: "FH MPR", what: "Worktime" },
+      { dateIso: "2026-06-24", startTime: "6:00 PM", endTime: "9:00 PM", location: "Childcare Room", what: "Dinner" },
+      { dateIso: "2026-06-25", startTime: "6:00 PM", endTime: "7:30 PM", location: "GW", what: "Outreach" },
+    ]);
+    await handler.handleSlash({ envelope: envelope("everything this week"), client });
+    const text = client.chat.postEphemeral.mock.calls[0][0].text;
+    expect(text).toContain("*Wed 6/24*");
+    expect(text).toContain("*Thu 6/25*");
+    expect(text).toContain("  • 1:00 PM–2:00 PM · FH MPR · Worktime");
+    expect(text).toContain("  • 6:00 PM–9:00 PM · Childcare Room · Dinner");
+    // a blank line separates day groups
+    expect(text).toContain("· Dinner\n\n*Thu 6/25*");
+  });
+
+  it("drops placeholder rows (what is '-') and omits '-' location fields", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: "2026-06-24" });
+    reservationsService.listReservations.mockResolvedValue([
+      { dateIso: "2026-06-24", startTime: "12:00 AM", endTime: "11:59 PM", location: "-", what: "E-Sabbath" },
+      { dateIso: "2026-06-24", startTime: "1:00 PM", endTime: "2:00 PM", location: "-", what: "-" }, // placeholder → dropped
+    ]);
+    await handler.handleSlash({ envelope: envelope("tomorrow"), client });
+    const text = client.chat.postEphemeral.mock.calls[0][0].text;
+    expect(text).toContain("  • 12:00 AM–11:59 PM · E-Sabbath"); // no "· -" location segment
+    expect(text).not.toContain("· -"); // no hyphen-only fields anywhere
+    expect(text).not.toContain("· E-Sabbath ·"); // location omitted, not blank-joined
+  });
+
+  it("replies 'no reservations' when every row is a placeholder", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: "2026-06-24" });
+    reservationsService.listReservations.mockResolvedValue([
+      { dateIso: "2026-06-24", startTime: "1:00 PM", endTime: "2:00 PM", location: "-", what: "-" },
+    ]);
+    await handler.handleSlash({ envelope: envelope("tomorrow"), client });
+    expect(client.chat.postEphemeral.mock.calls[0][0].text.toLowerCase()).toContain("no reservations");
+  });
+
+  it("shows 'time TBD' for an event with no start/end time", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: "2026-06-24" });
+    reservationsService.listReservations.mockResolvedValue([
+      { dateIso: "2026-06-24", startTime: "", endTime: "", location: "Various", what: "Bros LG" },
+    ]);
+    await handler.handleSlash({ envelope: envelope("tomorrow"), client });
+    expect(client.chat.postEphemeral.mock.calls[0][0].text).toContain("  • time TBD · Various · Bros LG");
+  });
+
   it("defaults to a 7-day window when no date is given", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: "MPR", date: null });
     reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
