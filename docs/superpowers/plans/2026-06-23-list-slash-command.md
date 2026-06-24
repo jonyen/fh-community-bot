@@ -364,6 +364,132 @@ git commit -m "feat(reservations): /list slash command (NL room + date window)"
 
 ---
 
+### Task 3: Broadcast successful `/reserve` room reservations to the channel
+
+**Context (added requirement, user decision):** When a **room reservation succeeds via the `/reserve` slash command**, announce it with a **public** `chat.postMessage` to the **same channel** the command was issued in (`envelope.channel_id`), mentioning the requester. All other cases stay as-is: a `/reserve` conflict/failure replies **ephemerally** (private); `/check` and `/list` stay ephemeral; `@mention` reservations keep their current in-channel/thread reply (no change — mentions are already public). Only the `/reserve` success path changes from ephemeral to a public broadcast.
+
+**Files:**
+- Modify: `src/events/reservations.js`
+- Test: `tests/events/reservations.test.js`
+
+**Interfaces:**
+- `replyForParsed` gains an optional 4th arg `opts = {}` with `{ broadcast, requester }`. When the room **reserve** path succeeds and `opts.broadcast` is provided, the success message is sent via `opts.broadcast` (public) instead of `say` (ephemeral); on failure it still uses `say`. `opts.requester` (a Slack user id) is prefixed as `<@id>` in the success text when present.
+- `handleSlash` passes `opts` only for `/reserve`: `broadcast = (msg) => client.chat.postMessage({ channel: envelope.channel_id, ...msg })` and `requester = envelope.user_id`.
+
+- [ ] **Step 1: Write the failing tests** (append to `tests/events/reservations.test.js`)
+
+```javascript
+describe("ReservationHandler /reserve broadcast", () => {
+  let reservationsService, groqService, client, handler;
+  beforeEach(() => {
+    reservationsService = { classifyTarget: vi.fn(), makeRoomReservation: vi.fn() };
+    groqService = { parseReservationRequest: vi.fn() };
+    client = { chat: { postEphemeral: vi.fn().mockResolvedValue({}), postMessage: vi.fn().mockResolvedValue({}) } };
+    handler = createReservationHandler({ reservationsService, groqService, now: () => new Date("2026-06-23T12:00:00Z") });
+  });
+  const env = (text) => ({ command: "/reserve", text, channel_id: "C1", user_id: "U1" });
+
+  it("broadcasts publicly to the channel on a successful /reserve", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
+    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true, mirrored: true });
+    await handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm for practice"), client });
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    const arg = client.chat.postMessage.mock.calls[0][0];
+    expect(arg).toMatchObject({ channel: "C1", username: "Reservations (beta)" });
+    expect(arg.text).toContain("<@U1>");
+    expect(arg.text).toContain("FH MPR");
+    expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+  });
+
+  it("keeps a /reserve conflict ephemeral (no broadcast)", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
+    reservationsService.makeRoomReservation.mockResolvedValue({ ok: false, reason: "conflict", conflicts: [{ what: "Meeting" }] });
+    await handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm"), client });
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(client.chat.postEphemeral).toHaveBeenCalledTimes(1);
+    expect(client.chat.postEphemeral.mock.calls[0][0].text.toLowerCase()).toContain("conflict");
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `npx vitest run tests/events/reservations.test.js`
+Expected: FAIL — `postMessage` not called (success still ephemeral).
+
+- [ ] **Step 3: Implement in `src/events/reservations.js`**
+
+Change the `replyForParsed` signature and the room **reserve** branch. Replace the existing reserve branch (the `if (parsed.intent === "reserve") { ... }` block inside the room branch) with this, and update the function signature:
+
+```javascript
+  async function replyForParsed(parsed, say, thread_ts, opts = {}) {
+```
+
+Reserve branch (inside `if (target.kind === "room")`):
+
+```javascript
+      if (parsed.intent === "reserve") {
+        const res = await reservationsService.makeRoomReservation({
+          room: target.name, dateIso: parsed.date, startTime: parsed.startTime, endTime: parsed.endTime,
+          what: parsed.what, who: parsed.who,
+        });
+        if (res.ok) {
+          const who = opts.requester ? `<@${opts.requester}> ` : "";
+          const purpose = parsed.what ? ` for ${parsed.what}` : "";
+          const msg = {
+            username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
+            text: `${who}reserved ${target.name} on ${parsed.date} ${parsed.startTime}–${parsed.endTime}${purpose}.`,
+          };
+          if (opts.broadcast) await opts.broadcast(msg);
+          else await say({ thread_ts, ...msg });
+        } else {
+          await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
+            text: res.reason === "conflict"
+              ? `Can't book — conflict on ${target.name}:\n${conflictText(res.conflicts)}`
+              : `Can't book: ${res.reason}.` });
+        }
+        return;
+      }
+```
+
+Update `handleSlash` to pass `opts` for `/reserve` (keep the `/list` branch from Task 2):
+
+```javascript
+  async function handleSlash({ envelope, client }) {
+    const refIso = now().toISOString();
+    const parsed = await groqService.parseReservationRequest(envelope.text || "", refIso);
+    const say = (msg) => client.chat.postEphemeral({
+      channel: envelope.channel_id, user: envelope.user_id, ...msg,
+    });
+    if (envelope.command === "/list") {
+      await replyForList(parsed, say);
+      return;
+    }
+    const opts = envelope.command === "/reserve"
+      ? { broadcast: (msg) => client.chat.postMessage({ channel: envelope.channel_id, ...msg }), requester: envelope.user_id }
+      : {};
+    await replyForParsed(parsed, say, undefined, opts);
+  }
+```
+
+`handleMention` is unchanged — it calls `replyForParsed(parsed, say, thread_ts)` with no `opts`, so mention reservations keep posting via `say` (already in-channel/thread).
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `npx vitest run tests/events/reservations.test.js`
+Expected: PASS (existing handler + Task 2 `/list` tests still green). Then `npm test`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/events/reservations.js tests/events/reservations.test.js
+git commit -m "feat(reservations): broadcast successful /reserve to the channel"
+```
+
+---
+
 ## Final verification
 
 - [ ] `npm test` — every suite passes.
