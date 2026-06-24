@@ -1,7 +1,7 @@
 // src/events/reservations.js
 import { isIgnorableChatter, missingSlots, followUpText, disambiguationCandidates } from "../lib/reservation-intent.js";
 
-const BOT_USERNAME = "Reservations (beta)";
+const BOT_USERNAME = "OneStop (beta)";
 const BOT_ICON_EMOJI = ":calendar:";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -88,7 +88,7 @@ function formatAsTable(items) {
   return "```\n" + body + "\n```";
 }
 
-export function createReservationHandler({ reservationsService, groqService, now }) {
+export function createReservationHandler({ reservationsService, groqService, onestopInfoService, now }) {
   async function replyForParsed(parsed, say, thread_ts, opts = {}) {
     if (!parsed) {
       await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
@@ -166,7 +166,7 @@ export function createReservationHandler({ reservationsService, groqService, now
     let note = "";
     if (parsed && parsed.target) {
       const t = reservationsService.classifyTarget(parsed.target);
-      if (t.kind === "room") room = t.name;
+      if (t && t.kind === "room") room = t.name;
       else note = ` (couldn't match "${parsed.target}" to a room — showing all)`;
     }
     const items = (await reservationsService.listReservations({ room, fromIso, toIso })).filter(hasContent);
@@ -256,6 +256,19 @@ export function createReservationHandler({ reservationsService, groqService, now
 
     const parsed = await groqService.parseReservationRequest(text, now().toISOString());
     if (!parsed || parsed.intent === "none") return; // silent on non-reservations
+
+    if (parsed.intent === "info") {
+      if (!onestopInfoService) return;
+      let answer;
+      try {
+        const corpus = await onestopInfoService.corpus();
+        answer = await groqService.answerInfoQuestion(text, corpus);
+      } catch {
+        answer = "Can't reach OneStop right now.";
+      }
+      await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: answer });
+      return;
+    }
 
     if (parsed.intent === "history") {
       const res = await reservationsService.resourceLastUsed(parsed.target || "");
