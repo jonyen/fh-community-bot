@@ -152,4 +152,13 @@ describe("parseReservationRequest", () => {
     const out = await svc.parseReservationRequest("lol that meeting was wild", "2026-06-24T12:00:00Z");
     expect(out.intent).toBe("none");
   });
+
+  it("passes through a 'history' intent for last-used questions", async () => {
+    const client = { chat: { completions: { create: vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"intent":"history","target":"speaker set","date":null,"startTime":null,"endTime":null,"what":null,"who":null}' } }],
+    }) } } };
+    const svc = createGroqService(client);
+    const out = await svc.parseReservationRequest("who used the speaker set last?", "2026-06-24T12:00:00Z");
+    expect(out).toMatchObject({ intent: "history", target: "speaker set" });
+  });
 });
