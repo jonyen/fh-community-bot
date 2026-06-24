@@ -105,12 +105,12 @@ export function createReservationsService({ sheetService, calendarService, roomM
     return { ok: true, mirrored };
   }
 
-  async function listRoom({ room, fromIso, toIso }) {
-    const out = [];
+  async function listReservations({ room = null, fromIso, toIso }) {
     const from = new Date(`${fromIso}T00:00:00Z`);
     const to = new Date(`${toIso}T00:00:00Z`);
     const tabs = await sheetService.listScheduleTabs();
     const seenTabs = new Set();
+    const out = [];
     for (let t = from.getTime(); t <= to.getTime(); t += 86400000) {
       const day = new Date(t);
       const tab = selectTabForDate(tabs, day);
@@ -118,22 +118,29 @@ export function createReservationsService({ sheetService, calendarService, roomM
       seenTabs.add(tab);
       const events = await sheetService.readWeekEvents(tab);
       for (const e of events) {
-        if (roomMatcher.match(e.location) !== room) continue;
-        let dateIso = "";
-        if (e.date) {
-          const year = inferYear(e.date.month, e.date.day, now());
-          dateIso = `${year}-${String(e.date.month).padStart(2, "0")}-${String(e.date.day).padStart(2, "0")}`;
-        }
+        if (!e.date) continue;
+        const year = inferYear(e.date.month, e.date.day, now());
+        const dateIso = `${year}-${String(e.date.month).padStart(2, "0")}-${String(e.date.day).padStart(2, "0")}`;
+        if (dateIso < fromIso || dateIso > toIso) continue; // window filter (zero-padded ISO compares lexically)
+        if (room && roomMatcher.match(e.location) !== room) continue;
         out.push({
           dateIso,
           startTime: e.startMin !== null ? formatMinutes(e.startMin) : "",
           endTime: e.endMin !== null ? formatMinutes(e.endMin) : "",
+          location: e.location,
           what: e.what,
+          _startMin: e.startMin ?? Number.MAX_SAFE_INTEGER,
         });
       }
     }
-    return out;
+    out.sort((a, b) => (a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : a._startMin - b._startMin));
+    return out.map(({ _startMin, ...item }) => item);
   }
 
-  return { classifyTarget, checkRoom, makeRoomReservation, listRoom };
+  async function listRoom({ room, fromIso, toIso }) {
+    const items = await listReservations({ room, fromIso, toIso });
+    return items.map(({ dateIso, startTime, endTime, what }) => ({ dateIso, startTime, endTime, what }));
+  }
+
+  return { classifyTarget, checkRoom, makeRoomReservation, listRoom, listReservations };
 }
