@@ -11,8 +11,9 @@ machine?" — and get an answer read from that resource's Google Calendar. When
 the resource name is ambiguous or unrecognized, the bot infers from the real
 catalog and, if still unsure, asks the user to pick from actual resources.
 
-Extends the reservations feature; works in the ambient `#reservations` channel
-and via `@mention`/slash. No booking is involved — this is read-only history.
+Extends the reservations feature; handled in the ambient `#reservations`
+channel (plain messages, no `@mention`). No booking is involved — this is
+read-only history.
 
 ## Verified prerequisite (met)
 
@@ -40,10 +41,11 @@ Resource-calendar event **titles already carry who/what** (e.g.
 - Reporting the event organizer/email (decision: title-only).
 - Venue/room history (this is for equipment **resources** in `RESOURCE_CALENDARS`).
 - Multi-resource answers ("list everything used last week").
+- History via `@mention` or slash command (ambient `#reservations` channel only).
 
 ## Behavior
 
-For a `history` request (ambient channel, mention, or slash):
+For a `history` request in the `#reservations` channel:
 
 1. **Classify** via Groq: `intent: "history"`, `target` = the resource phrase.
 2. **Resolve** the phrase against the resource catalog with a candidate matcher:
@@ -57,8 +59,7 @@ For a `history` request (ambient channel, mention, or slash):
    - **An event exists** → "<resource> was last used on <Ddd M/D, YYYY> —
      <event title>."
    - **No events** → "No recorded usage for <resource>."
-4. **Reply** in-channel, threaded under the triggering message (and ephemerally
-   for slash, matching the existing pattern).
+4. **Reply** in-channel, threaded under the triggering message.
 
 ## Architecture
 
@@ -81,8 +82,9 @@ Unchanged plumbing. New logic composes onto existing services.
   candidates }` (2+), or `{ status: "ok", resourceName, lastUse | null }` (1).
   Needs the resource catalog (titles → calendar ids, already injected as
   `resourceCalendars`) and `calendarService`.
-- **`src/events/reservations.js`** — handle `intent: "history"` in the channel
-  handler (and mention/slash) → call `resourceLastUsed` → format the reply
+- **`src/events/reservations.js`** — handle `intent: "history"` in
+  `handleChannelMessage` (the ambient `#reservations` path only; not
+  `handleMention`/`handleSlash`) → call `resourceLastUsed` → format the reply
   (answer / no-usage / unknown / ambiguous-ask). The ambiguous-ask is a normal
   threaded message; the user's reply re-parses via the existing thread-combine.
 
@@ -113,9 +115,10 @@ the lookback window.
   client).
 - `reservations.resourceLastUsed`: 0 → unknown; 1 → ok with `lastUse`; 1 with no
   events → ok + `lastUse:null`; 2+ → ambiguous with candidate names.
-- Handler: history + ok → "last used on … — <title>"; no-usage message;
-  unknown message; ambiguous → asks listing candidates; calendar error →
-  graceful message; threaded disambiguation reply re-resolves.
+- Handler (`handleChannelMessage`): history + ok → "last used on … — <title>";
+  no-usage message; unknown message; ambiguous → asks listing candidates;
+  calendar error → graceful message; threaded disambiguation reply re-resolves.
+  (`handleMention`/`handleSlash` do NOT handle history.)
 
 ## Rollout
 
