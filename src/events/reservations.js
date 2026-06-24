@@ -166,7 +166,7 @@ export function createReservationHandler({ reservationsService, groqService, one
     let note = "";
     if (parsed && parsed.target) {
       const t = reservationsService.classifyTarget(parsed.target);
-      if (t && t.kind === "room") room = t.name;
+      if (t.kind === "room") room = t.name;
       else note = ` (couldn't match "${parsed.target}" to a room — showing all)`;
     }
     const items = (await reservationsService.listReservations({ room, fromIso, toIso })).filter(hasContent);

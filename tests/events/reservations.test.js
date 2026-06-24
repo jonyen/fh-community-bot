@@ -388,6 +388,7 @@ describe("ReservationHandler onestop info", () => {
 
   it("does not call the info service for a reservation intent", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: "FH MPR", date: "2026-06-27" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
     reservationsService.listReservations.mockResolvedValue([]);
     await handler.handleChannelMessage({ event: msg({ text: "what's booked in the MPR saturday" }), client });
     expect(onestopInfoService.corpus).not.toHaveBeenCalled();
