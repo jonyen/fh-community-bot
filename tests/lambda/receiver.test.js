@@ -177,4 +177,18 @@ describe("receiver.handler", () => {
     expect(res.statusCode).toBe(400);
     expect(sendMock).not.toHaveBeenCalled();
   });
+
+  it("enqueues a non-bot message in the reservations channel", async () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const parsed = { event: { type: "message", channel: "Cres", user: "U1", ts: "1.1", text: "book the MPR" } };
+    expect(shouldEnqueueEvent(parsed)).toBe(true);
+  });
+
+  it("does not enqueue a bot message in the reservations channel", async () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const parsed = { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } };
+    expect(shouldEnqueueEvent(parsed)).toBe(false);
+  });
 });

@@ -18,16 +18,17 @@ function readBody(event) {
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
 }
 
-function shouldEnqueueEvent(parsed) {
+export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
   if (event.type !== "message") return true;
+  if (event.bot_id) {
+    // never enqueue our own / other bots' messages
+  } else if (process.env.RESERVATIONS_CHANNEL_ID && event.channel === process.env.RESERVATIONS_CHANNEL_ID) {
+    return true; // ambient reservations channel: every human message
+  }
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
-  // Reservation @mentions are app_mention events (already enqueued above);
-  // threaded reservation replies are caught by the thread_ts check below. A
-  // bare top-level message is intentionally NOT enqueued — dispatch has no
-  // handler for it, so enqueuing would only burn an SQS round-trip.
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
   if (event.thread_ts) return true;
   return false;

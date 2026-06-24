@@ -18,6 +18,7 @@ Parameters:
   GoogleRefreshToken:   { Type: String, NoEcho: true }
   GoogleDriveFolderId:  { Type: String, Default: "" }
   GroqApiKey:           { Type: String, NoEcho: true }
+  ReservationsChannelId: { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -50,6 +51,7 @@ Resources:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
           EVENT_QUEUE_URL:      !Ref EventQueue
+          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
@@ -75,6 +77,7 @@ Resources:
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GENDER_SHEET_ID:        !Ref GenderSheetId
           RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
+          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken

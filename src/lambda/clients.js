@@ -97,7 +97,7 @@ export function getDeps() {
     });
   }
 
-  cached = { client: slack, handler, genderHandler, slashRefreshHandler, reservationHandler };
+  cached = { client: slack, handler, genderHandler, slashRefreshHandler, reservationHandler, reservationsChannelId: config.reservationsChannelId };
   return cached;
 }
 
