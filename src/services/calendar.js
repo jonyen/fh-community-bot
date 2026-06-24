@@ -34,5 +34,27 @@ export function createCalendarService(calendarClient) {
     return { id: res.data.id };
   }
 
-  return { listEvents, isBusy, insertEvent };
+  async function lastEvent(calendarId, { lookbackDays = 540 } = {}) {
+    const now = new Date();
+    const timeMin = new Date(now.getTime() - lookbackDays * 86400000).toISOString();
+    let pageToken;
+    let latest = null;
+    do {
+      const res = await calendarClient.events.list({
+        calendarId, timeMin, timeMax: now.toISOString(),
+        singleEvents: true, orderBy: "startTime", maxResults: 250, pageToken,
+      });
+      const items = res.data.items || [];
+      if (items.length > 0) latest = items[items.length - 1];
+      pageToken = res.data.nextPageToken;
+    } while (pageToken);
+    if (!latest) return null;
+    return {
+      summary: latest.summary || "",
+      startIso: latest.start?.dateTime || latest.start?.date || "",
+      endIso: latest.end?.dateTime || latest.end?.date || "",
+    };
+  }
+
+  return { listEvents, isBusy, insertEvent, lastEvent };
 }
