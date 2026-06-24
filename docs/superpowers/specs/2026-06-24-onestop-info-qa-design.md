@@ -131,8 +131,8 @@ between the GitHub-variable rename and the code rename never goes dark:
 - `template.yaml` gains `OneStopChannelId` (keep `ReservationsChannelId` as the
   fallback value during migration); `deploy.yml` passes
   `${{ vars.ONESTOP_CHANNEL_ID }}` (falling back to the old var).
-- **Persona rename:** `BOT_USERNAME` `"Reservations (beta)"` → `"OneStop"` in
-  `reservations.js` (the channel is now the unified front door, so the name
+- **Persona rename:** `BOT_USERNAME` `"Reservations (beta)"` → `"OneStop (beta)"`
+  in `reservations.js` (the channel is now the unified front door, so the name
   should match). `icon_emoji` unchanged.
 
 Manual rollout step: create `#onestop`, set GitHub variable
