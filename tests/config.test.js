@@ -163,4 +163,12 @@ describe("loadConfig", () => {
     process.env.GOOGLE_DRIVE_FOLDER_ID = "FOLDER1";
     expect(loadConfig().googleDriveFolderId).toBe("FOLDER1");
   });
+
+  it("loads reservationsChannelId from env (null when unset)", () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.RESERVATIONS_CHANNEL_ID;
+    expect(loadConfig().reservationsChannelId).toBeNull();
+    process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    expect(loadConfig().reservationsChannelId).toBe("Cres");
+  });
 });

@@ -190,3 +190,73 @@ describe("ReservationHandler /reserve broadcast", () => {
     expect(client.chat.postEphemeral).toHaveBeenCalledTimes(1); // ephemeral fallback
   });
 });
+
+describe("ReservationHandler.handleChannelMessage", () => {
+  let reservationsService, groqService, client, handler;
+  beforeEach(() => {
+    reservationsService = {
+      classifyTarget: vi.fn(),
+      checkRoom: vi.fn(),
+      makeRoomReservation: vi.fn(),
+      listReservations: vi.fn(),
+    };
+    groqService = { parseReservationRequest: vi.fn() };
+    client = {
+      chat: { postMessage: vi.fn().mockResolvedValue({}), postEphemeral: vi.fn() },
+      conversations: { replies: vi.fn() },
+    };
+    handler = createReservationHandler({ reservationsService, groqService, now: () => new Date("2026-06-24T12:00:00Z") });
+  });
+  const msg = (over = {}) => ({ type: "message", channel: "Cres", user: "U1", ts: "100.1", text: "", ...over });
+
+  it("stays silent on non-reservation chatter (intent none)", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "none" });
+    await handler.handleChannelMessage({ event: msg({ text: "that was a fun service" }), client });
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("never calls the LLM or replies for obvious chatter", async () => {
+    await handler.handleChannelMessage({ event: msg({ text: "thanks!" }), client });
+    expect(groqService.parseReservationRequest).not.toHaveBeenCalled();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("ignores bot messages", async () => {
+    await handler.handleChannelMessage({ event: msg({ bot_id: "B1", text: "reserve MPR" }), client });
+    expect(groqService.parseReservationRequest).not.toHaveBeenCalled();
+  });
+
+  it("asks a threaded follow-up when a reservation is missing slots", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: null, startTime: null, endTime: null });
+    await handler.handleChannelMessage({ event: msg({ text: "can I book the MPR?" }), client });
+    const arg = client.chat.postMessage.mock.calls[0][0];
+    expect(arg).toMatchObject({ channel: "Cres", thread_ts: "100.1", username: "Reservations (beta)" });
+    expect(arg.text.toLowerCase()).toContain("what date");
+    expect(arg.text.toLowerCase()).toContain("what time");
+  });
+
+  it("books and broadcasts a complete reserve request", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
+    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true, mirrored: true });
+    await handler.handleChannelMessage({ event: msg({ text: "book FH MPR friday 7-10pm for practice" }), client });
+    // broadcast (channel post) names the requester
+    const posts = client.chat.postMessage.mock.calls.map((c) => c[0]);
+    expect(posts.some((p) => p.channel === "Cres" && /<@U1>/.test(p.text) && /FH MPR/.test(p.text))).toBe(true);
+  });
+
+  it("combines a threaded reply with the original request", async () => {
+    client.conversations.replies.mockResolvedValue({ messages: [
+      { user: "U1", text: "can I book the MPR friday?" },
+      { user: "U1", text: "7 to 10 pm for practice" },
+    ] });
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
+    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true });
+    await handler.handleChannelMessage({ event: msg({ thread_ts: "100.1", text: "7 to 10 pm for practice" }), client });
+    expect(client.conversations.replies).toHaveBeenCalledWith({ channel: "Cres", ts: "100.1" });
+    const combined = groqService.parseReservationRequest.mock.calls[0][0];
+    expect(combined).toContain("can I book the MPR friday?");
+    expect(combined).toContain("7 to 10 pm for practice");
+  });
+});

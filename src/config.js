@@ -96,6 +96,7 @@ export function loadConfig() {
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
     reservationsSheetId: process.env.RESERVATIONS_SHEET_ID || null,
+    reservationsChannelId: process.env.RESERVATIONS_CHANNEL_ID || null,
     reservationRooms: loadJsonConfig("reservation-rooms.json", process.env.RESERVATION_ROOMS, { rooms: [], aliases: {} }),
     resourceCalendars: loadJsonConfig("resource-calendars.json", process.env.RESOURCE_CALENDARS, {}),
     venueCalendars: loadJsonConfig("venue-calendars.json", process.env.VENUE_CALENDARS, {}),
