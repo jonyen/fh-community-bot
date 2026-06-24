@@ -36,3 +36,28 @@ describe("createRoomMatcher query is a word inside a canonical name", () => {
   it("still returns null for an unrelated query", () =>
     expect(matcher.match("National Mall")).toBeNull());
 });
+
+describe("createRoomMatcher.matchAll", () => {
+  const matcher = createRoomMatcher(
+    ["DMV Tech Equipment-G-Tech Set 1", "DMV Tech Equipment-G-Tech Set 2",
+     "DMV Tech Equipment-G-Tech Set 3", "DMV Tech Equipment-G-Tech Set 4",
+     "DMV Accessories-Popcorn Machine"],
+    {}
+  );
+  it("returns all candidates for an ambiguous query", () => {
+    expect(matcher.matchAll("tech set").sort()).toEqual([
+      "DMV Tech Equipment-G-Tech Set 1", "DMV Tech Equipment-G-Tech Set 2",
+      "DMV Tech Equipment-G-Tech Set 3", "DMV Tech Equipment-G-Tech Set 4",
+    ]);
+  });
+  it("returns a single candidate when unambiguous", () => {
+    expect(matcher.matchAll("popcorn")).toEqual(["DMV Accessories-Popcorn Machine"]);
+    expect(matcher.matchAll("popcorn machine")).toEqual(["DMV Accessories-Popcorn Machine"]);
+  });
+  it("returns the exact match for a full name", () => {
+    expect(matcher.matchAll("DMV Tech Equipment-G-Tech Set 2")).toEqual(["DMV Tech Equipment-G-Tech Set 2"]);
+  });
+  it("returns [] for an unrecognized query", () => {
+    expect(matcher.matchAll("spaceship")).toEqual([]);
+  });
+});

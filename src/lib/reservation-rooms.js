@@ -24,5 +24,19 @@ export function createRoomMatcher(canonicalRooms, aliases = {}) {
     for (const [key, canon] of aliasByNorm) if (wordRe.test(key)) return canon;
     return null;
   }
-  return { match };
+
+  function matchAll(query) {
+    const norm = normalizeLocation(query);
+    if (!norm) return [];
+    const out = new Set();
+    if (canonByNorm.has(norm)) out.add(canonByNorm.get(norm));
+    if (aliasByNorm.has(norm)) out.add(aliasByNorm.get(norm));
+    const wordRe = new RegExp(`\\b${norm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    for (const [key, canon] of canonByNorm) if (wordRe.test(key)) out.add(canon);
+    for (const [key, canon] of aliasByNorm) if (wordRe.test(key)) out.add(canon);
+    for (const [key, canon] of canonByNorm) if (norm.includes(key)) out.add(canon);
+    for (const [key, canon] of aliasByNorm) if (norm.includes(key)) out.add(canon);
+    return [...out];
+  }
+  return { match, matchAll };
 }
