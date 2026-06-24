@@ -200,7 +200,7 @@ describe("ReservationHandler.handleChannelMessage", () => {
       makeRoomReservation: vi.fn(),
       listReservations: vi.fn(),
     };
-    groqService = { parseReservationRequest: vi.fn() };
+    groqService = { parseReservationRequest: vi.fn(), chooseCandidates: vi.fn().mockResolvedValue([]) };
     client = {
       chat: { postMessage: vi.fn().mockResolvedValue({}), postEphemeral: vi.fn() },
       conversations: { replies: vi.fn() },
@@ -274,23 +274,50 @@ describe("ReservationHandler.handleChannelMessage", () => {
     expect(arg.text).toContain("Halloween Fest");
   });
 
-  it("resolves a disambiguation reply ('1') against the prior 'which one' ask", async () => {
-    // The bot previously asked; the user replies "1" in the thread.
-    client.conversations.replies.mockResolvedValue({ messages: [
-      { user: "U1", text: "who used the tech set last" },
-      { bot_id: "B1", text: "Which one did you mean: Tech Set 1, Tech Set 2, Tech Set 3, Tech Set 4?" },
-      { user: "U1", text: "1" },
-    ] });
+  const askThread = (replyText) => ({ messages: [
+    { user: "U1", text: "who used the tech set last" },
+    { bot_id: "B1", text: "Which one did you mean: Tech Set 1, Tech Set 2, Tech Set 3, Tech Set 4?" },
+    { user: "U1", text: replyText },
+  ] });
+
+  it("resolves a single disambiguation choice via the LLM and answers it", async () => {
+    client.conversations.replies.mockResolvedValue(askThread("1"));
+    groqService.chooseCandidates.mockResolvedValue(["Tech Set 1"]);
     reservationsService.resourceLastUsed = vi.fn().mockResolvedValue({
       status: "ok", resourceName: "DMV Tech Equipment-G-Tech Set 1",
       lastUse: { summary: "GU Speed Friending", startIso: "2025-08-29T18:00:00Z", endIso: "2025-08-29T20:00:00Z" },
     });
     await handler.handleChannelMessage({ event: msg({ thread_ts: "100.1", text: "1" }), client });
+    expect(groqService.chooseCandidates).toHaveBeenCalledWith(
+      ["Tech Set 1", "Tech Set 2", "Tech Set 3", "Tech Set 4"], "1");
     expect(reservationsService.resourceLastUsed).toHaveBeenCalledWith("Tech Set 1");
-    expect(groqService.parseReservationRequest).not.toHaveBeenCalled(); // resolved without re-parsing
+    expect(groqService.parseReservationRequest).not.toHaveBeenCalled();
     const arg = client.chat.postMessage.mock.calls[0][0];
     expect(arg.text).toContain("Tech Set 1");
     expect(arg.text).toContain("GU Speed Friending");
+  });
+
+  it("answers every option when the user asks for all of them", async () => {
+    client.conversations.replies.mockResolvedValue(askThread("all of them"));
+    groqService.chooseCandidates.mockResolvedValue(["Tech Set 1", "Tech Set 2"]);
+    reservationsService.resourceLastUsed = vi.fn(async (label) => ({
+      status: "ok", resourceName: `DMV Tech Equipment-G-${label}`,
+      lastUse: { summary: `${label} event`, startIso: "2025-08-29T18:00:00Z", endIso: "2025-08-29T20:00:00Z" },
+    }));
+    await handler.handleChannelMessage({ event: msg({ thread_ts: "100.1", text: "all of them" }), client });
+    expect(reservationsService.resourceLastUsed).toHaveBeenCalledTimes(2);
+    const text = client.chat.postMessage.mock.calls[0][0].text;
+    expect(text).toContain("Tech Set 1");
+    expect(text).toContain("Tech Set 2");
+    expect(text.split("\n").length).toBe(2);
+  });
+
+  it("falls through to normal parse when the LLM can't resolve the choice", async () => {
+    client.conversations.replies.mockResolvedValue(askThread("hmm not sure"));
+    groqService.chooseCandidates.mockResolvedValue([]);
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "none" });
+    await handler.handleChannelMessage({ event: msg({ thread_ts: "100.1", text: "hmm not sure" }), client });
+    expect(groqService.parseReservationRequest).toHaveBeenCalled(); // fell through
   });
 
   it("asks which resource when the history query is ambiguous", async () => {
