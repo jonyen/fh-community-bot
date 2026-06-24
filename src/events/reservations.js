@@ -1,4 +1,6 @@
 // src/events/reservations.js
+import { isIgnorableChatter, missingSlots, followUpText } from "../lib/reservation-intent.js";
+
 const BOT_USERNAME = "Reservations (beta)";
 const BOT_ICON_EMOJI = ":calendar:";
 
@@ -174,5 +176,46 @@ export function createReservationHandler({ reservationsService, groqService, now
     await replyForParsed(parsed, say, undefined, opts);
   }
 
-  return { handleMention, handleSlash };
+  async function handleChannelMessage({ event, client }) {
+    if (event.bot_id) return;
+    if (event.subtype && event.subtype !== "file_share") return;
+    const baseText = event.text || "";
+    if (isIgnorableChatter(baseText)) return;
+
+    let text = baseText;
+    if (event.thread_ts) {
+      try {
+        const res = await client.conversations.replies({ channel: event.channel, ts: event.thread_ts });
+        const human = (res.messages || []).filter((m) => !m.bot_id).map((m) => m.text || "").filter(Boolean);
+        if (human.length) text = human.join("\n");
+      } catch {
+        // fall back to the single message's text
+      }
+    }
+
+    const parsed = await groqService.parseReservationRequest(text, now().toISOString());
+    if (!parsed || parsed.intent === "none") return; // silent on non-reservations
+
+    const thread_ts = event.thread_ts || event.ts;
+    const say = (msg) => client.chat.postMessage({ channel: event.channel, thread_ts, ...msg });
+
+    if (parsed.intent === "list") {
+      await replyForList(parsed, say);
+      return;
+    }
+
+    const missing = missingSlots(parsed);
+    if (missing.length) {
+      await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: followUpText(missing) });
+      return;
+    }
+
+    const opts =
+      parsed.intent === "reserve"
+        ? { broadcast: (msg) => client.chat.postMessage({ channel: event.channel, ...msg }), requester: event.user }
+        : {};
+    await replyForParsed(parsed, say, thread_ts, opts);
+  }
+
+  return { handleMention, handleSlash, handleChannelMessage };
 }
