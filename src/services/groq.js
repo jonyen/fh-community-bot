@@ -25,6 +25,8 @@ Choose intent:
 
 Resolve relative dates ("friday", "this weekend", "next week") against the reference date; if a single date cannot capture it, use the nearest relevant date or null. Output no prose, only JSON.`;
 
+const SYSTEM_PROMPT_CHOICE = `The user was shown a numbered list of options and asked to pick. Given the options and the user's reply, decide which options they mean. The reply may be a number ("1"), a name ("tech set 2"), an ordinal ("the first one"), several ("1 and 3", "the first two"), or all of them ("all", "everything", "all of them"). Output ONLY JSON: {"selection": [<the exact option strings the user means, copied verbatim from the list>]}. If they mean all options, include every option. If the reply does not clearly select any option, return an empty array. Output only JSON.`;
+
 export function createGroqService(client) {
   async function suggestFix(issueDescription) {
     try {
@@ -125,5 +127,38 @@ export function createGroqService(client) {
     }
   }
 
-  return { suggestFix, checkDuplicate, isMaintenanceRequest, parseReservationRequest };
+  // Given the options the bot offered in a disambiguation question and the
+  // user's reply, return the subset of options the user means (one, several, or
+  // all). Returns [] when the reply doesn't clearly select any. The returned
+  // strings are validated back against `options` (exact, case-insensitive).
+  async function chooseCandidates(options, reply) {
+    if (!Array.isArray(options) || options.length === 0) return [];
+    try {
+      const res = await client.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT_CHOICE },
+          {
+            role: "user",
+            content: `Options:\n${options.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n\nReply: ${reply}`,
+          },
+        ],
+        max_tokens: 256,
+      });
+      const raw = res.choices[0].message.content.trim();
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      if (jsonStart === -1 || jsonEnd === -1) return [];
+      const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+      const selection = Array.isArray(parsed.selection) ? parsed.selection : [];
+      // validate each pick back to a real option (exact, case-insensitive)
+      return selection
+        .map((s) => options.find((o) => o.toLowerCase() === String(s).toLowerCase()))
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  return { suggestFix, checkDuplicate, isMaintenanceRequest, parseReservationRequest, chooseCandidates };
 }

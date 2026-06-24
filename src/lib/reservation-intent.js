@@ -38,23 +38,6 @@ export function disambiguationCandidates(askText) {
   return m[1].split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-// Resolve a user's reply to one of the offered candidate labels. Accepts a
-// 1-based number ("1", "#2") or a name ("tech set 2", "the popcorn one").
-// Returns the chosen label, or null if it can't be resolved unambiguously.
-export function pickCandidate(labels, replyText) {
-  const reply = String(replyText || "").trim();
-  if (!labels.length || !reply) return null;
-  const num = reply.match(/^#?(\d+)$/);
-  if (num) {
-    const k = Number(num[1]);
-    return k >= 1 && k <= labels.length ? labels[k - 1] : null;
-  }
-  const norm = (s) => String(s).toLowerCase().replace(/\s+/g, " ").trim();
-  const r = norm(reply);
-  const hits = labels.filter((l) => norm(l) === r || norm(l).includes(r) || r.includes(norm(l)));
-  return hits.length === 1 ? hits[0] : null;
-}
-
 export function followUpText(missing) {
   const asks = missing.map((m) => LABELS[m]).filter(Boolean);
   let joined;

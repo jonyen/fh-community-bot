@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isIgnorableChatter, missingSlots, followUpText, disambiguationCandidates, pickCandidate } from "../../src/lib/reservation-intent.js";
+import { isIgnorableChatter, missingSlots, followUpText, disambiguationCandidates } from "../../src/lib/reservation-intent.js";
 
 describe("isIgnorableChatter", () => {
   it("ignores greetings, acks, and empties", () => {
@@ -26,26 +26,6 @@ describe("disambiguationCandidates", () => {
   });
 });
 
-describe("pickCandidate", () => {
-  const labels = ["Tech Set 1", "Tech Set 2", "Tech Set 3", "Tech Set 4"];
-  it("maps a 1-based number to a label", () => {
-    expect(pickCandidate(labels, "1")).toBe("Tech Set 1");
-    expect(pickCandidate(labels, "#3")).toBe("Tech Set 3");
-    expect(pickCandidate(labels, "4")).toBe("Tech Set 4");
-  });
-  it("returns null for an out-of-range number", () => {
-    expect(pickCandidate(labels, "5")).toBeNull();
-    expect(pickCandidate(labels, "0")).toBeNull();
-  });
-  it("maps a name to a label", () => {
-    expect(pickCandidate(labels, "tech set 2")).toBe("Tech Set 2");
-  });
-  it("returns null when the reply matches no/multiple labels", () => {
-    expect(pickCandidate(labels, "popcorn")).toBeNull();
-    expect(pickCandidate(labels, "tech set")).toBeNull(); // matches all 4
-    expect(pickCandidate(labels, "")).toBeNull();
-  });
-});
 
 describe("missingSlots", () => {
   it("reserve needs room, date, time", () => {

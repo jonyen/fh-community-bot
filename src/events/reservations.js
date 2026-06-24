@@ -1,5 +1,5 @@
 // src/events/reservations.js
-import { isIgnorableChatter, missingSlots, followUpText, disambiguationCandidates, pickCandidate } from "../lib/reservation-intent.js";
+import { isIgnorableChatter, missingSlots, followUpText, disambiguationCandidates } from "../lib/reservation-intent.js";
 
 const BOT_USERNAME = "Reservations (beta)";
 const BOT_ICON_EMOJI = ":calendar:";
@@ -27,6 +27,17 @@ function historyText(res) {
   const when = fmtFullDate(res.lastUse.startIso);
   const title = res.lastUse.summary ? ` — ${res.lastUse.summary}` : "";
   return `${resourceLabel(res.resourceName)} was last used ${when}${title}.`;
+}
+
+// One compact line per candidate, for the "show me all of them" reply.
+function historyLine(label, res) {
+  if (res.status === "error") return `• ${label} — couldn't read the calendar`;
+  if (res.status === "ok" && !res.lastUse) return `• ${label} — no recorded usage`;
+  if (res.status === "ok") {
+    const title = res.lastUse.summary ? ` (${res.lastUse.summary})` : "";
+    return `• ${label} — last used ${fmtFullDate(res.lastUse.startIso)}${title}`;
+  }
+  return `• ${label} — not found`;
 }
 
 function conflictText(conflicts) {
@@ -216,20 +227,30 @@ export function createReservationHandler({ reservationsService, groqService, now
     }
 
     // Disambiguation reply: if the bot's last message in this thread asked the
-    // user to choose a resource, resolve their reply ("1", "tech set 2", …)
-    // against that candidate list directly — Groq won't carry the choice
-    // forward through a re-parse.
+    // user to choose a resource, let the LLM decide which option(s) the reply
+    // means (one, several, or all) — Groq won't carry the choice forward through
+    // a plain re-parse.
     if (threadMsgs) {
       const ask = [...threadMsgs].reverse().find(
         (m) => m.bot_id && /which one did you mean:/i.test(m.text || "")
       );
       if (ask) {
-        const chosen = pickCandidate(disambiguationCandidates(ask.text), baseText);
-        if (chosen) {
-          const result = await reservationsService.resourceLastUsed(chosen);
+        const options = disambiguationCandidates(ask.text);
+        const chosen = await groqService.chooseCandidates(options, baseText);
+        if (chosen.length === 1) {
+          const result = await reservationsService.resourceLastUsed(chosen[0]);
           await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: historyText(result) });
           return;
         }
+        if (chosen.length > 1) {
+          const lines = [];
+          for (const label of chosen) {
+            lines.push(historyLine(label, await reservationsService.resourceLastUsed(label)));
+          }
+          await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: lines.join("\n") });
+          return;
+        }
+        // chosen is empty → fall through to the normal parse (re-ask or new query)
       }
     }
 
