@@ -14,18 +14,21 @@ Respond "yes" ONLY if the message describes a specific physical/facilities probl
 
 Respond with ONLY "yes" or "no". Do not explain.`;
 
-const SYSTEM_PROMPT_RESERVATION = `You convert a community member's message in a reservations channel into JSON. The reference date is provided. Output ONLY a JSON object with keys: intent, target (the room or resource name as written, or null), date (YYYY-MM-DD or null), startTime (e.g. "7:00 PM" or null), endTime (or null), what (short purpose or null), who (group/person or null).
+const SYSTEM_PROMPT_RESERVATION = `You convert a community member's message in a community OneStop channel into JSON. The reference date is provided. Output ONLY a JSON object with keys: intent, target (the room or resource name as written, or null), date (YYYY-MM-DD or null), startTime (e.g. "7:00 PM" or null), endTime (or null), what (short purpose or null), who (group/person or null).
 
 Choose intent:
 - "reserve": the person wants to BOOK a room (e.g. "book the MPR friday 7-10pm", "can I reserve the childcare room saturday for cleaning").
 - "check": the person asks whether a room is FREE/AVAILABLE for a SPECIFIC time they have in mind. Only use "check" when a specific time or time range is given or clearly intended (e.g. "is the MPR free friday 7-10pm?", "is the staff suite open at 2pm tuesday?").
 - "list": the person wants to SEE what is scheduled — whether/when/who is using a room over a day or period, or right now, with NO specific booking time they want to reserve (e.g. "is the MPR being used this weekend?", "who is using the MPR now?", "who's in the staff suite right now?", "what's booked in the MPR friday", "anything in the childcare room next week?"). Present-tense "who is using X now / right now" is "list" (set date to today, no startTime/endTime).
 - "history": the person asks who/when/where a resource was LAST used or who has it (e.g. "who used the speaker set last?", "when was Tech Set 1 last used?", "where's the popcorn machine?"). target is the resource name.
+- "info": the person asks for OneStop REFERENCE information that is NOT a room/resource booking or schedule — door/lock codes, links, zoom links, duty rotations ("who's on lockup this week?"), interhigh sites ("where does IH Cabin John meet?"), cleaning assignments, categories, or who is in charge of something (e.g. "what's the door code?", "zoom link for AYM?", "who runs the travel workspace?"). Room/resource availability or scheduling stays check/list/reserve/history; off-topic chatter stays none.
 - "none": the message is not about reservations (greetings, thanks, off-topic chat).
 
 Resolve relative dates ("friday", "this weekend", "next week") against the reference date; if a single date cannot capture it, use the nearest relevant date or null. Output no prose, only JSON.`;
 
 const SYSTEM_PROMPT_CHOICE = `The user was shown a numbered list of options and asked to pick. Given the options and the user's reply, decide which options they mean. The reply may be a number ("1"), a name ("tech set 2"), an ordinal ("the first one"), several ("1 and 3", "the first two"), or all of them ("all", "everything", "all of them"). Output ONLY JSON: {"selection": [<the exact option strings the user means, copied verbatim from the list>]}. If they mean all options, include every option. If the reply does not clearly select any option, return an empty array. Output only JSON.`;
+
+const SYSTEM_PROMPT_INFO = `You answer questions for an FH community ("OneStop") using ONLY the provided OneStop reference data. Quote the specific value(s) that answer the question (e.g. a code, a link, a name). If the answer is not present in the data, reply exactly: "I don't see that in OneStop." Never invent, guess, or use outside knowledge. Keep the answer short.`;
 
 export function createGroqService(client) {
   async function suggestFix(issueDescription) {
@@ -160,5 +163,21 @@ export function createGroqService(client) {
     }
   }
 
-  return { suggestFix, checkDuplicate, isMaintenanceRequest, parseReservationRequest, chooseCandidates };
+  async function answerInfoQuestion(question, corpus) {
+    try {
+      const res = await client.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT_INFO },
+          { role: "user", content: `OneStop data:\n${corpus}\n\nQuestion: ${question}` },
+        ],
+        max_tokens: 400,
+      });
+      return res.choices[0].message.content.trim();
+    } catch {
+      return "Can't reach OneStop right now.";
+    }
+  }
+
+  return { suggestFix, checkDuplicate, isMaintenanceRequest, parseReservationRequest, chooseCandidates, answerInfoQuestion };
 }
