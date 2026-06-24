@@ -68,6 +68,7 @@ jobs:
           # Only RESERVATIONS_SHEET_ID is small enough to remain a CFN parameter.
           RESERVATIONS_SHEET_ID: ${{ vars.RESERVATIONS_SHEET_ID }}
           RESERVATIONS_CHANNEL_ID: ${{ vars.RESERVATIONS_CHANNEL_ID }}
+          ONESTOP_CHANNEL_ID: ${{ vars.ONESTOP_CHANNEL_ID }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
@@ -80,6 +81,9 @@ jobs:
           fi
           if [ -n "$RESERVATIONS_CHANNEL_ID" ]; then
             OPTIONAL_PARAMS+=("ReservationsChannelId=$RESERVATIONS_CHANNEL_ID")
+          fi
+          if [ -n "$ONESTOP_CHANNEL_ID" ]; then
+            OPTIONAL_PARAMS+=("OneStopChannelId=$ONESTOP_CHANNEL_ID")
           fi
           sam deploy \
             --no-confirm-changeset \

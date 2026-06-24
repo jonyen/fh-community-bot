@@ -192,4 +192,11 @@ describe("receiver.handler", () => {
     const parsed = { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } };
     expect(shouldEnqueueEvent(parsed)).toBe(false);
   });
+
+  it("enqueues every human message in the ONESTOP_CHANNEL_ID channel", async () => {
+    process.env.ONESTOP_CHANNEL_ID = "Cnew";
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "Cnew", text: "what's the door code?" } })).toBe(true);
+    delete process.env.ONESTOP_CHANNEL_ID;
+  });
 });

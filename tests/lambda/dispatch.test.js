@@ -341,7 +341,7 @@ describe("dispatchSlackEvent ambient reservations channel", () => {
     const maintenance = vi.fn();
     await dispatchSlackEvent({
       slackEnvelope: { event: { type: "message", channel: "Cres", user: "U1", ts: "1.1", text: "book the MPR friday" } },
-      handler: maintenance, reservationHandler, reservationsChannelId: "Cres", client: client(),
+      handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
     });
     expect(reservationHandler.handleChannelMessage).toHaveBeenCalled();
     expect(maintenance).not.toHaveBeenCalled();
@@ -351,7 +351,7 @@ describe("dispatchSlackEvent ambient reservations channel", () => {
     const reservationHandler = { handleChannelMessage: vi.fn(), handleMention: vi.fn(), handleSlash: vi.fn() };
     await dispatchSlackEvent({
       slackEnvelope: { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } },
-      reservationHandler, reservationsChannelId: "Cres", client: client(),
+      reservationHandler, onestopChannelId: "Cres", client: client(),
     });
     expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
   });
@@ -361,7 +361,7 @@ describe("dispatchSlackEvent ambient reservations channel", () => {
     const maintenance = vi.fn().mockResolvedValue();
     await dispatchSlackEvent({
       slackEnvelope: { event: { type: "message", channel: "Cother", user: "U1", thread_ts: "1.1", ts: "1.2", text: "the sink is leaking" } },
-      handler: maintenance, reservationHandler, reservationsChannelId: "Cres", client: client(),
+      handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
     });
     expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
   });
