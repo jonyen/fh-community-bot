@@ -300,4 +300,14 @@ describe("ReservationHandler.handleChannelMessage", () => {
     await handler.handleChannelMessage({ event: msg({ text: "when was the popcorn machine last used" }), client });
     expect(client.chat.postMessage.mock.calls[0][0].text.toLowerCase()).toContain("no recorded usage");
   });
+
+  it("omits the title separator when the last-used event has no title", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "history", target: "popcorn machine" });
+    reservationsService.resourceLastUsed = vi.fn().mockResolvedValue({ status: "ok", resourceName: "DMV Accessories-Popcorn Machine", lastUse: { summary: "", startIso: "2024-10-31T14:00:00Z", endIso: "2024-10-31T16:00:00Z" } });
+    await handler.handleChannelMessage({ event: msg({ text: "when was the popcorn machine last used" }), client });
+    const text = client.chat.postMessage.mock.calls[0][0].text;
+    expect(text).toContain("Popcorn Machine was last used");
+    expect(text).not.toContain("— .");
+    expect(text).not.toMatch(/—\s*\.$/);
+  });
 });

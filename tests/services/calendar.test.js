@@ -76,4 +76,14 @@ describe("CalendarService", () => {
     ] } });
     expect(await service.lastEvent("cal1")).toEqual({ summary: "Camp", startIso: "2025-08-06", endIso: "2025-08-07" });
   });
+
+  it("lastEvent paginates and returns the most recent across pages", async () => {
+    mockCal.events.list
+      .mockResolvedValueOnce({ data: { items: [ { summary: "Old", start: { dateTime: "2025-01-01T10:00:00Z" }, end: { dateTime: "2025-01-01T11:00:00Z" } } ], nextPageToken: "p2" } })
+      .mockResolvedValueOnce({ data: { items: [ { summary: "Newest", start: { dateTime: "2025-09-01T10:00:00Z" }, end: { dateTime: "2025-09-01T11:00:00Z" } } ] } });
+    const out = await service.lastEvent("cal1");
+    expect(out.summary).toBe("Newest");
+    expect(mockCal.events.list).toHaveBeenCalledTimes(2);
+    expect(mockCal.events.list.mock.calls[1][0]).toMatchObject({ pageToken: "p2" });
+  });
 });

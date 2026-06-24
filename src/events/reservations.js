@@ -24,7 +24,9 @@ function historyText(res) {
   if (res.status === "ambiguous") return `Which one did you mean: ${res.candidates.map(resourceLabel).join(", ")}?`;
   if (res.status === "error") return `Couldn't reach the calendar for ${resourceLabel(res.resourceName)} right now.`;
   if (!res.lastUse) return `No recorded usage for ${resourceLabel(res.resourceName)}.`;
-  return `${resourceLabel(res.resourceName)} was last used ${fmtFullDate(res.lastUse.startIso)} — ${res.lastUse.summary}.`;
+  const when = fmtFullDate(res.lastUse.startIso);
+  const title = res.lastUse.summary ? ` — ${res.lastUse.summary}` : "";
+  return `${resourceLabel(res.resourceName)} was last used ${when}${title}.`;
 }
 
 function conflictText(conflicts) {
