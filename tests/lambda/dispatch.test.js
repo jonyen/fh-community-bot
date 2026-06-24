@@ -292,6 +292,15 @@ function client() {
 }
 
 describe("dispatchSlackEvent reservation routing", () => {
+  it("routes /list to the reservation handler", async () => {
+    const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn().mockResolvedValue() };
+    await dispatchSlackEvent({
+      slackEnvelope: { type: "slash_command", command: "/list", text: "all reservations tomorrow" },
+      reservationHandler, client: client(),
+    });
+    expect(reservationHandler.handleSlash).toHaveBeenCalled();
+  });
+
   it("routes /reserve to the reservation handler", async () => {
     const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn().mockResolvedValue() };
     await dispatchSlackEvent({

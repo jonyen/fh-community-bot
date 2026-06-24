@@ -189,3 +189,70 @@ describe("listRoom", () => {
     expect(result[0].what).toBe("Practice");
   });
 });
+
+describe("listReservations", () => {
+  function svc(tabs, eventsByTab) {
+    const sheetService = {
+      listScheduleTabs: vi.fn().mockResolvedValue(tabs),
+      readWeekEvents: vi.fn(async (tab) => eventsByTab[tab] || []),
+      insertRow: vi.fn(),
+    };
+    const service = createReservationsService({
+      sheetService,
+      calendarService: { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn() },
+      roomMatcher: createRoomMatcher(["FH MPR", "Childcare Room"], {}),
+      resourceCalendars: {},
+      now: () => new Date("2026-06-23T12:00:00Z"),
+    });
+    return { service, sheetService };
+  }
+
+  it("lists all rooms in a single-day window, only that day's events", async () => {
+    const { service } = svc(["6/22-6/26 M-F"], {
+      "6/22-6/26 M-F": [
+        { rowIndex: 1, date: { month: 6, day: 24 }, startMin: 10 * 60, endMin: 11 * 60, allDay: false, location: "FH MPR", what: "AM" },
+        { rowIndex: 2, date: { month: 6, day: 24 }, startMin: 18 * 60, endMin: 19 * 60, allDay: false, location: "Childcare Room", what: "PM" },
+        { rowIndex: 3, date: { month: 6, day: 25 }, startMin: 9 * 60, endMin: 10 * 60, allDay: false, location: "FH MPR", what: "NextDay" },
+      ],
+    });
+    const out = await service.listReservations({ fromIso: "2026-06-24", toIso: "2026-06-24" });
+    expect(out.map((i) => i.what)).toEqual(["AM", "PM"]); // 6/25 excluded; sorted by start
+    expect(out[0]).toMatchObject({ dateIso: "2026-06-24", startTime: "10:00 AM", location: "FH MPR" });
+  });
+
+  it("filters to a single room across the window", async () => {
+    const { service } = svc(["6/22-6/26 M-F"], {
+      "6/22-6/26 M-F": [
+        { rowIndex: 1, date: { month: 6, day: 24 }, startMin: 10 * 60, endMin: 11 * 60, allDay: false, location: "FH MPR", what: "MPR-AM" },
+        { rowIndex: 2, date: { month: 6, day: 25 }, startMin: 18 * 60, endMin: 19 * 60, allDay: false, location: "Childcare Room", what: "CC" },
+      ],
+    });
+    const out = await service.listReservations({ room: "FH MPR", fromIso: "2026-06-24", toIso: "2026-06-26" });
+    expect(out.map((i) => i.what)).toEqual(["MPR-AM"]);
+  });
+
+  it("reads each tab once across a multi-tab window and sorts by date then start", async () => {
+    const { service, sheetService } = svc(["6/22-6/26 M-F", "6/27-6/28 S-Su"], {
+      "6/22-6/26 M-F": [
+        { rowIndex: 1, date: { month: 6, day: 26 }, startMin: 20 * 60, endMin: 21 * 60, allDay: false, location: "FH MPR", what: "Fri-PM" },
+        { rowIndex: 2, date: { month: 6, day: 26 }, startMin: 7 * 60, endMin: 8 * 60, allDay: false, location: "FH MPR", what: "Fri-AM" },
+      ],
+      "6/27-6/28 S-Su": [
+        { rowIndex: 1, date: { month: 6, day: 27 }, startMin: 9 * 60, endMin: 10 * 60, allDay: false, location: "Childcare Room", what: "Sat" },
+      ],
+    });
+    const out = await service.listReservations({ fromIso: "2026-06-26", toIso: "2026-06-28" });
+    expect(out.map((i) => i.what)).toEqual(["Fri-AM", "Fri-PM", "Sat"]);
+    expect(sheetService.readWeekEvents).toHaveBeenCalledTimes(2); // each tab read once (dedup)
+  });
+
+  it("returns empty array when nothing falls in the window", async () => {
+    const { service } = svc(["6/22-6/26 M-F"], {
+      "6/22-6/26 M-F": [
+        { rowIndex: 1, date: { month: 6, day: 24 }, startMin: 10 * 60, endMin: 11 * 60, allDay: false, location: "FH MPR", what: "AM" },
+      ],
+    });
+    const out = await service.listReservations({ fromIso: "2026-06-30", toIso: "2026-07-01" });
+    expect(out).toEqual([]);
+  });
+});
