@@ -34,7 +34,8 @@ export function createOneStopInfoService({
     const t = now().getTime();
     if (cache.text !== null && t - cache.fetchedAt < ttlMs) return cache.text;
     const text = await fetchCorpus();
-    cache = { fetchedAt: t, text };
+    // Only cache non-empty results to retry after transient failures
+    if (text) cache = { fetchedAt: t, text };
     return text;
   }
 
