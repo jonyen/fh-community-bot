@@ -40,8 +40,19 @@ export function createReservationHandler({ reservationsService, groqService, now
             username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
             text: `${who}reserved ${target.name} on ${parsed.date} ${parsed.startTime}–${parsed.endTime}${purpose}.`,
           };
-          if (opts.broadcast) await opts.broadcast(msg);
-          else await say({ thread_ts, ...msg });
+          try {
+            if (opts.broadcast) await opts.broadcast(msg);
+            else await say({ thread_ts, ...msg });
+          } catch (err) {
+            // Booking is already saved; a failed notification must NOT propagate
+            // (it would trigger an SQS retry → duplicate sheet rows). Fall back to
+            // an ephemeral reply when the public broadcast fails (e.g. the bot is
+            // not in the channel), and swallow any further error.
+            console.warn(`[reservations] reservation notification failed: ${err.message}`);
+            if (opts.broadcast) {
+              try { await say({ thread_ts, ...msg }); } catch { /* give up quietly */ }
+            }
+          }
         } else {
           await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
             text: res.reason === "conflict"

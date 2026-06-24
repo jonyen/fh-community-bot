@@ -126,4 +126,14 @@ describe("ReservationHandler /reserve broadcast", () => {
     expect(client.chat.postEphemeral).toHaveBeenCalledTimes(1);
     expect(client.chat.postEphemeral.mock.calls[0][0].text.toLowerCase()).toContain("conflict");
   });
+
+  it("falls back to ephemeral and does not throw when the broadcast fails", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
+    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true, mirrored: true });
+    client.chat.postMessage = vi.fn().mockRejectedValue(new Error("not_in_channel"));
+    await expect(handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm for practice"), client })).resolves.toBeUndefined();
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(client.chat.postEphemeral).toHaveBeenCalledTimes(1); // ephemeral fallback
+  });
 });
