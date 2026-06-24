@@ -25,6 +25,23 @@ describe("loadConfig reservations vars", () => {
     expect(cfg.reservationRooms.rooms).toEqual(["FH MPR"]);
     expect(cfg.resourceCalendars).toEqual({ projector: "cal@x" });
   });
+
+  it("parses base64-encoded JSON (deploy delivers it base64 to survive SAM)", () => {
+    const rooms = { rooms: ["FH MPR", "Childcare Room"], aliases: { mpr: "FH MPR" } };
+    process.env.RESERVATION_ROOMS = Buffer.from(JSON.stringify(rooms)).toString("base64");
+    process.env.RESOURCE_CALENDARS = Buffer.from(JSON.stringify({ "DMV Accessories-Popcorn Machine": "c_1@x" })).toString("base64");
+    const cfg = loadConfig();
+    expect(cfg.reservationRooms.rooms).toEqual(["FH MPR", "Childcare Room"]);
+    expect(cfg.resourceCalendars).toEqual({ "DMV Accessories-Popcorn Machine": "c_1@x" });
+  });
+
+  it("falls back to defaults (no throw) when a JSON var is malformed", () => {
+    process.env.RESERVATION_ROOMS = "{"; // truncated — must NOT crash loadConfig/getDeps
+    process.env.VENUE_CALENDARS = "not json at all";
+    const cfg = loadConfig();
+    expect(cfg.reservationRooms).toEqual({ rooms: [], aliases: {} });
+    expect(cfg.venueCalendars).toEqual({});
+  });
 });
 
 describe("loadConfig", () => {

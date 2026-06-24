@@ -48,8 +48,10 @@ jobs:
       - name: SAM deploy
         env:
           GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
-          # JSON-valued reservation overrides go through env so their embedded
-          # quotes/spaces survive into a single quoted argv element.
+          # The three JSON-valued reservation overrides contain spaces (room
+          # names like "FH MPR"). SAM's --parameter-overrides Key=Value shorthand
+          # splits values on spaces, which truncated them to "{" in the past, so
+          # we base64-encode them here (no spaces) and config.js decodes them.
           RESERVATIONS_SHEET_ID: ${{ vars.RESERVATIONS_SHEET_ID }}
           RESERVATION_ROOMS: ${{ vars.RESERVATION_ROOMS }}
           RESOURCE_CALENDARS: ${{ vars.RESOURCE_CALENDARS }}
@@ -57,6 +59,7 @@ jobs:
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
+          b64() { printf %s "$1" | base64 | tr -d '\n'; }
           OPTIONAL_PARAMS=()
           if [ -n "$GOOGLE_DRIVE_FOLDER_ID" ]; then
             OPTIONAL_PARAMS+=("GoogleDriveFolderId=$GOOGLE_DRIVE_FOLDER_ID")
@@ -64,14 +67,15 @@ jobs:
           if [ -n "$RESERVATIONS_SHEET_ID" ]; then
             OPTIONAL_PARAMS+=("ReservationsSheetId=$RESERVATIONS_SHEET_ID")
           fi
+          # base64-encode the spaced JSON values so SAM passes them intact
           if [ -n "$RESERVATION_ROOMS" ]; then
-            OPTIONAL_PARAMS+=("ReservationRooms=$RESERVATION_ROOMS")
+            OPTIONAL_PARAMS+=("ReservationRooms=$(b64 "$RESERVATION_ROOMS")")
           fi
           if [ -n "$RESOURCE_CALENDARS" ]; then
-            OPTIONAL_PARAMS+=("ResourceCalendars=$RESOURCE_CALENDARS")
+            OPTIONAL_PARAMS+=("ResourceCalendars=$(b64 "$RESOURCE_CALENDARS")")
           fi
           if [ -n "$VENUE_CALENDARS" ]; then
-            OPTIONAL_PARAMS+=("VenueCalendars=$VENUE_CALENDARS")
+            OPTIONAL_PARAMS+=("VenueCalendars=$(b64 "$VENUE_CALENDARS")")
           fi
           sam deploy \
             --no-confirm-changeset \
