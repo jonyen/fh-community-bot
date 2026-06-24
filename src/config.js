@@ -1,3 +1,6 @@
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 // SLACK_SIGNING_SECRET is required only by the receiver Lambda, which reads
 // process.env directly and never calls loadConfig(). The worker (which does
 // call loadConfig via clients.js) has no use for it.
@@ -22,35 +25,50 @@ function parseChannelIds(raw) {
   return new Set(ids);
 }
 
-// Parse a JSON-valued env var that may arrive either as raw JSON (local .env)
-// or base64-encoded JSON (CI/deploy encodes it so SAM's --parameter-overrides
-// shorthand, which splits values on spaces, can't mangle room names like
-// "FH MPR"). A malformed value must NEVER throw — that would crash getDeps and
-// take the whole worker down — so fall back to the default instead.
-function parseJsonEnv(raw, fallback) {
-  if (!raw) return fallback;
-  const tryParse = (s) => {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return undefined;
-    }
-  };
-  let value = tryParse(raw);
-  if (value === undefined) {
-    let decoded;
-    try {
-      decoded = Buffer.from(raw, "base64").toString("utf8");
-    } catch {
-      decoded = "";
-    }
-    value = tryParse(decoded);
+function tryParseJson(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
   }
-  if (value === undefined) {
-    console.warn("[config] could not parse JSON env var (raw or base64); using fallback");
-    return fallback;
+}
+
+// Load a large JSON config value (room list, resource/venue calendar maps).
+//
+// These are too big for CloudFormation parameters (4096 chars) and Lambda env
+// vars (4 KB total), so in CI/deploy they are written to bundled files under
+// `runtime-config/` and shipped inside the Lambda package. Resolution order:
+//   1. `runtime-config/<fileName>` bundled in the deployment package (CI path)
+//   2. the env var (local dev via .env) — raw JSON or base64
+//   3. the fallback default
+// A malformed value must NEVER throw — that would crash getDeps and take the
+// whole worker down — so every parse failure falls back instead.
+function loadJsonConfig(fileName, rawEnv, fallback) {
+  try {
+    const path = fileURLToPath(new URL(`../runtime-config/${fileName}`, import.meta.url));
+    if (existsSync(path)) {
+      const parsed = tryParseJson(readFileSync(path, "utf8"));
+      if (parsed !== undefined) return parsed;
+      console.warn(`[config] ${fileName} present but unparseable; trying env/fallback`);
+    }
+  } catch (err) {
+    console.warn(`[config] reading ${fileName} failed: ${err.message}`);
   }
-  return value;
+
+  if (rawEnv) {
+    let value = tryParseJson(rawEnv);
+    if (value === undefined) {
+      try {
+        value = tryParseJson(Buffer.from(rawEnv, "base64").toString("utf8"));
+      } catch {
+        value = undefined;
+      }
+    }
+    if (value !== undefined) return value;
+    console.warn("[config] env JSON unparseable (raw or base64); using fallback");
+  }
+
+  return fallback;
 }
 
 export function loadConfig() {
@@ -78,8 +96,8 @@ export function loadConfig() {
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
     reservationsSheetId: process.env.RESERVATIONS_SHEET_ID || null,
-    reservationRooms: parseJsonEnv(process.env.RESERVATION_ROOMS, { rooms: [], aliases: {} }),
-    resourceCalendars: parseJsonEnv(process.env.RESOURCE_CALENDARS, {}),
-    venueCalendars: parseJsonEnv(process.env.VENUE_CALENDARS, {}),
+    reservationRooms: loadJsonConfig("reservation-rooms.json", process.env.RESERVATION_ROOMS, { rooms: [], aliases: {} }),
+    resourceCalendars: loadJsonConfig("resource-calendars.json", process.env.RESOURCE_CALENDARS, {}),
+    venueCalendars: loadJsonConfig("venue-calendars.json", process.env.VENUE_CALENDARS, {}),
   };
 }
