@@ -194,6 +194,7 @@ describe("receiver.handler", () => {
   });
 
   it("enqueues every human message in the ONESTOP_CHANNEL_ID channel", async () => {
+    delete process.env.RESERVATIONS_CHANNEL_ID;
     process.env.ONESTOP_CHANNEL_ID = "Cnew";
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
     expect(shouldEnqueueEvent({ event: { type: "message", channel: "Cnew", text: "what's the door code?" } })).toBe(true);
