@@ -333,10 +333,10 @@ describe("dispatchSlackEvent reservation routing", () => {
   });
 });
 
-describe("dispatchSlackEvent ambient reservations channel", () => {
+describe("dispatchSlackEvent ambient onestop channel", () => {
   function client() { return { chat: { postMessage: vi.fn().mockResolvedValue({}) } }; }
 
-  it("routes a plain message in the reservations channel to handleChannelMessage", async () => {
+  it("routes a plain message in the onestop channel to handleChannelMessage", async () => {
     const reservationHandler = { handleChannelMessage: vi.fn().mockResolvedValue(), handleMention: vi.fn(), handleSlash: vi.fn() };
     const maintenance = vi.fn();
     await dispatchSlackEvent({
@@ -347,7 +347,7 @@ describe("dispatchSlackEvent ambient reservations channel", () => {
     expect(maintenance).not.toHaveBeenCalled();
   });
 
-  it("ignores bot messages in the reservations channel", async () => {
+  it("ignores bot messages in the onestop channel", async () => {
     const reservationHandler = { handleChannelMessage: vi.fn(), handleMention: vi.fn(), handleSlash: vi.fn() };
     await dispatchSlackEvent({
       slackEnvelope: { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } },
