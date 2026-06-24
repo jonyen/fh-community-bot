@@ -16,6 +16,7 @@ import { createCalendarService } from "../services/calendar.js";
 import { createReservationsService } from "../services/reservations.js";
 import { createRoomMatcher } from "../lib/reservation-rooms.js";
 import { createReservationHandler } from "../events/reservations.js";
+import { createOneStopInfoService } from "../services/onestopInfo.js";
 
 let cached;
 
@@ -90,9 +91,16 @@ export function getDeps() {
       venueCalendars: config.venueCalendars,
       now: () => new Date(),
     });
+    const onestopInfoService = createOneStopInfoService({
+      sheetsClient: google.sheets({ version: "v4", auth: oauth2Client }),
+      sheetId: config.reservationsSheetId,
+      tabs: config.onestopInfoTabs, // undefined → service allowlist default
+      now: () => new Date(),
+    });
     reservationHandler = createReservationHandler({
       reservationsService,
       groqService,
+      onestopInfoService,
       now: () => new Date(),
     });
   }

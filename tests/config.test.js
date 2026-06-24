@@ -174,4 +174,12 @@ describe("loadConfig", () => {
     process.env.ONESTOP_CHANNEL_ID = "Conestop";
     expect(loadConfig().onestopChannelId).toBe("Conestop"); // new var wins
   });
+
+  it("parses ONESTOP_INFO_TABS into a trimmed array (undefined when unset)", () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.ONESTOP_INFO_TABS;
+    expect(loadConfig().onestopInfoTabs).toBeUndefined();
+    process.env.ONESTOP_INFO_TABS = "BULLETIN, Links ,IH";
+    expect(loadConfig().onestopInfoTabs).toEqual(["BULLETIN", "Links", "IH"]);
+  });
 });
