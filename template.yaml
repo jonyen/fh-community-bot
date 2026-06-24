@@ -20,6 +20,7 @@ Parameters:
   GroqApiKey:           { Type: String, NoEcho: true }
   ReservationsChannelId: { Type: String, Default: "" }
   OneStopChannelId:      { Type: String, Default: "" }
+  OneStopInfoTabs:       { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -86,6 +87,7 @@ Resources:
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
           GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
           GROQ_API_KEY:           !Ref GroqApiKey
+          ONESTOP_INFO_TABS:     !Ref OneStopInfoTabs
       Events:
         FromQueue:
           Type: SQS
