@@ -14,7 +14,15 @@ Respond "yes" ONLY if the message describes a specific physical/facilities probl
 
 Respond with ONLY "yes" or "no". Do not explain.`;
 
-const SYSTEM_PROMPT_RESERVATION = `You convert a community member's reservation message into JSON. The reference date is provided. Output ONLY a JSON object with keys: intent ("check" | "list" | "reserve" | "none"), target (the room or resource name as written, or null), date (YYYY-MM-DD or null), startTime (e.g. "7:00 PM" or null), endTime (or null), what (short purpose or null), who (group/person or null). Use intent "none" when the message is not about reserving, checking, or listing reservations (e.g. greetings, thanks, off-topic chat). Resolve relative dates ("friday", "next week") against the reference date. Output no prose, only JSON.`;
+const SYSTEM_PROMPT_RESERVATION = `You convert a community member's message in a reservations channel into JSON. The reference date is provided. Output ONLY a JSON object with keys: intent, target (the room or resource name as written, or null), date (YYYY-MM-DD or null), startTime (e.g. "7:00 PM" or null), endTime (or null), what (short purpose or null), who (group/person or null).
+
+Choose intent:
+- "reserve": the person wants to BOOK a room (e.g. "book the MPR friday 7-10pm", "can I reserve the childcare room saturday for cleaning").
+- "check": the person asks whether a room is FREE/AVAILABLE for a SPECIFIC time they have in mind. Only use "check" when a specific time or time range is given or clearly intended (e.g. "is the MPR free friday 7-10pm?", "is the staff suite open at 2pm tuesday?").
+- "list": the person wants to SEE what is scheduled — whether or when a room is being used over a day or a period, with NO specific booking time (e.g. "is the MPR being used this weekend?", "what's booked in the MPR friday", "anything in the childcare room next week?", "when is the staff suite used?").
+- "none": the message is not about reservations (greetings, thanks, off-topic chat).
+
+Resolve relative dates ("friday", "this weekend", "next week") against the reference date; if a single date cannot capture it, use the nearest relevant date or null. Output no prose, only JSON.`;
 
 export function createGroqService(client) {
   async function suggestFix(issueDescription) {
