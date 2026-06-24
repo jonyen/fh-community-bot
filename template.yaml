@@ -19,6 +19,7 @@ Parameters:
   GoogleDriveFolderId:  { Type: String, Default: "" }
   GroqApiKey:           { Type: String, NoEcho: true }
   ReservationsChannelId: { Type: String, Default: "" }
+  OneStopChannelId:      { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -51,6 +52,7 @@ Resources:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
           EVENT_QUEUE_URL:      !Ref EventQueue
+          ONESTOP_CHANNEL_ID: !Ref OneStopChannelId
           RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
       FunctionUrlConfig:
         AuthType: NONE
@@ -77,6 +79,7 @@ Resources:
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GENDER_SHEET_ID:        !Ref GenderSheetId
           RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
+          ONESTOP_CHANNEL_ID: !Ref OneStopChannelId
           RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
