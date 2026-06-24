@@ -42,40 +42,40 @@ jobs:
         with:
           use-installer: true
 
+      # The reservation room list and resource/venue calendar maps are too large
+      # for CloudFormation parameters (4096 chars) and Lambda env vars (4 KB), so
+      # we bundle them into the deployment package as files under runtime-config/
+      # and config.js reads them at runtime. Written BEFORE `sam build` so they
+      # are included in the build artifact.
+      - name: Write runtime config files
+        env:
+          RESERVATION_ROOMS: ${{ vars.RESERVATION_ROOMS }}
+          RESOURCE_CALENDARS: ${{ vars.RESOURCE_CALENDARS }}
+          VENUE_CALENDARS: ${{ vars.VENUE_CALENDARS }}
+        run: |
+          mkdir -p runtime-config
+          [ -n "$RESERVATION_ROOMS" ] && printf %s "$RESERVATION_ROOMS" > runtime-config/reservation-rooms.json
+          [ -n "$RESOURCE_CALENDARS" ] && printf %s "$RESOURCE_CALENDARS" > runtime-config/resource-calendars.json
+          [ -n "$VENUE_CALENDARS" ] && printf %s "$VENUE_CALENDARS" > runtime-config/venue-calendars.json
+          echo "runtime-config written:"; ls -l runtime-config
+
       - name: SAM build
         run: sam build
 
       - name: SAM deploy
         env:
           GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
-          # The three JSON-valued reservation overrides contain spaces (room
-          # names like "FH MPR"). SAM's --parameter-overrides Key=Value shorthand
-          # splits values on spaces, which truncated them to "{" in the past, so
-          # we base64-encode them here (no spaces) and config.js decodes them.
+          # Only RESERVATIONS_SHEET_ID is small enough to remain a CFN parameter.
           RESERVATIONS_SHEET_ID: ${{ vars.RESERVATIONS_SHEET_ID }}
-          RESERVATION_ROOMS: ${{ vars.RESERVATION_ROOMS }}
-          RESOURCE_CALENDARS: ${{ vars.RESOURCE_CALENDARS }}
-          VENUE_CALENDARS: ${{ vars.VENUE_CALENDARS }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
-          b64() { printf %s "$1" | base64 | tr -d '\n'; }
           OPTIONAL_PARAMS=()
           if [ -n "$GOOGLE_DRIVE_FOLDER_ID" ]; then
             OPTIONAL_PARAMS+=("GoogleDriveFolderId=$GOOGLE_DRIVE_FOLDER_ID")
           fi
           if [ -n "$RESERVATIONS_SHEET_ID" ]; then
             OPTIONAL_PARAMS+=("ReservationsSheetId=$RESERVATIONS_SHEET_ID")
-          fi
-          # base64-encode the spaced JSON values so SAM passes them intact
-          if [ -n "$RESERVATION_ROOMS" ]; then
-            OPTIONAL_PARAMS+=("ReservationRooms=$(b64 "$RESERVATION_ROOMS")")
-          fi
-          if [ -n "$RESOURCE_CALENDARS" ]; then
-            OPTIONAL_PARAMS+=("ResourceCalendars=$(b64 "$RESOURCE_CALENDARS")")
-          fi
-          if [ -n "$VENUE_CALENDARS" ]; then
-            OPTIONAL_PARAMS+=("VenueCalendars=$(b64 "$VENUE_CALENDARS")")
           fi
           sam deploy \
             --no-confirm-changeset \

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config.js";
+
+const RUNTIME_CONFIG_DIR = fileURLToPath(new URL("../runtime-config", import.meta.url));
 
 describe("loadConfig reservations vars", () => {
   const base = {
@@ -41,6 +45,21 @@ describe("loadConfig reservations vars", () => {
     const cfg = loadConfig();
     expect(cfg.reservationRooms).toEqual({ rooms: [], aliases: {} });
     expect(cfg.venueCalendars).toEqual({});
+  });
+
+  it("reads a bundled runtime-config file in preference to the env var", () => {
+    const file = `${RUNTIME_CONFIG_DIR}/resource-calendars.json`;
+    const createdDir = !existsSync(RUNTIME_CONFIG_DIR);
+    mkdirSync(RUNTIME_CONFIG_DIR, { recursive: true });
+    writeFileSync(file, JSON.stringify({ "DMV Accessories-Popcorn Machine": "c_file@x" }));
+    process.env.RESOURCE_CALENDARS = JSON.stringify({ "ignored": "c_env@x" }); // file wins
+    try {
+      const cfg = loadConfig();
+      expect(cfg.resourceCalendars).toEqual({ "DMV Accessories-Popcorn Machine": "c_file@x" });
+    } finally {
+      rmSync(file, { force: true });
+      if (createdDir) rmSync(RUNTIME_CONFIG_DIR, { recursive: true, force: true });
+    }
   });
 });
 
