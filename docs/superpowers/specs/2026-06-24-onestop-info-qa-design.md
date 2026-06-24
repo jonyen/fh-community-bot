@@ -5,11 +5,16 @@
 
 ## Summary
 
-Let people get OneStop information by asking the bot in `#reservations` instead
-of opening the *DMV Fairfax/CP Members OneStop* sheet
+Let people get OneStop information by asking the bot in a new **`#onestop`**
+channel instead of opening the *DMV Fairfax/CP Members OneStop* sheet
 (`163Qo6xAr0DZvBv3MdPsE3aQCX7BurRROA7FcRJFHcOw`). A natural-language question is
 answered **only** from the sheet's static reference tabs (codes, links, zoom
 links, rotations, interhigh sites, cleaning assignments, categories).
+
+`#onestop` **replaces `#reservations`** as the single front door: the same
+ambient handler runs there and does both info Q&A and the existing reservation
+actions (check/list/reserve/history). `#reservations` is retired — the bot's
+configured channel id points at `#onestop`.
 
 This is the first sub-project of a broader "OneStop bot" vision (info Q&A +
 request management). Only the **info Q&A** half is specified here. Request
@@ -18,10 +23,11 @@ it and will be specced separately.
 
 ## Goals
 
-- Answer FH/OneStop questions in `#reservations` from the sheet's reference
+- Answer FH/OneStop questions in `#onestop` from the sheet's reference
   tabs: "what's the door code?", "zoom link for AYM?", "who's on lockup this
   week?", "where does IH Cabin John meet?", "who runs the travel workspace?".
-- Reuse the existing channel + Groq routing; reservation actions are unchanged.
+- Reuse the existing ambient handler + Groq routing; reservation actions are
+  unchanged, just now living in `#onestop`.
 - Never invent: answer strictly from the OneStop data, or say it isn't there.
 
 ## Non-goals
@@ -32,7 +38,8 @@ it and will be specced separately.
 - Editing the OneStop sheet (read-only feature).
 - Embeddings / semantic search / new dependencies — the corpus is small enough
   to feed whole.
-- A new channel — `#reservations` becomes the single one-stop front door.
+- Per-channel branching logic — `#onestop` is the only ambient channel (it
+  replaces `#reservations`); the handler is unchanged save the new `info` route.
 
 ## OneStop sheet facts (verified live)
 
@@ -108,9 +115,33 @@ inside the channel handler's parse step and one new read-only service.
   Add `ONESTOP_INFO_TABS` to the worker env (optional, default empty → code
   allowlist).
 
+### Channel rename (`#reservations` → `#onestop`)
+
+`#onestop` replaces `#reservations` as the bot's ambient channel. The channel
+id already threads through `config.reservationsChannelId` → `receiver.js`
+(ambient detection) → `dispatch.js` (route to the reservation handler). Rename
+it to OneStop for clarity, with a backward-compatible env fallback so a deploy
+between the GitHub-variable rename and the code rename never goes dark:
+
+- **New env/param `ONESTOP_CHANNEL_ID`**, read as
+  `process.env.ONESTOP_CHANNEL_ID || process.env.RESERVATIONS_CHANNEL_ID`.
+- `config` exposes it as **`onestopChannelId`** (drop `reservationsChannelId`);
+  thread the rename through `receiver.js`, `dispatch.js`, `worker.js`,
+  `clients.js`.
+- `template.yaml` gains `OneStopChannelId` (keep `ReservationsChannelId` as the
+  fallback value during migration); `deploy.yml` passes
+  `${{ vars.ONESTOP_CHANNEL_ID }}` (falling back to the old var).
+- **Persona rename:** `BOT_USERNAME` `"Reservations (beta)"` → `"OneStop"` in
+  `reservations.js` (the channel is now the unified front door, so the name
+  should match). `icon_emoji` unchanged.
+
+Manual rollout step: create `#onestop`, set GitHub variable
+`ONESTOP_CHANNEL_ID` to its id, invite the bot. `#reservations` can be archived
+once `#onestop` is live.
+
 ## Data flow
 
-1. Non-bot `#reservations` message → `handleChannelMessage`.
+1. Non-bot `#onestop` message → `handleChannelMessage`.
 2. `parseReservationRequest(text)` → `intent`.
 3. `intent === "info"` → `corpus()` (cached) → `answerInfoQuestion(text, corpus)`
    → reply. Two Groq calls total, only on info questions.
@@ -130,7 +161,7 @@ inside the channel handler's parse step and one new read-only service.
 
 ## Security / privacy
 
-- BULLETIN holds door/lockbox codes and meeting links. `#reservations` is a
+- BULLETIN holds door/lockbox codes and meeting links. `#onestop` is a
   members-only channel and the source sheet is "member access", so surfacing
   these to the channel matches the existing trust boundary. Accepted for v1; if
   the channel's membership ever broadens, revisit (e.g. redact a `codes` tab).
@@ -138,8 +169,11 @@ inside the channel handler's parse step and one new read-only service.
 
 ## Config / rollout
 
-- No new GitHub variable required — reuses `RESERVATIONS_SHEET_ID`
+- No new sheet id — reuses `RESERVATIONS_SHEET_ID`
   (= `163Qo6xAr0DZvBv3MdPsE3aQCX7BurRROA7FcRJFHcOw`).
+- New `ONESTOP_CHANNEL_ID` variable = the `#onestop` channel id (falls back to
+  `RESERVATIONS_CHANNEL_ID` during migration). Create `#onestop`, invite the
+  bot, set the variable; archive `#reservations` once live.
 - Optional `ONESTOP_INFO_TABS` variable to override the tab allowlist without a
   code change.
 - Gated on `reservationsSheetId` (same gate as the reservations feature).
@@ -160,11 +194,12 @@ inside the channel handler's parse step and one new read-only service.
   failure replies gracefully.
 - Config/clients: `onestopInfoService` built when `reservationsSheetId` set,
   with the allowlist (and `ONESTOP_INFO_TABS` override honored).
+- Channel rename: `config.onestopChannelId` reads `ONESTOP_CHANNEL_ID`, falls
+  back to `RESERVATIONS_CHANNEL_ID` when the new var is unset; receiver/dispatch
+  ambient-route on it.
 
 ## Open questions / TODOs
 
-- **Persona rename** "Reservations (beta)" → "OneStop" once the channel is the
-  unified front door (cosmetic; out of scope for the logic).
 - **Router tuning**: the `info` vs `list` boundary ("what's booked in the MPR"
   is `list`; "what's the door code" is `info`) — covered by prompt examples;
   monitor for misroutes after rollout.
