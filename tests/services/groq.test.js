@@ -143,4 +143,13 @@ describe("parseReservationRequest", () => {
     const svc = createGroqService(client);
     expect(await svc.parseReservationRequest("x", "2026-06-23T12:00:00Z")).toBeNull();
   });
+
+  it("passes through a 'none' intent for non-reservation chatter", async () => {
+    const client = { chat: { completions: { create: vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"intent":"none","target":null,"date":null,"startTime":null,"endTime":null,"what":null,"who":null}' } }],
+    }) } } };
+    const svc = createGroqService(client);
+    const out = await svc.parseReservationRequest("lol that meeting was wild", "2026-06-24T12:00:00Z");
+    expect(out.intent).toBe("none");
+  });
 });

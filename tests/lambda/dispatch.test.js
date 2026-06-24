@@ -332,3 +332,37 @@ describe("dispatchSlackEvent reservation routing", () => {
     expect(maintenance).toHaveBeenCalled();
   });
 });
+
+describe("dispatchSlackEvent ambient reservations channel", () => {
+  function client() { return { chat: { postMessage: vi.fn().mockResolvedValue({}) } }; }
+
+  it("routes a plain message in the reservations channel to handleChannelMessage", async () => {
+    const reservationHandler = { handleChannelMessage: vi.fn().mockResolvedValue(), handleMention: vi.fn(), handleSlash: vi.fn() };
+    const maintenance = vi.fn();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "Cres", user: "U1", ts: "1.1", text: "book the MPR friday" } },
+      handler: maintenance, reservationHandler, reservationsChannelId: "Cres", client: client(),
+    });
+    expect(reservationHandler.handleChannelMessage).toHaveBeenCalled();
+    expect(maintenance).not.toHaveBeenCalled();
+  });
+
+  it("ignores bot messages in the reservations channel", async () => {
+    const reservationHandler = { handleChannelMessage: vi.fn(), handleMention: vi.fn(), handleSlash: vi.fn() };
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } },
+      reservationHandler, reservationsChannelId: "Cres", client: client(),
+    });
+    expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not ambient-route a message in another channel", async () => {
+    const reservationHandler = { handleChannelMessage: vi.fn(), handleMention: vi.fn(), handleSlash: vi.fn() };
+    const maintenance = vi.fn().mockResolvedValue();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "Cother", user: "U1", thread_ts: "1.1", ts: "1.2", text: "the sink is leaking" } },
+      handler: maintenance, reservationHandler, reservationsChannelId: "Cres", client: client(),
+    });
+    expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
+  });
+});

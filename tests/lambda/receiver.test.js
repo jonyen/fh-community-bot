@@ -35,6 +35,7 @@ describe("receiver.handler", () => {
     sendMock.mockResolvedValue({});
     process.env.SLACK_SIGNING_SECRET = SECRET;
     process.env.EVENT_QUEUE_URL = "https://sqs.example/q";
+    delete process.env.RESERVATIONS_CHANNEL_ID;
   });
 
   it("returns 401 on a bad signature", async () => {
@@ -176,5 +177,19 @@ describe("receiver.handler", () => {
     });
     expect(res.statusCode).toBe(400);
     expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("enqueues a non-bot message in the reservations channel", async () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const parsed = { event: { type: "message", channel: "Cres", user: "U1", ts: "1.1", text: "book the MPR" } };
+    expect(shouldEnqueueEvent(parsed)).toBe(true);
+  });
+
+  it("does not enqueue a bot message in the reservations channel", async () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const parsed = { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } };
+    expect(shouldEnqueueEvent(parsed)).toBe(false);
   });
 });
