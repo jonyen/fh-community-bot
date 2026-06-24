@@ -15,7 +15,7 @@ function conflictText(conflicts) {
 }
 
 export function createReservationHandler({ reservationsService, groqService, now }) {
-  async function replyForParsed(parsed, say, thread_ts) {
+  async function replyForParsed(parsed, say, thread_ts, opts = {}) {
     if (!parsed) {
       await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
         text: "I didn't catch that — try e.g. \"reserve FH MPR Friday 7-10pm for practice\"." });
@@ -33,12 +33,21 @@ export function createReservationHandler({ reservationsService, groqService, now
           room: target.name, dateIso: parsed.date, startTime: parsed.startTime, endTime: parsed.endTime,
           what: parsed.what, who: parsed.who,
         });
-        await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
-          text: res.ok
-            ? `Booked ${target.name} on ${parsed.date} ${parsed.startTime}–${parsed.endTime}.`
-            : res.reason === "conflict"
+        if (res.ok) {
+          const who = opts.requester ? `<@${opts.requester}> ` : "";
+          const purpose = parsed.what ? ` for ${parsed.what}` : "";
+          const msg = {
+            username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
+            text: `${who}reserved ${target.name} on ${parsed.date} ${parsed.startTime}–${parsed.endTime}${purpose}.`,
+          };
+          if (opts.broadcast) await opts.broadcast(msg);
+          else await say({ thread_ts, ...msg });
+        } else {
+          await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
+            text: res.reason === "conflict"
               ? `Can't book — conflict on ${target.name}:\n${conflictText(res.conflicts)}`
               : `Can't book: ${res.reason}.` });
+        }
         return;
       }
       if (parsed.intent === "list") {
@@ -107,7 +116,10 @@ export function createReservationHandler({ reservationsService, groqService, now
       await replyForList(parsed, say);
       return;
     }
-    await replyForParsed(parsed, say, undefined);
+    const opts = envelope.command === "/reserve"
+      ? { broadcast: (msg) => client.chat.postMessage({ channel: envelope.channel_id, ...msg }), requester: envelope.user_id }
+      : {};
+    await replyForParsed(parsed, say, undefined, opts);
   }
 
   return { handleMention, handleSlash };
