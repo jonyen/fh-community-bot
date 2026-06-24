@@ -190,6 +190,59 @@ describe("listRoom", () => {
   });
 });
 
+describe("resourceLastUsed", () => {
+  function svc(lastEventImpl) {
+    const calendarService = { listEvents: vi.fn(), isBusy: vi.fn(), insertEvent: vi.fn(), lastEvent: vi.fn(lastEventImpl) };
+    const resourceCalendars = {
+      "DMV Tech Equipment-G-Tech Set 1": "c1",
+      "DMV Tech Equipment-G-Tech Set 2": "c2",
+      "DMV Tech Equipment-G-Tech Set 3": "c3",
+      "DMV Tech Equipment-G-Tech Set 4": "c4",
+      "DMV Accessories-Popcorn Machine": "cp",
+    };
+    const service = createReservationsService({
+      sheetService: { listScheduleTabs: vi.fn(), readWeekEvents: vi.fn(), insertRow: vi.fn() },
+      calendarService,
+      roomMatcher: createRoomMatcher(["FH MPR"], {}),
+      resourceCalendars,
+      now: () => new Date("2026-06-24T12:00:00Z"),
+    });
+    return { service, calendarService };
+  }
+
+  it("unknown when no resource matches", async () => {
+    const { service } = svc();
+    expect(await service.resourceLastUsed("spaceship")).toEqual({ status: "unknown", query: "spaceship" });
+  });
+
+  it("ambiguous when multiple resources match", async () => {
+    const { service } = svc();
+    const r = await service.resourceLastUsed("tech set");
+    expect(r.status).toBe("ambiguous");
+    expect(r.candidates).toHaveLength(4);
+  });
+
+  it("ok with last use for a single match", async () => {
+    const last = { summary: "Halloween Fest", startIso: "2024-10-31T14:00:00Z", endIso: "2024-10-31T16:00:00Z" };
+    const { service, calendarService } = svc(async () => last);
+    const r = await service.resourceLastUsed("popcorn machine");
+    expect(r).toEqual({ status: "ok", resourceName: "DMV Accessories-Popcorn Machine", lastUse: last });
+    expect(calendarService.lastEvent).toHaveBeenCalledWith("cp");
+  });
+
+  it("ok with null lastUse when the calendar has no events", async () => {
+    const { service } = svc(async () => null);
+    const r = await service.resourceLastUsed("popcorn machine");
+    expect(r).toEqual({ status: "ok", resourceName: "DMV Accessories-Popcorn Machine", lastUse: null });
+  });
+
+  it("error when the calendar read throws", async () => {
+    const { service } = svc(async () => { throw new Error("boom"); });
+    const r = await service.resourceLastUsed("popcorn machine");
+    expect(r).toEqual({ status: "error", resourceName: "DMV Accessories-Popcorn Machine" });
+  });
+});
+
 describe("listReservations", () => {
   function svc(tabs, eventsByTab) {
     const sheetService = {

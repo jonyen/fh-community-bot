@@ -142,5 +142,20 @@ export function createReservationsService({ sheetService, calendarService, roomM
     return items.map(({ dateIso, startTime, endTime, what }) => ({ dateIso, startTime, endTime, what }));
   }
 
-  return { classifyTarget, checkRoom, makeRoomReservation, listRoom, listReservations };
+  async function resourceLastUsed(query) {
+    const candidates = resourceMatcher.matchAll(query);
+    if (candidates.length === 0) return { status: "unknown", query };
+    if (candidates.length > 1) return { status: "ambiguous", candidates };
+    const resourceName = candidates[0];
+    const calendarId = resourceCalendars[resourceName];
+    if (!calendarId) return { status: "unknown", query };
+    try {
+      const lastUse = await calendarService.lastEvent(calendarId);
+      return { status: "ok", resourceName, lastUse };
+    } catch {
+      return { status: "error", resourceName };
+    }
+  }
+
+  return { classifyTarget, checkRoom, makeRoomReservation, listRoom, listReservations, resourceLastUsed };
 }
