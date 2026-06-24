@@ -20,7 +20,12 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
   if (slackEnvelope.type === "slash_command") {
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
-    } else if (reservationHandler && (slackEnvelope.command === "/reserve" || slackEnvelope.command === "/check")) {
+    } else if (
+      reservationHandler &&
+      (slackEnvelope.command === "/reserve" ||
+        slackEnvelope.command === "/check" ||
+        slackEnvelope.command === "/list")
+    ) {
       await reservationHandler.handleSlash({ envelope: slackEnvelope, client });
     }
     return;
