@@ -120,6 +120,34 @@ describe("GroqService", () => {
 
 });
 
+describe("chooseCandidates", () => {
+  const opts = ["Tech Set 1", "Tech Set 2", "Tech Set 3", "Tech Set 4"];
+  function svcWith(content) {
+    return createGroqService({ chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content } }] }) } } });
+  }
+  it("returns the single chosen option, validated against the list", async () => {
+    const out = await svcWith('{"selection":["Tech Set 1"]}').chooseCandidates(opts, "1");
+    expect(out).toEqual(["Tech Set 1"]);
+  });
+  it("returns all options when the model selects all", async () => {
+    const out = await svcWith('{"selection":["Tech Set 1","Tech Set 2","Tech Set 3","Tech Set 4"]}').chooseCandidates(opts, "all of them");
+    expect(out).toHaveLength(4);
+  });
+  it("drops selections that are not real options", async () => {
+    const out = await svcWith('{"selection":["Tech Set 1","Spaceship"]}').chooseCandidates(opts, "the first or a spaceship");
+    expect(out).toEqual(["Tech Set 1"]);
+  });
+  it("returns [] on empty selection / bad JSON / no options", async () => {
+    expect(await svcWith('{"selection":[]}').chooseCandidates(opts, "huh")).toEqual([]);
+    expect(await svcWith("not json").chooseCandidates(opts, "1")).toEqual([]);
+    expect(await svcWith('{"selection":["Tech Set 1"]}').chooseCandidates([], "1")).toEqual([]);
+  });
+  it("returns [] when the API throws", async () => {
+    const svc = createGroqService({ chat: { completions: { create: vi.fn().mockRejectedValue(new Error("boom")) } } });
+    expect(await svc.chooseCandidates(opts, "1")).toEqual([]);
+  });
+});
+
 describe("parseReservationRequest", () => {
   it("returns parsed JSON from the model", async () => {
     const client = { chat: { completions: { create: vi.fn().mockResolvedValue({
