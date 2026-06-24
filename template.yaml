@@ -9,9 +9,10 @@ Parameters:
   GoogleSheetId:        { Type: String }
   GenderSheetId:        { Type: String, Default: "" }
   ReservationsSheetId:  { Type: String, Default: "" }
-  ReservationRooms:     { Type: String, Default: "" }
-  ResourceCalendars:    { Type: String, Default: "" }
-  VenueCalendars:       { Type: String, Default: "" }
+  # ReservationRooms / ResourceCalendars / VenueCalendars are NOT parameters —
+  # they exceed the 4096-char CFN parameter limit. They ship as bundled files
+  # under runtime-config/ (written by the deploy workflow) and config.js reads
+  # them at runtime.
   GoogleClientId:       { Type: String, NoEcho: true }
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
@@ -74,9 +75,6 @@ Resources:
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GENDER_SHEET_ID:        !Ref GenderSheetId
           RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
-          RESERVATION_ROOMS:     !Ref ReservationRooms
-          RESOURCE_CALENDARS:    !Ref ResourceCalendars
-          VENUE_CALENDARS:       !Ref VenueCalendars
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
