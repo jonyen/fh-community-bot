@@ -35,6 +35,7 @@ describe("receiver.handler", () => {
     sendMock.mockResolvedValue({});
     process.env.SLACK_SIGNING_SECRET = SECRET;
     process.env.EVENT_QUEUE_URL = "https://sqs.example/q";
+    delete process.env.RESERVATIONS_CHANNEL_ID;
   });
 
   it("returns 401 on a bad signature", async () => {

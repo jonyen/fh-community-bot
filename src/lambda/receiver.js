@@ -22,9 +22,8 @@ export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
   if (event.type !== "message") return true;
-  if (event.bot_id) {
-    // never enqueue our own / other bots' messages
-  } else if (process.env.RESERVATIONS_CHANNEL_ID && event.channel === process.env.RESERVATIONS_CHANNEL_ID) {
+  if (event.bot_id) return false; // never enqueue our own / other bots' messages
+  if (process.env.RESERVATIONS_CHANNEL_ID && event.channel === process.env.RESERVATIONS_CHANNEL_ID) {
     return true; // ambient reservations channel: every human message
   }
   const text = event.text || "";
