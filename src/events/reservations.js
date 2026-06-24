@@ -27,10 +27,20 @@ function hasContent(i) {
   return cleanField(i.what) !== "";
 }
 
-// Group already-sorted (date, then start) reservation items into a readable
-// Slack message: a bold date header per day, events indented below it, days
-// separated by a blank line. Empty/"-" fields are omitted.
-function formatGroupedByDay(items) {
+function eventTime(i) {
+  return i.startTime && i.endTime
+    ? `${i.startTime}–${i.endTime}`
+    : i.startTime || i.endTime || "time TBD";
+}
+
+// Render already-sorted (date, then start) items as a monospace table inside a
+// Slack code block: a day header per date, then time / room / what columns
+// aligned to the widest value. Slack has no real tables, so a code block is the
+// only way to get fixed-width column alignment. Empty/"-" fields render blank.
+function formatAsTable(items) {
+  const timeW = Math.max(...items.map((i) => eventTime(i).length));
+  const roomW = Math.max(...items.map((i) => cleanField(i.location).length));
+
   const groups = [];
   const byDate = new Map();
   for (const i of items) {
@@ -39,16 +49,13 @@ function formatGroupedByDay(items) {
       byDate.set(i.dateIso, group);
       groups.push(group);
     }
-    const time =
-      i.startTime && i.endTime
-        ? `${i.startTime}–${i.endTime}`
-        : i.startTime || i.endTime || "time TBD";
-    const segments = [time, cleanField(i.location), cleanField(i.what)].filter(Boolean);
-    byDate.get(i.dateIso).rows.push(`  • ${segments.join(" · ")}`);
+    const row = `  ${eventTime(i).padEnd(timeW)}  ${cleanField(i.location).padEnd(roomW)}  ${cleanField(i.what)}`.trimEnd();
+    byDate.get(i.dateIso).rows.push(row);
   }
-  return groups
-    .map((g) => `*${fmtListDate(g.dateIso)}*\n${g.rows.join("\n")}`)
+  const body = groups
+    .map((g) => `${fmtListDate(g.dateIso)}\n${g.rows.join("\n")}`)
     .join("\n\n");
+  return "```\n" + body + "\n```";
 }
 
 export function createReservationHandler({ reservationsService, groqService, now }) {
@@ -141,7 +148,7 @@ export function createReservationHandler({ reservationsService, groqService, now
       return;
     }
     await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
-      text: `Reservations for ${scope}, ${window}:${note}\n\n${formatGroupedByDay(items)}` });
+      text: `Reservations for ${scope}, ${window}:${note}\n${formatAsTable(items)}` });
   }
 
   async function handleMention({ event, say }) {
