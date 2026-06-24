@@ -22,6 +22,37 @@ function parseChannelIds(raw) {
   return new Set(ids);
 }
 
+// Parse a JSON-valued env var that may arrive either as raw JSON (local .env)
+// or base64-encoded JSON (CI/deploy encodes it so SAM's --parameter-overrides
+// shorthand, which splits values on spaces, can't mangle room names like
+// "FH MPR"). A malformed value must NEVER throw — that would crash getDeps and
+// take the whole worker down — so fall back to the default instead.
+function parseJsonEnv(raw, fallback) {
+  if (!raw) return fallback;
+  const tryParse = (s) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return undefined;
+    }
+  };
+  let value = tryParse(raw);
+  if (value === undefined) {
+    let decoded;
+    try {
+      decoded = Buffer.from(raw, "base64").toString("utf8");
+    } catch {
+      decoded = "";
+    }
+    value = tryParse(decoded);
+  }
+  if (value === undefined) {
+    console.warn("[config] could not parse JSON env var (raw or base64); using fallback");
+    return fallback;
+  }
+  return value;
+}
+
 export function loadConfig() {
   for (const key of REQUIRED) {
     if (!process.env[key]) {
@@ -47,14 +78,8 @@ export function loadConfig() {
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
     reservationsSheetId: process.env.RESERVATIONS_SHEET_ID || null,
-    reservationRooms: process.env.RESERVATION_ROOMS
-      ? JSON.parse(process.env.RESERVATION_ROOMS)
-      : { rooms: [], aliases: {} },
-    resourceCalendars: process.env.RESOURCE_CALENDARS
-      ? JSON.parse(process.env.RESOURCE_CALENDARS)
-      : {},
-    venueCalendars: process.env.VENUE_CALENDARS
-      ? JSON.parse(process.env.VENUE_CALENDARS)
-      : {},
+    reservationRooms: parseJsonEnv(process.env.RESERVATION_ROOMS, { rooms: [], aliases: {} }),
+    resourceCalendars: parseJsonEnv(process.env.RESOURCE_CALENDARS, {}),
+    venueCalendars: parseJsonEnv(process.env.VENUE_CALENDARS, {}),
   };
 }
