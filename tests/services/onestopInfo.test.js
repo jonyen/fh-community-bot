@@ -48,4 +48,19 @@ describe("OneStopInfoService", () => {
     await service.corpus();
     expect(mockSheets.spreadsheets.values.get).toHaveBeenCalledTimes(6);
   });
+
+  it("does not cache an empty corpus (retries on all-tab failure)", async () => {
+    // Make all tabs error
+    mockSheets.spreadsheets.values.get = vi.fn(async () => {
+      throw new Error("sheets down");
+    });
+    const result1 = await service.corpus();
+    expect(result1).toBe("");
+    expect(mockSheets.spreadsheets.values.get).toHaveBeenCalledTimes(3); // 3 tabs tried
+
+    // Second call should retry, not return cached empty
+    const result2 = await service.corpus();
+    expect(result2).toBe("");
+    expect(mockSheets.spreadsheets.values.get).toHaveBeenCalledTimes(6); // 3 more tabs tried
+  });
 });
