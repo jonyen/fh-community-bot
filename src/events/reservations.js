@@ -1,5 +1,5 @@
 // src/events/reservations.js
-import { isIgnorableChatter, missingSlots, followUpText } from "../lib/reservation-intent.js";
+import { isIgnorableChatter, missingSlots, followUpText, disambiguationCandidates, pickCandidate } from "../lib/reservation-intent.js";
 
 const BOT_USERNAME = "Reservations (beta)";
 const BOT_ICON_EMOJI = ":calendar:";
@@ -199,22 +199,42 @@ export function createReservationHandler({ reservationsService, groqService, now
     const baseText = event.text || "";
     if (isIgnorableChatter(baseText)) return;
 
+    const thread_ts = event.thread_ts || event.ts;
+    const say = (msg) => client.chat.postMessage({ channel: event.channel, thread_ts, ...msg });
+
     let text = baseText;
+    let threadMsgs = null;
     if (event.thread_ts) {
       try {
         const res = await client.conversations.replies({ channel: event.channel, ts: event.thread_ts });
-        const human = (res.messages || []).filter((m) => !m.bot_id).map((m) => m.text || "").filter(Boolean);
+        threadMsgs = res.messages || [];
+        const human = threadMsgs.filter((m) => !m.bot_id).map((m) => m.text || "").filter(Boolean);
         if (human.length) text = human.join("\n");
       } catch {
         // fall back to the single message's text
       }
     }
 
+    // Disambiguation reply: if the bot's last message in this thread asked the
+    // user to choose a resource, resolve their reply ("1", "tech set 2", …)
+    // against that candidate list directly — Groq won't carry the choice
+    // forward through a re-parse.
+    if (threadMsgs) {
+      const ask = [...threadMsgs].reverse().find(
+        (m) => m.bot_id && /which one did you mean:/i.test(m.text || "")
+      );
+      if (ask) {
+        const chosen = pickCandidate(disambiguationCandidates(ask.text), baseText);
+        if (chosen) {
+          const result = await reservationsService.resourceLastUsed(chosen);
+          await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: historyText(result) });
+          return;
+        }
+      }
+    }
+
     const parsed = await groqService.parseReservationRequest(text, now().toISOString());
     if (!parsed || parsed.intent === "none") return; // silent on non-reservations
-
-    const thread_ts = event.thread_ts || event.ts;
-    const say = (msg) => client.chat.postMessage({ channel: event.channel, thread_ts, ...msg });
 
     if (parsed.intent === "history") {
       const res = await reservationsService.resourceLastUsed(parsed.target || "");
