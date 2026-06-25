@@ -87,7 +87,6 @@ export function getDeps() {
       calendarService,
       roomMatcher,
       resourceCalendars: config.resourceCalendars,
-      venueCalendars: config.venueCalendars,
       now: () => new Date(),
     });
     reservationHandler = createReservationHandler({
