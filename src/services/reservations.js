@@ -4,26 +4,12 @@ import { parseTimeToMinutes, formatMinutes, inferYear } from "../lib/reservation
 import { createRoomMatcher } from "../lib/reservation-rooms.js";
 import { findRoomConflicts } from "../lib/reservation-overlap.js";
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const VENUE_TZ = "America/New_York";
-
-function isoFromDateMinutes(dateIso, minutes) {
-  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
-  const m = String(minutes % 60).padStart(2, "0");
-  return `${dateIso}T${h}:${m}:00`;
-}
-
-function formatDateCell(dateIso) {
-  const d = new Date(`${dateIso}T12:00:00Z`);
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${WEEKDAYS[d.getUTCDay()]}`;
-}
-
 function sameDate(eventDate, dateIso) {
   const d = new Date(`${dateIso}T12:00:00Z`);
   return eventDate && eventDate.month === d.getUTCMonth() + 1 && eventDate.day === d.getUTCDate();
 }
 
-export function createReservationsService({ sheetService, calendarService, roomMatcher, resourceCalendars, venueCalendars = {}, now }) {
+export function createReservationsService({ sheetService, calendarService, roomMatcher, resourceCalendars, now }) {
   // Resource calendars are keyed by their full Google resource title
   // (e.g. "DMV Accessories-Popcorn Machine"). Build a forgiving matcher over
   // those titles so a user phrase ("popcorn machine") resolves via the same
@@ -58,51 +44,6 @@ export function createReservationsService({ sheetService, calendarService, roomM
     const { events } = await eventsForDate(dateIso);
     const { conflicts, skipped } = findRoomConflicts({ room, startMin, endMin }, events);
     return { available: conflicts.length === 0, conflicts, skipped };
-  }
-
-  async function makeRoomReservation({ room, dateIso, startTime, endTime, what, who }) {
-    const startMin = parseTimeToMinutes(startTime);
-    const endMin = parseTimeToMinutes(endTime);
-    if (startMin === null || endMin === null) return { ok: false, reason: "unparseable time" };
-    const { tab, events, all } = await eventsForDate(dateIso);
-    if (!tab) return { ok: false, reason: "no week tab for that date" };
-    const { conflicts } = findRoomConflicts({ room, startMin, endMin }, events);
-    if (conflicts.length > 0) return { ok: false, reason: "conflict", conflicts };
-
-    // chronological insertion point within the target day's block
-    const sameDayRows = all.filter((e) => sameDate(e.date, dateIso));
-    let insertAt;
-    const laterRow = sameDayRows.find((e) => e.startMin !== null && e.startMin > startMin);
-    if (laterRow) {
-      insertAt = laterRow.rowIndex;
-    } else if (sameDayRows.length > 0) {
-      insertAt = sameDayRows[sameDayRows.length - 1].rowIndex + 1;
-    } else {
-      insertAt = all.length ? all[all.length - 1].rowIndex + 1 : 1;
-    }
-    const values = [
-      formatDateCell(dateIso), formatMinutes(startMin), formatMinutes(endMin),
-      "", "", what || "", room, who || "", "", "", "", "",
-    ];
-    await sheetService.insertRow(tab, insertAt, values);
-
-    let mirrored = false;
-    const venueCalendarId = venueCalendars[room];
-    if (venueCalendarId) {
-      try {
-        await calendarService.insertEvent(venueCalendarId, {
-          summary: `${what || "Reservation"}${who ? ` (${who})` : ""}`,
-          startIso: isoFromDateMinutes(dateIso, startMin),
-          endIso: isoFromDateMinutes(dateIso, endMin),
-          description: "Mirrored from OneStop sheet by the reservations bot.",
-          timeZone: VENUE_TZ,
-        });
-        mirrored = true;
-      } catch (err) {
-        console.warn(`[reservations] venue mirror failed for ${room}: ${err.message}`);
-      }
-    }
-    return { ok: true, mirrored };
   }
 
   async function listReservations({ room = null, fromIso, toIso }) {
@@ -157,5 +98,5 @@ export function createReservationsService({ sheetService, calendarService, roomM
     }
   }
 
-  return { classifyTarget, checkRoom, makeRoomReservation, listRoom, listReservations, resourceLastUsed };
+  return { classifyTarget, checkRoom, listRoom, listReservations, resourceLastUsed };
 }

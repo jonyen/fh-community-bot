@@ -93,7 +93,7 @@ function formatAsTable(items) {
 }
 
 export function createReservationHandler({ reservationsService, groqService, now }) {
-  async function replyForParsed(parsed, say, thread_ts, opts = {}) {
+  async function replyForParsed(parsed, say, thread_ts) {
     if (!parsed) {
       await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
         text: "I didn't catch that — try e.g. \"reserve FH MPR Friday 7-10pm for practice\"." });
@@ -107,36 +107,19 @@ export function createReservationHandler({ reservationsService, groqService, now
     }
     if (target.kind === "room") {
       if (parsed.intent === "reserve") {
-        const res = await reservationsService.makeRoomReservation({
-          room: target.name, dateIso: parsed.date, startTime: parsed.startTime, endTime: parsed.endTime,
-          what: parsed.what, who: parsed.who,
-        });
-        if (res.ok) {
-          const who = opts.requester ? `<@${opts.requester}> ` : "";
-          const purpose = parsed.what ? ` for ${parsed.what}` : "";
-          const msg = {
-            username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
-            text: `${who}reserved ${target.name} on ${parsed.date} ${parsed.startTime}–${parsed.endTime}${purpose}.`,
-          };
-          try {
-            if (opts.broadcast) await opts.broadcast(msg);
-            else await say({ thread_ts, ...msg });
-          } catch (err) {
-            // Booking is already saved; a failed notification must NOT propagate
-            // (it would trigger an SQS retry → duplicate sheet rows). Fall back to
-            // an ephemeral reply when the public broadcast fails (e.g. the bot is
-            // not in the channel), and swallow any further error.
-            console.warn(`[reservations] reservation notification failed: ${err.message}`);
-            if (opts.broadcast) {
-              try { await say({ thread_ts, ...msg }); } catch { /* give up quietly */ }
+        let text = `Rooms are booked in the OneStop sheet — I don't reserve them over Slack. Edit the sheet to book ${target.name}.`;
+        if (parsed.date) {
+          const items = await reservationsService.listRoom({ room: target.name, fromIso: parsed.date, toIso: parsed.date });
+          if (items.length) {
+            text += `\nCurrently booked for ${target.name} on ${parsed.date}:`;
+            for (const i of items) {
+              text += `\n• ${i.dateIso} ${i.startTime}–${i.endTime} ${i.what}`;
             }
+          } else {
+            text += `\nNothing is booked for ${target.name} on ${parsed.date}.`;
           }
-        } else {
-          await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI,
-            text: res.reason === "conflict"
-              ? `Can't book — conflict on ${target.name}:\n${conflictText(res.conflicts)}`
-              : `Can't book: ${res.reason}.` });
         }
+        await say({ thread_ts, username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text });
         return;
       }
       if (parsed.intent === "list") {
@@ -202,10 +185,7 @@ export function createReservationHandler({ reservationsService, groqService, now
       await replyForList(parsed, say);
       return;
     }
-    const opts = envelope.command === "/reserve"
-      ? { broadcast: (msg) => client.chat.postMessage({ channel: envelope.channel_id, ...msg }), requester: envelope.user_id }
-      : {};
-    await replyForParsed(parsed, say, undefined, opts);
+    await replyForParsed(parsed, say, undefined);
   }
 
   async function handleChannelMessage({ event, client }) {
@@ -278,11 +258,7 @@ export function createReservationHandler({ reservationsService, groqService, now
       return;
     }
 
-    const opts =
-      parsed.intent === "reserve"
-        ? { broadcast: (msg) => client.chat.postMessage({ channel: event.channel, ...msg }), requester: event.user }
-        : {};
-    await replyForParsed(parsed, say, thread_ts, opts);
+    await replyForParsed(parsed, say, thread_ts);
   }
 
   return { handleMention, handleSlash, handleChannelMessage };
