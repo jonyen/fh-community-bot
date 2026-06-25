@@ -47,7 +47,9 @@ function conflictText(conflicts) {
 // The OneStop sheet uses "-" as a placeholder for "not applicable". Treat it
 // (and blanks) as empty so they don't render as noise like "· - · -".
 function cleanField(v) {
-  const t = String(v || "").trim();
+  // Collapse internal whitespace (sheet cells often carry embedded newlines/
+  // tabs, e.g. "Staff Suite\nzoom") so a value never breaks the column grid.
+  const t = String(v || "").replace(/\s+/g, " ").trim();
   return t === "-" ? "" : t;
 }
 
@@ -68,8 +70,10 @@ function eventTime(i) {
 // aligned to the widest value. Slack has no real tables, so a code block is the
 // only way to get fixed-width column alignment. Empty/"-" fields render blank.
 function formatAsTable(items) {
-  const timeW = Math.max(...items.map((i) => eventTime(i).length));
-  const roomW = Math.max(...items.map((i) => cleanField(i.location).length));
+  const HEAD = { time: "TIME", room: "ROOM", what: "EVENT" };
+  const timeW = Math.max(HEAD.time.length, ...items.map((i) => eventTime(i).length));
+  const roomW = Math.max(HEAD.room.length, ...items.map((i) => cleanField(i.location).length));
+  const header = `${HEAD.time.padEnd(timeW)}  ${HEAD.room.padEnd(roomW)}  ${HEAD.what}`;
 
   const groups = [];
   const byDate = new Map();
@@ -79,11 +83,11 @@ function formatAsTable(items) {
       byDate.set(i.dateIso, group);
       groups.push(group);
     }
-    const row = `  ${eventTime(i).padEnd(timeW)}  ${cleanField(i.location).padEnd(roomW)}  ${cleanField(i.what)}`.trimEnd();
+    const row = `${eventTime(i).padEnd(timeW)}  ${cleanField(i.location).padEnd(roomW)}  ${cleanField(i.what)}`.trimEnd();
     byDate.get(i.dateIso).rows.push(row);
   }
   const body = groups
-    .map((g) => `${fmtListDate(g.dateIso)}\n${g.rows.join("\n")}`)
+    .map((g) => `${fmtListDate(g.dateIso)}\n${header}\n${g.rows.join("\n")}`)
     .join("\n\n");
   return "```\n" + body + "\n```";
 }
