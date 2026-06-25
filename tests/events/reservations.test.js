@@ -80,6 +80,8 @@ describe("ReservationHandler.handleSlash /list", () => {
     expect(text).toContain("```"); // code block for monospace alignment
     expect(text).toContain("Wed 6/24");
     expect(text).toContain("Thu 6/25");
+    // header row per day group
+    expect(text).toMatch(/TIME\s+ROOM\s+EVENT/);
     // aligned columns: time, room, what (padding between is flexible)
     expect(text).toMatch(/1:00 PM–2:00 PM\s+FH MPR\s+Worktime/);
     expect(text).toMatch(/6:00 PM–9:00 PM\s+Childcare Room\s+Dinner/);
@@ -87,6 +89,22 @@ describe("ReservationHandler.handleSlash /list", () => {
     expect(text).toMatch(/FH MPR {2,}Worktime/);
     // blank line between day groups
     expect(text).toMatch(/Dinner\n\nThu 6\/25/);
+  });
+
+  it("collapses embedded newlines/tabs in cell values so rows stay aligned", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "list", target: null, date: "2026-06-24" });
+    reservationsService.listReservations.mockResolvedValue([
+      { dateIso: "2026-06-24", startTime: "11:30 AM", endTime: "12:30 PM", location: "Staff Suite \nzoom", what: "Management\tMeeting" },
+    ]);
+    await handler.handleSlash({ envelope: envelope("today"), client });
+    const text = client.chat.postEphemeral.mock.calls[0][0].text;
+    // the room cell's newline is collapsed to a single space — one row, not two
+    expect(text).toContain("Staff Suite zoom");
+    expect(text).not.toMatch(/Staff Suite \nzoom/);
+    expect(text).toContain("Management Meeting");
+    // exactly three lines inside the code block: date, header, one data row
+    const block = text.match(/```\n([\s\S]*?)\n```/)[1];
+    expect(block.split("\n").filter((l) => l.trim()).length).toBe(3);
   });
 
   it("drops placeholder rows (what is '-') and omits '-' fields in the table", async () => {
