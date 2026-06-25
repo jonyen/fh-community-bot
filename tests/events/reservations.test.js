@@ -26,13 +26,14 @@ describe("ReservationHandler.handleMention", () => {
     }));
   });
 
-  it("rejects a reserve intent with a conflict and does not claim success", async () => {
+  it("replies with the read-only sheet message on a reserve intent (no booking)", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
     reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
-    reservationsService.makeRoomReservation.mockResolvedValue({ ok: false, reason: "conflict", conflicts: [{ what: "Meeting", startMin: 1140, endMin: 1200 }] });
+    reservationsService.listRoom.mockResolvedValue([]);
     await handler.handleMention({ event: { text: "book MPR friday 7-10pm", channel: "C1", ts: "2.2" }, say });
+    expect(reservationsService.makeRoomReservation).not.toHaveBeenCalled();
     const arg = say.mock.calls[0][0];
-    expect(arg.text.toLowerCase()).toContain("conflict");
+    expect(arg.text.toLowerCase()).toMatch(/don't reserve them over slack|edit the sheet/i);
   });
 
   it("asks for clarification when Groq cannot parse", async () => {
@@ -147,47 +148,52 @@ describe("ReservationHandler.handleSlash /list", () => {
   });
 });
 
-describe("ReservationHandler /reserve broadcast", () => {
+describe("ReservationHandler /reserve (read-only)", () => {
   let reservationsService, groqService, client, handler;
   beforeEach(() => {
-    reservationsService = { classifyTarget: vi.fn(), makeRoomReservation: vi.fn() };
+    reservationsService = { classifyTarget: vi.fn(), makeRoomReservation: vi.fn(), listRoom: vi.fn() };
     groqService = { parseReservationRequest: vi.fn() };
     client = { chat: { postEphemeral: vi.fn().mockResolvedValue({}), postMessage: vi.fn().mockResolvedValue({}) } };
     handler = createReservationHandler({ reservationsService, groqService, now: () => new Date("2026-06-23T12:00:00Z") });
   });
   const env = (text) => ({ command: "/reserve", text, channel_id: "C1", user_id: "U1" });
 
-  it("broadcasts publicly to the channel on a successful /reserve", async () => {
+  it("replies with the read-only sheet message and does NOT call makeRoomReservation", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
     reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
-    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true, mirrored: true });
+    reservationsService.listRoom.mockResolvedValue([]);
     await handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm for practice"), client });
-    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
-    const arg = client.chat.postMessage.mock.calls[0][0];
-    expect(arg).toMatchObject({ channel: "C1", username: "Reservations (beta)" });
-    expect(arg.text).toContain("<@U1>");
-    expect(arg.text).toContain("FH MPR");
-    expect(client.chat.postEphemeral).not.toHaveBeenCalled();
-  });
-
-  it("keeps a /reserve conflict ephemeral (no broadcast)", async () => {
-    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
-    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
-    reservationsService.makeRoomReservation.mockResolvedValue({ ok: false, reason: "conflict", conflicts: [{ what: "Meeting" }] });
-    await handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm"), client });
+    expect(reservationsService.makeRoomReservation).not.toHaveBeenCalled();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
-    expect(client.chat.postEphemeral).toHaveBeenCalledTimes(1);
-    expect(client.chat.postEphemeral.mock.calls[0][0].text.toLowerCase()).toContain("conflict");
+    const arg = client.chat.postEphemeral.mock.calls[0][0];
+    expect(arg).toMatchObject({ channel: "C1", user: "U1", username: "Reservations (beta)" });
+    expect(arg.text).toMatch(/don't reserve them over slack|edit the sheet/i);
+    expect(arg.text).toContain("FH MPR");
   });
 
-  it("falls back to ephemeral and does not throw when the broadcast fails", async () => {
+  it("appends the day's schedule when a date is parsed and listRoom returns items", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
     reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
-    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true, mirrored: true });
-    client.chat.postMessage = vi.fn().mockRejectedValue(new Error("not_in_channel"));
-    await expect(handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm for practice"), client })).resolves.toBeUndefined();
-    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
-    expect(client.chat.postEphemeral).toHaveBeenCalledTimes(1); // ephemeral fallback
+    reservationsService.listRoom.mockResolvedValue([
+      { dateIso: "2026-06-26", startTime: "1:00 PM", endTime: "3:00 PM", what: "Meeting" },
+    ]);
+    await handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm for practice"), client });
+    expect(reservationsService.makeRoomReservation).not.toHaveBeenCalled();
+    expect(reservationsService.listRoom).toHaveBeenCalledWith({ room: "FH MPR", fromIso: "2026-06-26", toIso: "2026-06-26" });
+    const arg = client.chat.postEphemeral.mock.calls[0][0];
+    expect(arg.text).toMatch(/don't reserve them over slack|edit the sheet/i);
+    expect(arg.text).toContain("Currently booked for FH MPR on 2026-06-26");
+    expect(arg.text).toContain("Meeting");
+  });
+
+  it("appends 'nothing booked' when a date is parsed but listRoom returns no items", async () => {
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
+    reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
+    reservationsService.listRoom.mockResolvedValue([]);
+    await handler.handleSlash({ envelope: env("reserve MPR friday 7-10pm for practice"), client });
+    expect(reservationsService.makeRoomReservation).not.toHaveBeenCalled();
+    const arg = client.chat.postEphemeral.mock.calls[0][0];
+    expect(arg.text).toContain("Nothing is booked for FH MPR on 2026-06-26");
   });
 });
 
@@ -198,6 +204,7 @@ describe("ReservationHandler.handleChannelMessage", () => {
       classifyTarget: vi.fn(),
       checkRoom: vi.fn(),
       makeRoomReservation: vi.fn(),
+      listRoom: vi.fn(),
       listReservations: vi.fn(),
     };
     groqService = { parseReservationRequest: vi.fn(), chooseCandidates: vi.fn().mockResolvedValue([]) };
@@ -235,29 +242,34 @@ describe("ReservationHandler.handleChannelMessage", () => {
     expect(arg.text.toLowerCase()).toContain("what time");
   });
 
-  it("books and broadcasts a complete reserve request", async () => {
+  it("replies read-only on a complete reserve request (no booking, no broadcast)", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
     reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
-    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true, mirrored: true });
+    reservationsService.listRoom.mockResolvedValue([]);
     await handler.handleChannelMessage({ event: msg({ text: "book FH MPR friday 7-10pm for practice" }), client });
-    // broadcast (channel post) names the requester
+    expect(reservationsService.makeRoomReservation).not.toHaveBeenCalled();
     const posts = client.chat.postMessage.mock.calls.map((c) => c[0]);
-    expect(posts.some((p) => p.channel === "Cres" && /<@U1>/.test(p.text) && /FH MPR/.test(p.text))).toBe(true);
+    // Only one reply, and it contains the read-only message (no booking announcement, no @mention)
+    expect(posts).toHaveLength(1);
+    expect(posts[0].text).toMatch(/don't reserve them over slack|edit the sheet/i);
   });
 
-  it("combines a threaded reply with the original request", async () => {
+  it("combines a threaded reply with the original request and replies read-only", async () => {
     client.conversations.replies.mockResolvedValue({ messages: [
       { user: "U1", text: "can I book the MPR friday?" },
       { user: "U1", text: "7 to 10 pm for practice" },
     ] });
     groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: "2026-06-26", startTime: "7:00 PM", endTime: "10:00 PM", what: "Practice" });
     reservationsService.classifyTarget.mockReturnValue({ kind: "room", name: "FH MPR" });
-    reservationsService.makeRoomReservation.mockResolvedValue({ ok: true });
+    reservationsService.listRoom.mockResolvedValue([]);
     await handler.handleChannelMessage({ event: msg({ thread_ts: "100.1", text: "7 to 10 pm for practice" }), client });
     expect(client.conversations.replies).toHaveBeenCalledWith({ channel: "Cres", ts: "100.1" });
     const combined = groqService.parseReservationRequest.mock.calls[0][0];
     expect(combined).toContain("can I book the MPR friday?");
     expect(combined).toContain("7 to 10 pm for practice");
+    expect(reservationsService.makeRoomReservation).not.toHaveBeenCalled();
+    const text = client.chat.postMessage.mock.calls[0][0].text;
+    expect(text).toMatch(/don't reserve them over slack|edit the sheet/i);
   });
 
   it("answers a history request with the last-used event", async () => {
