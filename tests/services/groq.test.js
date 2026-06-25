@@ -189,4 +189,29 @@ describe("parseReservationRequest", () => {
     const out = await svc.parseReservationRequest("who used the speaker set last?", "2026-06-24T12:00:00Z");
     expect(out).toMatchObject({ intent: "history", target: "speaker set" });
   });
+
+  it("routes a general OneStop question to intent 'info'", async () => {
+    const client = { chat: { completions: { create: vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"intent":"info","target":null,"date":null,"startTime":null,"endTime":null,"what":null,"who":null}' } }],
+    }) } } };
+    const svc = createGroqService(client);
+    const out = await svc.parseReservationRequest("what's the FH door code?", "2026-06-24T12:00:00Z");
+    expect(out.intent).toBe("info");
+  });
+});
+
+describe("answerInfoQuestion", () => {
+  it("passes the corpus + question to the model and returns its answer", async () => {
+    const create = vi.fn().mockResolvedValue({ choices: [{ message: { content: "The FH door code is 0326." } }] });
+    const svc = createGroqService({ chat: { completions: { create } } });
+    const out = await svc.answerInfoQuestion("what's the door code?", "### BULLETIN\nFH Door code | 0326");
+    expect(out).toBe("The FH door code is 0326.");
+    const userMsg = create.mock.calls[0][0].messages[1].content;
+    expect(userMsg).toContain("0326");                 // corpus included
+    expect(userMsg).toContain("what's the door code?"); // question included
+  });
+  it("returns a graceful fallback on API failure", async () => {
+    const svc = createGroqService({ chat: { completions: { create: vi.fn().mockRejectedValue(new Error("boom")) } } });
+    expect(await svc.answerInfoQuestion("q", "corpus")).toBe("Can't reach OneStop right now.");
+  });
 });

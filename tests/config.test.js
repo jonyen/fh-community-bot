@@ -164,11 +164,22 @@ describe("loadConfig", () => {
     expect(loadConfig().googleDriveFolderId).toBe("FOLDER1");
   });
 
-  it("loads reservationsChannelId from env (null when unset)", () => {
+  it("loads onestopChannelId from ONESTOP_CHANNEL_ID, falling back to RESERVATIONS_CHANNEL_ID", () => {
     Object.assign(process.env, VALID_ENV);
+    delete process.env.ONESTOP_CHANNEL_ID;
     delete process.env.RESERVATIONS_CHANNEL_ID;
-    expect(loadConfig().reservationsChannelId).toBeNull();
-    process.env.RESERVATIONS_CHANNEL_ID = "Cres";
-    expect(loadConfig().reservationsChannelId).toBe("Cres");
+    expect(loadConfig().onestopChannelId).toBeNull();
+    process.env.RESERVATIONS_CHANNEL_ID = "Cold";
+    expect(loadConfig().onestopChannelId).toBe("Cold"); // fallback
+    process.env.ONESTOP_CHANNEL_ID = "Conestop";
+    expect(loadConfig().onestopChannelId).toBe("Conestop"); // new var wins
+  });
+
+  it("parses ONESTOP_INFO_TABS into a trimmed array (undefined when unset)", () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.ONESTOP_INFO_TABS;
+    expect(loadConfig().onestopInfoTabs).toBeUndefined();
+    process.env.ONESTOP_INFO_TABS = "BULLETIN, Links ,IH";
+    expect(loadConfig().onestopInfoTabs).toEqual(["BULLETIN", "Links", "IH"]);
   });
 });
