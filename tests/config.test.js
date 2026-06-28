@@ -175,6 +175,16 @@ describe("loadConfig", () => {
     expect(loadConfig().onestopChannelId).toBe("Conestop"); // new var wins
   });
 
+  it("defaults onestopAmbientEnabled to false, true only when ONESTOP_AMBIENT_ENABLED=true", () => {
+    Object.assign(process.env, VALID_ENV);
+    delete process.env.ONESTOP_AMBIENT_ENABLED;
+    expect(loadConfig().onestopAmbientEnabled).toBe(false);
+    process.env.ONESTOP_AMBIENT_ENABLED = "false";
+    expect(loadConfig().onestopAmbientEnabled).toBe(false);
+    process.env.ONESTOP_AMBIENT_ENABLED = "true";
+    expect(loadConfig().onestopAmbientEnabled).toBe(true);
+  });
+
   it("parses ONESTOP_INFO_TABS into a trimmed array (undefined when unset)", () => {
     Object.assign(process.env, VALID_ENV);
     delete process.env.ONESTOP_INFO_TABS;

@@ -36,6 +36,8 @@ describe("receiver.handler", () => {
     process.env.SLACK_SIGNING_SECRET = SECRET;
     process.env.EVENT_QUEUE_URL = "https://sqs.example/q";
     delete process.env.RESERVATIONS_CHANNEL_ID;
+    delete process.env.ONESTOP_CHANNEL_ID;
+    delete process.env.ONESTOP_AMBIENT_ENABLED;
   });
 
   it("returns 401 on a bad signature", async () => {
@@ -179,8 +181,9 @@ describe("receiver.handler", () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
-  it("enqueues a non-bot message in the reservations channel", async () => {
+  it("enqueues a non-bot message in the reservations channel when ambient is enabled", async () => {
     process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    process.env.ONESTOP_AMBIENT_ENABLED = "true";
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
     const parsed = { event: { type: "message", channel: "Cres", user: "U1", ts: "1.1", text: "book the MPR" } };
     expect(shouldEnqueueEvent(parsed)).toBe(true);
@@ -188,16 +191,26 @@ describe("receiver.handler", () => {
 
   it("does not enqueue a bot message in the reservations channel", async () => {
     process.env.RESERVATIONS_CHANNEL_ID = "Cres";
+    process.env.ONESTOP_AMBIENT_ENABLED = "true";
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
     const parsed = { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } };
     expect(shouldEnqueueEvent(parsed)).toBe(false);
   });
 
-  it("enqueues every human message in the ONESTOP_CHANNEL_ID channel", async () => {
-    delete process.env.RESERVATIONS_CHANNEL_ID;
+  it("enqueues every human message in the ONESTOP_CHANNEL_ID channel when ambient is enabled", async () => {
     process.env.ONESTOP_CHANNEL_ID = "Cnew";
+    process.env.ONESTOP_AMBIENT_ENABLED = "true";
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
     expect(shouldEnqueueEvent({ event: { type: "message", channel: "Cnew", text: "what's the door code?" } })).toBe(true);
-    delete process.env.ONESTOP_CHANNEL_ID;
+  });
+
+  it("does NOT ambient-enqueue a plain channel message when ambient is disabled (default)", async () => {
+    process.env.ONESTOP_CHANNEL_ID = "Cnew";
+    delete process.env.ONESTOP_AMBIENT_ENABLED;
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    // No mention, no thread, no trigger → dropped now that ambient is off.
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "Cnew", text: "what's the door code?" } })).toBe(false);
+    // A mention in the same channel still enqueues via the normal path.
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "Cnew", text: "<@U_BOT> hi" } })).toBe(true);
   });
 });

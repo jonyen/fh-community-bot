@@ -104,7 +104,11 @@ export function getDeps() {
     });
   }
 
-  cached = { client: slack, handler, genderHandler, slashRefreshHandler, reservationHandler, onestopChannelId: config.onestopChannelId };
+  // Ambient onestop-channel routing is gated by the toggle: when disabled, the
+  // channel id is withheld so dispatch never routes plain channel messages to
+  // the handler (slash commands and @-mentions still work).
+  const onestopChannelId = config.onestopAmbientEnabled ? config.onestopChannelId : null;
+  cached = { client: slack, handler, genderHandler, slashRefreshHandler, reservationHandler, onestopChannelId };
   return cached;
 }
 

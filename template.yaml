@@ -21,6 +21,8 @@ Parameters:
   ReservationsChannelId: { Type: String, Default: "" }
   OneStopChannelId:      { Type: String, Default: "" }
   OneStopInfoTabs:       { Type: String, Default: "" }
+  # Ambient OneStop operation is off by default; set to "true" to re-enable.
+  OneStopAmbientEnabled: { Type: String, Default: "false" }
 
 Globals:
   Function:
@@ -55,6 +57,7 @@ Resources:
           EVENT_QUEUE_URL:      !Ref EventQueue
           ONESTOP_CHANNEL_ID: !Ref OneStopChannelId
           RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
+          ONESTOP_AMBIENT_ENABLED: !Ref OneStopAmbientEnabled
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
@@ -82,6 +85,7 @@ Resources:
           RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
           ONESTOP_CHANNEL_ID: !Ref OneStopChannelId
           RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
+          ONESTOP_AMBIENT_ENABLED: !Ref OneStopAmbientEnabled
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken

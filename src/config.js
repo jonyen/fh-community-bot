@@ -100,6 +100,11 @@ export function loadConfig() {
       ? process.env.ONESTOP_INFO_TABS.split(",").map((s) => s.trim()).filter(Boolean)
       : undefined,
     onestopChannelId: process.env.ONESTOP_CHANNEL_ID || process.env.RESERVATIONS_CHANNEL_ID || null,
+    // Ambient OneStop operation (the bot replying to every human message in the
+    // onestop/reservations channel, incl. info Q&A) is OFF unless explicitly
+    // enabled. Reservation slash commands and @-mentions are unaffected. Flip
+    // ONESTOP_AMBIENT_ENABLED=true to turn ambient operation back on.
+    onestopAmbientEnabled: process.env.ONESTOP_AMBIENT_ENABLED === "true",
     reservationRooms: loadJsonConfig("reservation-rooms.json", process.env.RESERVATION_ROOMS, { rooms: [], aliases: {} }),
     resourceCalendars: loadJsonConfig("resource-calendars.json", process.env.RESOURCE_CALENDARS, {}),
     venueCalendars: loadJsonConfig("venue-calendars.json", process.env.VENUE_CALENDARS, {}),
