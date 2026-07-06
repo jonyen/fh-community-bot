@@ -181,4 +181,14 @@ describe("MaintenanceFormHandler", () => {
       expect.objectContaining({ reporter: "U1" })
     );
   });
+
+  it("resolves without throwing when both chat.update and chat.postMessage reject", async () => {
+    mockClient.chat.update.mockRejectedValue(new Error("update failed"));
+    mockClient.chat.postMessage.mockRejectedValue(new Error("postMessage failed"));
+
+    await expect(handler({ payload: makePayload(), client: mockClient })).resolves.toBeUndefined();
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "C123", thread_ts: "100.1" })
+    );
+  });
 });

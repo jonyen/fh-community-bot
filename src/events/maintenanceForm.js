@@ -111,7 +111,11 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       });
     } catch (err) {
       console.error("chat.update failed:", err.message);
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text });
+      try {
+        await client.chat.postMessage({ channel, thread_ts: threadTs, text });
+      } catch (postErr) {
+        console.error("postMessage fallback failed:", postErr.message);
+      }
     }
   };
 }
