@@ -91,6 +91,16 @@ export function buildMaintenanceFormBlocks(initialDescription, duplicate) {
           type: "button",
           action_id: CANCEL_ACTION_ID,
           text: { type: "plain_text", text: "Cancel" },
+          confirm: {
+            title: { type: "plain_text", text: "Discard this report?" },
+            text: {
+              type: "plain_text",
+              text: "The form and anything you've entered will be removed.",
+            },
+            confirm: { type: "plain_text", text: "Discard" },
+            deny: { type: "plain_text", text: "Keep editing" },
+            style: "danger",
+          },
         },
       ],
     },
