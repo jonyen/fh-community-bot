@@ -8,6 +8,7 @@ import { createPhotoService } from "../lib/photos.js";
 import { createGroqService } from "../services/groq.js";
 import { createDedupService } from "../services/dedup.js";
 import { createMentionHandler } from "../events/mention.js";
+import { createMaintenanceFormHandler } from "../events/maintenanceForm.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
 import { createSlashRefreshHandler } from "../events/slashRefresh.js";
@@ -48,13 +49,22 @@ export function getDeps() {
   const groqService = createGroqService(groqClient);
   const dedupService = createDedupService(groqService);
 
+  const createdIssues = new Map();
+
   const handler = createMentionHandler({
     sheetsService,
-    groqService,
-    dedupService,
     channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
     photoService,
+    createdIssues,
+  });
+
+  const maintenanceFormHandler = createMaintenanceFormHandler({
+    sheetsService,
+    dedupService,
+    photoService,
+    spreadsheetId: config.googleSheetId,
+    createdIssues,
   });
 
   let genderHandler;
@@ -104,7 +114,7 @@ export function getDeps() {
     });
   }
 
-  cached = { client: slack, handler, genderHandler, slashRefreshHandler, reservationHandler, onestopChannelId: config.onestopChannelId };
+  cached = { client: slack, handler, maintenanceFormHandler, genderHandler, slashRefreshHandler, reservationHandler, onestopChannelId: config.onestopChannelId };
   return cached;
 }
 
