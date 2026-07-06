@@ -31,7 +31,7 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-export function createMentionHandler({ sheetsService, channelIds, spreadsheetId, photoService, createdIssues = new Map() }) {
+export function createMentionHandler({ sheetsService, dedupService, channelIds, spreadsheetId, photoService, createdIssues = new Map() }) {
   async function collectPhotos(files) {
     if (!photoService || !files || files.length === 0) return [];
     try {
@@ -186,9 +186,31 @@ export function createMentionHandler({ sheetsService, channelIds, spreadsheetId,
     // Anything else: post the report form in the thread, description pre-filled
     // from the mention text. Submission is handled by the block_actions path
     // (src/events/maintenanceForm.js) — the form message itself carries all state.
+    // Warn-only dedup check against the last 7 days of open issues so the
+    // reporter can bail out before filling in the form.
+    let duplicate = null;
+    if (description && dedupService) {
+      try {
+        const openIssues = await sheetsService.getOpenIssues();
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const recentIssues = openIssues.filter((issue) => {
+          const parsed = new Date(issue.date);
+          return !isNaN(parsed) && parsed >= sevenDaysAgo;
+        });
+        const match = await dedupService.findDuplicate(description, recentIssues);
+        if (match) {
+          const issue = recentIssues.find((i) => i.id === match.id);
+          if (issue) duplicate = { id: issue.id, description: issue.description };
+        }
+      } catch (err) {
+        console.error("form dedup check failed:", err.message);
+      }
+    }
+
     await say({
       text: "Report a maintenance issue",
-      blocks: buildMaintenanceFormBlocks(description),
+      blocks: buildMaintenanceFormBlocks(description, duplicate),
       thread_ts: threadKey,
     });
   };

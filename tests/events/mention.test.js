@@ -15,6 +15,8 @@ describe("MentionHandler", () => {
   let mockClient;
   let createdIssues;
 
+  let mockDedup;
+
   beforeEach(() => {
     mockSheets = {
       getOpenIssues: vi.fn().mockResolvedValue([]),
@@ -23,6 +25,7 @@ describe("MentionHandler", () => {
       appendNote: vi.fn().mockResolvedValue({}),
       appendPhotos: vi.fn().mockResolvedValue({}),
     };
+    mockDedup = { findDuplicate: vi.fn().mockResolvedValue(null) };
     mockSay = vi.fn().mockResolvedValue({});
     mockClient = {
       reactions: { add: vi.fn().mockResolvedValue({}) },
@@ -30,6 +33,7 @@ describe("MentionHandler", () => {
     createdIssues = new Map();
     handler = createMentionHandler({
       sheetsService: mockSheets,
+      dedupService: mockDedup,
       channelIds: new Set(["C123"]),
       spreadsheetId: "sheet-id",
       createdIssues,
@@ -61,6 +65,54 @@ describe("MentionHandler", () => {
     expect(description.element.initial_value).toBe("lobby printer jammed");
     const submit = call.blocks.find((b) => b.block_id === "submit_actions");
     expect(submit.elements[0].action_id).toBe(SUBMIT_ACTION_ID);
+  });
+
+  it("lists a possible duplicate in the form when one matches", async () => {
+    mockSheets.getOpenIssues.mockResolvedValue([
+      { id: "7", description: "leak under the sink", date: recentDate(2), status: "Open" },
+      { id: "3", description: "old busted door", date: recentDate(30), status: "Open" },
+    ]);
+    mockDedup.findDuplicate.mockResolvedValue({ id: "7", confident: true });
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> sink is leaking", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    // Only issues from the last 7 days are considered
+    expect(mockDedup.findDuplicate).toHaveBeenCalledWith("sink is leaking", [
+      expect.objectContaining({ id: "7" }),
+    ]);
+    const call = mockSay.mock.calls[0][0];
+    const warning = call.blocks.find((b) => b.block_id === "duplicate_warning");
+    expect(warning).toBeDefined();
+    expect(warning.text.text).toContain("#7");
+    expect(warning.text.text).toContain("leak under the sink");
+  });
+
+  it("posts a plain form when the dedup check fails", async () => {
+    mockSheets.getOpenIssues.mockRejectedValue(new Error("sheets down"));
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> sink is leaking", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    const call = mockSay.mock.calls[0][0];
+    expect(call.blocks.find((b) => b.block_id === "duplicate_warning")).toBeUndefined();
+    expect(call.blocks.find((b) => b.block_id === "issue_description")).toBeDefined();
+  });
+
+  it("skips the dedup check when the mention has no description", async () => {
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT>", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockDedup.findDuplicate).not.toHaveBeenCalled();
   });
 
   it("posts an empty form when the mention has no text", async () => {

@@ -15,6 +15,26 @@ describe("buildMaintenanceFormBlocks", () => {
     expect(blocks[0].text.text).toMatch(/thanks for reporting/i);
   });
 
+  it("shows a duplicate warning block when a possible duplicate is passed", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking", {
+      id: "7",
+      description: "leak under the sink",
+    });
+    const warning = blocks.find((b) => b.block_id === "duplicate_warning");
+    expect(warning).toBeDefined();
+    expect(warning.text.text).toContain("#7");
+    expect(warning.text.text).toContain("leak under the sink");
+    // Warning sits above the input fields
+    const warningIdx = blocks.indexOf(warning);
+    const descriptionIdx = blocks.findIndex((b) => b.block_id === "issue_description");
+    expect(warningIdx).toBeLessThan(descriptionIdx);
+  });
+
+  it("omits the duplicate warning block when no duplicate", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking");
+    expect(blocks.find((b) => b.block_id === "duplicate_warning")).toBeUndefined();
+  });
+
   it("includes a cancel button alongside submit", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
     const actions = blocks.find((b) => b.block_id === "submit_actions");
