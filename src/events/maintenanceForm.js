@@ -1,4 +1,4 @@
-import { extractFormValues, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
+import { extractFormValues, SUBMIT_ACTION_ID, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
 
 export function createMaintenanceFormHandler({ sheetsService, dedupService, photoService, spreadsheetId, createdIssues }) {
   async function collectRootPhotos(client, channel, threadTs) {
@@ -15,6 +15,11 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
   }
 
   return async function handleFormSubmission({ payload, client }) {
+    // Slack fires block_actions for every element interaction (dropdown
+    // selections, text input dispatches) — only the buttons mean anything.
+    const actionId = payload.actions?.[0]?.action_id;
+    if (actionId !== SUBMIT_ACTION_ID && actionId !== CANCEL_ACTION_ID) return;
+
     const channel = payload.channel?.id;
     const formTs = payload.message?.ts;
     const threadTs = payload.message?.thread_ts || formTs;
@@ -27,7 +32,7 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
     );
     if (!stillHasForm) return;
 
-    if (payload.actions?.[0]?.action_id === CANCEL_ACTION_ID) {
+    if (actionId === CANCEL_ACTION_ID) {
       try {
         await client.chat.delete({ channel, ts: formTs });
       } catch (err) {

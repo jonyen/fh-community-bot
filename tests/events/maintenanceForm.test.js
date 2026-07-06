@@ -163,6 +163,18 @@ describe("MaintenanceFormHandler", () => {
     );
   });
 
+  it("ignores dropdown selection actions (only submit logs the issue)", async () => {
+    for (const actionId of ["type", "severity", "description"]) {
+      const payload = makePayload({ actions: [{ action_id: actionId }] });
+      await handler({ payload, client: mockClient });
+    }
+
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+    expect(mockClient.chat.update).not.toHaveBeenCalled();
+    expect(mockClient.chat.delete).not.toHaveBeenCalled();
+    expect(mockClient.chat.postEphemeral).not.toHaveBeenCalled();
+  });
+
   it("deletes the form message when cancel is clicked", async () => {
     const payload = makePayload({ actions: [{ action_id: "cancel_maintenance_form" }] });
 
