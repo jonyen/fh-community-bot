@@ -3,11 +3,29 @@ import {
   buildMaintenanceFormBlocks,
   extractFormValues,
   SUBMIT_ACTION_ID,
+  CANCEL_ACTION_ID,
   ISSUE_TYPES,
   SEVERITIES,
 } from "../../src/lib/maintenance-form.js";
 
 describe("buildMaintenanceFormBlocks", () => {
+  it("starts with an intro section thanking the reporter", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking");
+    expect(blocks[0].type).toBe("section");
+    expect(blocks[0].text.text).toMatch(/thanks for reporting/i);
+  });
+
+  it("includes a cancel button alongside submit", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking");
+    const actions = blocks.find((b) => b.block_id === "submit_actions");
+    const actionIds = actions.elements.map((e) => e.action_id);
+    expect(actionIds).toContain(SUBMIT_ACTION_ID);
+    expect(actionIds).toContain(CANCEL_ACTION_ID);
+    const cancel = actions.elements.find((e) => e.action_id === CANCEL_ACTION_ID);
+    expect(cancel.text.text).toBe("Cancel");
+    expect(cancel.style).toBeUndefined();
+  });
+
   it("builds description, type, severity inputs and a submit button", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
 
