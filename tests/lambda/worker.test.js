@@ -4,6 +4,7 @@ const dispatchMock = vi.fn().mockResolvedValue();
 const handlerMock = vi.fn().mockResolvedValue();
 const genderHandlerMock = vi.fn().mockResolvedValue();
 const slashRefreshHandlerMock = vi.fn().mockResolvedValue();
+const maintenanceFormHandlerMock = vi.fn().mockResolvedValue();
 const fakeClient = { id: "slack" };
 
 vi.mock("../../src/lambda/dispatch.js", () => ({
@@ -16,6 +17,7 @@ vi.mock("../../src/lambda/clients.js", () => ({
     handler: handlerMock,
     genderHandler: genderHandlerMock,
     slashRefreshHandler: slashRefreshHandlerMock,
+    maintenanceFormHandler: maintenanceFormHandlerMock,
   }),
 }));
 
@@ -25,6 +27,7 @@ describe("worker.handler", () => {
     handlerMock.mockClear();
     genderHandlerMock.mockClear();
     slashRefreshHandlerMock.mockClear();
+    maintenanceFormHandlerMock.mockClear();
   });
 
   it("calls dispatchSlackEvent for each SQS record and passes all handlers", async () => {
@@ -43,6 +46,7 @@ describe("worker.handler", () => {
     expect(dispatchMock.mock.calls[0][0].handler).toBe(handlerMock);
     expect(dispatchMock.mock.calls[0][0].genderHandler).toBe(genderHandlerMock);
     expect(dispatchMock.mock.calls[0][0].slashRefreshHandler).toBe(slashRefreshHandlerMock);
+    expect(dispatchMock.mock.calls[0][0].maintenanceFormHandler).toBe(maintenanceFormHandlerMock);
     expect(dispatchMock.mock.calls[0][0].client).toBe(fakeClient);
   });
 

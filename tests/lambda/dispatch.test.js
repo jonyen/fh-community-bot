@@ -366,3 +366,25 @@ describe("dispatchSlackEvent ambient onestop channel", () => {
     expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
   });
 });
+
+describe("dispatchSlackEvent block_actions routing", () => {
+  it("routes a block_actions envelope to the maintenance form handler", async () => {
+    const maintenanceFormHandler = vi.fn().mockResolvedValue();
+    const client = {};
+    const envelope = { type: "block_actions", payload: { actions: [{ action_id: "submit_maintenance_form" }] } };
+
+    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), maintenanceFormHandler, client });
+
+    expect(maintenanceFormHandler).toHaveBeenCalledWith({ payload: envelope.payload, client });
+  });
+
+  it("is a no-op for block_actions when no maintenanceFormHandler provided", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({
+      slackEnvelope: { type: "block_actions", payload: {} },
+      handler,
+      client: {},
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
