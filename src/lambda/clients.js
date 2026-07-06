@@ -53,6 +53,7 @@ export function getDeps() {
 
   const handler = createMentionHandler({
     sheetsService,
+    dedupService,
     channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
     photoService,

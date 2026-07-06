@@ -21,7 +21,7 @@ function selectOptions(values) {
   }));
 }
 
-export function buildMaintenanceFormBlocks(initialDescription) {
+export function buildMaintenanceFormBlocks(initialDescription, duplicate) {
   const descriptionElement = {
     type: "plain_text_input",
     action_id: "description",
@@ -37,6 +37,18 @@ export function buildMaintenanceFormBlocks(initialDescription) {
         text: "Thanks for reporting an issue! Please fill out the details below and hit Submit.",
       },
     },
+    ...(duplicate
+      ? [
+          {
+            type: "section",
+            block_id: "duplicate_warning",
+            text: {
+              type: "mrkdwn",
+              text: `:warning: This might be a duplicate of issue #${duplicate.id} — *${duplicate.description}*. If it's the same problem, hit Cancel.`,
+            },
+          },
+        ]
+      : []),
     {
       type: "input",
       block_id: "issue_description",
