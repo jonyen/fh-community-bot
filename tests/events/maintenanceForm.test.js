@@ -49,6 +49,7 @@ describe("MaintenanceFormHandler", () => {
         update: vi.fn().mockResolvedValue({}),
         postMessage: vi.fn().mockResolvedValue({}),
         postEphemeral: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
       },
     };
     createdIssues = new Map();
@@ -160,6 +161,32 @@ describe("MaintenanceFormHandler", () => {
         text: expect.stringContaining("Couldn't log this issue"),
       })
     );
+  });
+
+  it("deletes the form message when cancel is clicked", async () => {
+    const payload = makePayload({ actions: [{ action_id: "cancel_maintenance_form" }] });
+
+    await handler({ payload, client: mockClient });
+
+    expect(mockClient.chat.delete).toHaveBeenCalledWith({ channel: "C123", ts: "100.2" });
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+    expect(mockClient.chat.update).not.toHaveBeenCalled();
+  });
+
+  it("falls back to replacing the form with a cancelled note when delete fails", async () => {
+    mockClient.chat.delete.mockRejectedValue(new Error("cant_delete_message"));
+    const payload = makePayload({ actions: [{ action_id: "cancel_maintenance_form" }] });
+
+    await handler({ payload, client: mockClient });
+
+    expect(mockClient.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        ts: "100.2",
+        text: expect.stringContaining("cancelled"),
+      })
+    );
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
   });
 
   it("ignores a late duplicate submit (form already replaced)", async () => {

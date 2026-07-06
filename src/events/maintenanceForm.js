@@ -1,4 +1,4 @@
-import { extractFormValues } from "../lib/maintenance-form.js";
+import { extractFormValues, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
 
 export function createMaintenanceFormHandler({ sheetsService, dedupService, photoService, spreadsheetId, createdIssues }) {
   async function collectRootPhotos(client, channel, threadTs) {
@@ -26,6 +26,26 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       (b) => b.block_id === "submit_actions"
     );
     if (!stillHasForm) return;
+
+    if (payload.actions?.[0]?.action_id === CANCEL_ACTION_ID) {
+      try {
+        await client.chat.delete({ channel, ts: formTs });
+      } catch (err) {
+        console.error("chat.delete failed:", err.message);
+        const text = "Report cancelled.";
+        try {
+          await client.chat.update({
+            channel,
+            ts: formTs,
+            text,
+            blocks: [{ type: "section", text: { type: "mrkdwn", text } }],
+          });
+        } catch (updateErr) {
+          console.error("chat.update fallback failed:", updateErr.message);
+        }
+      }
+      return;
+    }
 
     const { description, type, severity } = extractFormValues(payload.state?.values);
     if (!description || !type || !severity) {

@@ -1,4 +1,5 @@
 export const SUBMIT_ACTION_ID = "submit_maintenance_form";
+export const CANCEL_ACTION_ID = "cancel_maintenance_form";
 
 export const ISSUE_TYPES = [
   "Lighting",
@@ -29,6 +30,13 @@ export function buildMaintenanceFormBlocks(initialDescription) {
   };
 
   return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "Thanks for reporting an issue! Please fill out the details below and hit Submit.",
+      },
+    },
     {
       type: "input",
       block_id: "issue_description",
@@ -66,6 +74,11 @@ export function buildMaintenanceFormBlocks(initialDescription) {
           action_id: SUBMIT_ACTION_ID,
           style: "primary",
           text: { type: "plain_text", text: "Submit" },
+        },
+        {
+          type: "button",
+          action_id: CANCEL_ACTION_ID,
+          text: { type: "plain_text", text: "Cancel" },
         },
       ],
     },
