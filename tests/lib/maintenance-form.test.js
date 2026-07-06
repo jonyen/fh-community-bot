@@ -46,6 +46,17 @@ describe("buildMaintenanceFormBlocks", () => {
     expect(cancel.style).toBeUndefined();
   });
 
+  it("asks for confirmation before cancelling", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking");
+    const actions = blocks.find((b) => b.block_id === "submit_actions");
+    const cancel = actions.elements.find((e) => e.action_id === CANCEL_ACTION_ID);
+    expect(cancel.confirm).toBeDefined();
+    expect(cancel.confirm.title.text).toBeTruthy();
+    expect(cancel.confirm.text.text).toBeTruthy();
+    expect(cancel.confirm.confirm.text).toBeTruthy();
+    expect(cancel.confirm.deny.text).toBeTruthy();
+  });
+
   it("builds description, type, severity inputs and a submit button", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
 
