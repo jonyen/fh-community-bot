@@ -42,6 +42,23 @@ jobs:
         with:
           use-installer: true
 
+      # A concurrent update (e.g. a manual `sam deploy`) leaves the stack in an
+      # IN_PROGRESS state, and CreateChangeSet hard-fails on it. Poll until the
+      # stack settles (up to ~10 min) instead of erroring out.
+      - name: Wait for stack to be stable
+        run: |
+          for i in $(seq 1 60); do
+            STATUS=$(aws cloudformation describe-stacks \
+              --stack-name fh-maintenance-bot \
+              --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NO_STACK")
+            case "$STATUS" in
+              *IN_PROGRESS*) echo "Stack is $STATUS; waiting... ($i/60)"; sleep 10 ;;
+              *) echo "Stack is $STATUS; proceeding."; exit 0 ;;
+            esac
+          done
+          echo "Stack still busy after 10 minutes; giving up." >&2
+          exit 1
+
       # The reservation room list and resource/venue calendar maps are too large
       # for CloudFormation parameters (4096 chars) and Lambda env vars (4 KB), so
       # we bundle them into the deployment package as files under runtime-config/
