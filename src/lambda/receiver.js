@@ -67,6 +67,27 @@ export async function handler(event) {
   }
 
   if (isFormEncoded(contentType)) {
+    const params = new URLSearchParams(body);
+    const interactivityPayload = params.get("payload");
+    if (interactivityPayload) {
+      let parsedPayload;
+      try {
+        parsedPayload = JSON.parse(interactivityPayload);
+      } catch {
+        return { statusCode: 400, body: "invalid interactivity payload" };
+      }
+      if (parsedPayload.type !== "block_actions") {
+        return { statusCode: 200, body: "" };
+      }
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: process.env.EVENT_QUEUE_URL,
+          MessageBody: JSON.stringify({ type: "block_actions", payload: parsedPayload }),
+        })
+      );
+      return { statusCode: 200, body: "" };
+    }
+
     const slash = parseSlashCommand(body);
     if (!slash.command || !slash.response_url) {
       return { statusCode: 400, body: "invalid slash command payload" };

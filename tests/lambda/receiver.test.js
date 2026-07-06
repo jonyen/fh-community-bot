@@ -179,6 +179,62 @@ describe("receiver.handler", () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
+  it("enqueues a block_actions envelope from an interactivity payload", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const interactivity = {
+      type: "block_actions",
+      user: { id: "U1" },
+      actions: [{ action_id: "submit_maintenance_form" }],
+    };
+    const body = `payload=${encodeURIComponent(JSON.stringify(interactivity))}`;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler({
+      body,
+      headers: {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(body, ts),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(sendMock.mock.calls[0][0].input.MessageBody);
+    expect(sent.type).toBe("block_actions");
+    expect(sent.payload.actions[0].action_id).toBe("submit_maintenance_form");
+  });
+
+  it("acks and drops non-block_actions interactivity payloads", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = `payload=${encodeURIComponent(JSON.stringify({ type: "view_submission" }))}`;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler({
+      body,
+      headers: {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(body, ts),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("400s a malformed interactivity payload", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = `payload=${encodeURIComponent("{not json")}`;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler({
+      body,
+      headers: {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(body, ts),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
   it("enqueues a non-bot message in the reservations channel", async () => {
     process.env.RESERVATIONS_CHANNEL_ID = "Cres";
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
