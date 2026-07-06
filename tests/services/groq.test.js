@@ -16,38 +16,6 @@ describe("GroqService", () => {
     service = createGroqService(mockClient);
   });
 
-  describe("suggestFix", () => {
-    it("returns the AI suggestion for an issue", async () => {
-      mockClient.chat.completions.create.mockResolvedValue({
-        choices: [{ message: { content: "Try restarting the printer." } }],
-      });
-
-      const result = await service.suggestFix("Lobby printer is jammed");
-      expect(result).toBe("Try restarting the printer.");
-      expect(mockClient.chat.completions.create).toHaveBeenCalledWith({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          {
-            role: "system",
-            content: expect.stringContaining("facilities/maintenance"),
-          },
-          {
-            role: "user",
-            content: "Lobby printer is jammed",
-          },
-        ],
-        max_tokens: 256,
-      });
-    });
-
-    it("returns null when API fails", async () => {
-      mockClient.chat.completions.create.mockRejectedValue(new Error("API down"));
-
-      const result = await service.suggestFix("Something broke");
-      expect(result).toBeNull();
-    });
-  });
-
   describe("checkDuplicate", () => {
     it("returns matching issue ID when duplicate found", async () => {
       mockClient.chat.completions.create.mockResolvedValue({
@@ -79,42 +47,6 @@ describe("GroqService", () => {
 
       const result = await service.checkDuplicate("test", []);
       expect(result).toBeNull();
-    });
-  });
-
-  describe("isMaintenanceRequest", () => {
-    it("returns true for a maintenance request", async () => {
-      mockClient.chat.completions.create.mockResolvedValue({
-        choices: [{ message: { content: "yes" } }],
-      });
-
-      const result = await service.isMaintenanceRequest("The lobby printer is jammed");
-      expect(result).toBe(true);
-    });
-
-    it("returns false for a non-maintenance message", async () => {
-      mockClient.chat.completions.create.mockResolvedValue({
-        choices: [{ message: { content: "no" } }],
-      });
-
-      const result = await service.isMaintenanceRequest("What's for lunch?");
-      expect(result).toBe(false);
-    });
-
-    it("returns false for junk messages without calling the API", async () => {
-      const junkMessages = ["test", "testing", "hello", "hi", "just a test", "ping", "asdf", "lol"];
-      for (const msg of junkMessages) {
-        const result = await service.isMaintenanceRequest(msg);
-        expect(result, `expected false for "${msg}"`).toBe(false);
-      }
-      expect(mockClient.chat.completions.create).not.toHaveBeenCalled();
-    });
-
-    it("returns true when API fails (fail-open)", async () => {
-      mockClient.chat.completions.create.mockRejectedValue(new Error("API down"));
-
-      const result = await service.isMaintenanceRequest("something");
-      expect(result).toBe(true);
     });
   });
 

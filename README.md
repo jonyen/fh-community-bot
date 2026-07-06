@@ -1,12 +1,11 @@
 # fh-community-bot
 
-A Slack bot for managing facilities maintenance issue reporting and tracking. Mention the bot in a Slack channel to log issues, detect duplicates, and get AI-powered fix suggestions.
+A Slack bot for managing facilities maintenance issue reporting and tracking. Mention the bot in a Slack channel and it posts an in-thread report form; submitting the form logs the issue to Google Sheets.
 
 ## Features
 
-- **Issue reporting** via Slack @mentions — automatically logged to Google Sheets
-- **Duplicate detection** — two-pass strategy using keyword matching + LLM verification
-- **Fix suggestions** — AI-powered quick-fix recommendations for common issues
+- **Issue reporting** via Slack @mentions — the bot replies with an in-thread form (description, issue type: Lighting / Elevator / Pest Control / Electrical / Plumbing / HVAC / Janitorial / Other, severity: Minor / Medium / Critical); submission is logged to Google Sheets
+- **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
 
@@ -24,11 +23,11 @@ Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
 
 Two AWS Lambdas. SQS in between for the 3-second Slack ack budget. No VPC, no
 database. The worker runs as concurrent, ephemeral Lambda containers, so
-conversation state (e.g. an issue awaiting a severity reply) can't live durably
-in process memory — the "How severe?" prompt and the reply may hit different
-containers. Instead, the **Slack thread is the source of truth**: an in-memory
-cache is a warm-path optimization, and on a miss the handler reconstructs the
-pending state by reading the thread transcript via `conversations.replies`.
+conversation state can't live durably in process memory. Report submission
+avoids this entirely: the in-thread form message carries its own state, and the
+`block_actions` payload Slack sends on Submit contains every field value. The
+same endpoint receives both Events API posts and interactivity payloads
+(enable **Interactivity** in the Slack app config with the same Request URL).
 
 ## Tech Stack
 

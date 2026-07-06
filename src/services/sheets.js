@@ -1,8 +1,8 @@
-// Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTOS
+// Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTOS, J=TYPE
 // Data starts at row 5 (rows 1-4 are headers/metadata)
 const SHEET_NAME = "Maintenance Request";
 const DATA_START_ROW = 5;
-const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:I`;
+const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:J`;
 
 function parseRow(row, rowIndex) {
   return {
@@ -16,6 +16,7 @@ function parseRow(row, rowIndex) {
     status: row[6] || "",
     notes: row[7] || "",
     photos: row[8] || "",
+    type: row[9] || "",
   };
 }
 
@@ -57,7 +58,7 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     return sheet.properties.sheetId;
   }
 
-  async function appendIssue({ reporter, description, severity, photos }) {
+  async function appendIssue({ reporter, description, severity, type, photos }) {
     const today = new Date().toLocaleDateString("en-US");
     const sheetId = await getSheetId();
 
@@ -83,12 +84,12 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     // Write data into the newly inserted row
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:I${DATA_START_ROW}`,
+      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:J${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [[
           today, reporter, description, severity || "", `=TODAY()-A${DATA_START_ROW}`, "", "Need to Assign", "",
-          photoLinksText(photos),
+          photoLinksText(photos), type || "",
         ]],
       },
     });

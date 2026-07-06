@@ -1,4 +1,4 @@
-import { extractSeverity, parseSeverityReply } from "../lib/severity.js";
+import { buildMaintenanceFormBlocks } from "../lib/maintenance-form.js";
 
 function stripMention(text) {
   return text.replace(/<@[A-Z0-9_]+>/g, "").trim();
@@ -31,33 +31,7 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-
-// Distinctive substrings of the bot's own messages, used to reconstruct
-// conversation state from the Slack thread transcript (the source of truth).
-const SEVERITY_PROMPT = "How severe is this issue?";
-const LOGGED_CONFIRMATION = "Logged your issue";
-
-export function createMentionHandler({ sheetsService, groqService, dedupService, channelIds, spreadsheetId, photoService }) {
-  // In-memory caches are warm-path optimizations only. The Slack thread itself
-  // is the source of truth: a severity reply handled by a different or cold
-  // Lambda container (where these caches are empty) is recovered by reading the
-  // thread — see recoverPendingFromThread.
-  const pendingIssues = new Map();
-  const createdIssues = new Map();
-  const engagedThreads = new Set();
-  let botUserIdPromise = null;
-
-  async function getBotUserId(client) {
-    if (!botUserIdPromise) {
-      botUserIdPromise = client.auth.test().then((r) => r.user_id).catch((err) => {
-        console.error("auth.test failed:", err.message);
-        botUserIdPromise = null;
-        return null;
-      });
-    }
-    return botUserIdPromise;
-  }
-
+export function createMentionHandler({ sheetsService, channelIds, spreadsheetId, photoService, createdIssues = new Map() }) {
   async function collectPhotos(files) {
     if (!photoService || !files || files.length === 0) return [];
     try {
@@ -68,104 +42,19 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
     }
   }
 
-  async function fetchThreadReplies(client, channel, threadTs) {
-    const messages = [];
-    let cursor;
-    try {
-      do {
-        const res = await client.conversations.replies({
-          channel,
-          ts: threadTs,
-          limit: 200,
-          ...(cursor ? { cursor } : {}),
-        });
-        for (const m of res.messages || []) messages.push(m);
-        cursor = res.response_metadata?.next_cursor;
-      } while (cursor);
-    } catch (err) {
-      console.error("conversations.replies failed:", err.message);
-      return null;
-    }
-    return messages;
-  }
-
-  function isBotMessage(message, botUserId) {
-    return Boolean(message.bot_id) || (botUserId && message.user === botUserId);
-  }
-
-  function threadHasBotMention(messages, botUserId) {
-    if (!botUserId || !messages) return false;
-    const needle = `<@${botUserId}>`;
-    return messages.some((m) => (m.text || "").includes(needle));
-  }
-
-  // Reconstruct the pending-severity state from a thread transcript. Returns a
-  // pending descriptor when the bot has asked for severity and has not yet
-  // logged the issue; otherwise null. Used when the in-memory cache misses
-  // (cold start / a reply routed to a different container).
-  async function recoverPendingFromThread({ messages, botUserId, client }) {
-    if (!messages || messages.length === 0) return null;
-
-    let askedSeverity = false;
-    let alreadyLogged = false;
-    for (const m of messages) {
-      if (!isBotMessage(m, botUserId)) continue;
-      const text = m.text || "";
-      if (text.includes(SEVERITY_PROMPT)) askedSeverity = true;
-      if (text.includes(LOGGED_CONFIRMATION)) alreadyLogged = true;
-    }
-    if (!askedSeverity || alreadyLogged) return null;
-
-    // The thread root is the original report; its text (minus the @mention) is
-    // the issue description and its author is the reporter.
-    const root = messages[0];
-    const issueDescription = stripMention(root.text || "");
-    if (!issueDescription) return null;
-
-    let reporterName = root.user;
-    try {
-      const userInfo = await client.users.info({ user: root.user });
-      reporterName = userInfo.user.real_name || userInfo.user.name || root.user;
-    } catch (err) {
-      console.error("Failed to fetch user info:", err.message);
-    }
-
-    let suggestion = null;
-    try {
-      suggestion = await groqService.suggestFix(issueDescription);
-    } catch (err) {
-      console.error("suggestFix failed:", err.message);
-    }
-
-    // duplicate is null on recovery: dedup ran (if at all) when the issue was
-    // first reported, and we don't re-run it here.
-    return { user: root.user, reporterName, issueDescription, suggestion, duplicate: null, files: root.files || [] };
-  }
-
   return async function handleMention({ event, say, client }) {
     console.log(`[mention] user=${event.user} channel=${event.channel} text="${event.text}"`);
 
     if (!channelIds.has(event.channel)) return;
 
-    const threadKeyEarly = event.thread_ts || event.ts;
+    const description = stripMention(event.text || "");
+    const threadKey = event.thread_ts || event.ts;
     const hasMention = /<@[A-Z0-9_]+>/.test(event.text || "");
+    const issueRowId = event.thread_ts ? createdIssues.get(threadKey) : undefined;
 
-    // For a thread reply without an @mention and not known-engaged, we read the
-    // thread transcript to (a) confirm the bot is engaged in this thread and
-    // (b) recover any pending-severity state lost with a cold/other container.
-    // Fetch once and reuse for both.
-    let threadMessages = null;
-    let botUserId = null;
-    const needsThreadLookup = !hasMention && event.thread_ts && !engagedThreads.has(threadKeyEarly);
-    if (needsThreadLookup) {
-      botUserId = await getBotUserId(client);
-      threadMessages = await fetchThreadReplies(client, event.channel, event.thread_ts);
-      if (!threadHasBotMention(threadMessages, botUserId)) return;
-    }
-
-    if (hasMention || needsThreadLookup) {
-      engagedThreads.add(threadKeyEarly);
-    }
+    // Non-mention thread replies only matter in threads of issues we logged
+    // (notes/photos). Anything else is other people's conversation — ignore.
+    if (!hasMention && !issueRowId) return;
 
     // Acknowledge receipt immediately
     try {
@@ -178,82 +67,13 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       console.error("Failed to add reaction:", err.message);
     }
 
-    const description = stripMention(event.text || "");
-    const threadKey = event.thread_ts || event.ts;
-
-    // Check if this is a severity reply for a pending issue. Accept the answer
-    // from anyone in the thread (not just the original reporter) and tolerate
-    // extra words around the keyword, e.g. "Medium but important to do it soon".
-    // The in-memory cache is a warm-path optimization; on a miss we reconstruct
-    // the pending state from the Slack thread (the source of truth).
-    let pending = pendingIssues.get(threadKey);
-    if (!pending && event.thread_ts) {
-      if (!threadMessages) {
-        botUserId = botUserId || (await getBotUserId(client));
-        threadMessages = await fetchThreadReplies(client, event.channel, event.thread_ts);
-      }
-      pending = await recoverPendingFromThread({ messages: threadMessages, botUserId, client });
-    }
-    if (pending) {
-      const severity = parseSeverityReply(description);
-      if (!severity) {
-        await say({
-          text: "Please reply with one of: *Minor*, *Medium*, or *Critical*.",
-          thread_ts: threadKey,
-        });
-        return;
-      }
-
-      pendingIssues.delete(threadKey);
-
-      const photos = await collectPhotos([...(pending.files || []), ...(event.files || [])]);
-
-      let id;
-      try {
-        id = await sheetsService.appendIssue({
-          reporter: pending.reporterName,
-          description: pending.issueDescription,
-          severity,
-          ...(photos.length ? { photos } : {}),
-        });
-      } catch {
-        await say({
-          text: "Couldn't log this issue right now — please try again in a few minutes.",
-          thread_ts: threadKey,
-        });
-        return;
-      }
-
-      createdIssues.set(threadKey, id);
-
-      const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
-      let responseText = `Logged your issue (severity: *${severity}*). <${docLink}|View in Google Sheets>`;
-      if (pending.duplicate && !pending.duplicate.confident) {
-        responseText += ` This might be related to issue #${pending.duplicate.id}.`;
-      }
-      if (pending.suggestion) {
-        responseText += `\n\n*Suggested fix:* ${pending.suggestion}`;
-      } else {
-        responseText += `\nCouldn't generate a suggestion right now.`;
-      }
-      responseText += `\n\nFeel free to add more details in this thread and I'll include them in the notes.`;
-      if (severity === "Medium" || severity === "Critical") {
-        responseText += `\n\ncc <@U05SWHWFTEH>`;
-      }
-
-      await say({ text: responseText, thread_ts: threadKey });
-      return;
-    }
-
     // If this is a thread reply for a created issue and not a command, append the
     // text as a note and/or attach any photos.
-    const issueRowId = createdIssues.get(threadKey);
-    if (issueRowId && event.thread_ts) {
+    if (issueRowId) {
       const isCommand =
         description &&
         (/\b(list|show|what are|open requests|open issues|status)\b/i.test(description) ||
-          /^(?:close|resolve|mark as resolved)\s+/i.test(description) ||
-          /^create new:\s*/i.test(description));
+          /^(?:close|resolve|mark as resolved)\s+/i.test(description));
 
       if (!isCommand) {
         const photos = await collectPhotos(event.files);
@@ -271,15 +91,8 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
           }
           return;
         }
+        return;
       }
-    }
-
-    if (!description) {
-      await say({
-        text: "Please describe the issue you'd like to report.",
-        thread_ts: event.thread_ts || event.ts,
-      });
-      return;
     }
 
     // Check if user is asking for a list of requests
@@ -370,137 +183,13 @@ export function createMentionHandler({ sheetsService, groqService, dedupService,
       return;
     }
 
-    // Check for "create new:" prefix to bypass duplicate detection
-    const forceCreate = description.match(/^create new:\s*(.+)$/i);
-    const rawDescription = forceCreate ? forceCreate[1] : description;
-
-    // Check if severity was provided inline (e.g. "printer jammed - critical")
-    const extracted = extractSeverity(rawDescription);
-    const issueDescription = extracted.severity ? extracted.description : rawDescription;
-    const inlineSeverity = extracted.severity;
-
-    // Classify whether this is actually a maintenance request
-    if (!forceCreate) {
-      console.log("[mention] classifying...");
-      const isMaintenance = await groqService.isMaintenanceRequest(issueDescription);
-      console.log("[mention] isMaintenance =", isMaintenance);
-      if (!isMaintenance) {
-        await say({
-          text: "I'm not sure that's a maintenance request. Could you describe a specific facilities or maintenance issue you'd like to report? For example: a broken fixture, a leak, or something that needs repair.",
-          thread_ts: event.thread_ts || event.ts,
-        });
-        return;
-      }
-    }
-
-    console.log("[mention] fetching open issues...");
-    let openIssues;
-    try {
-      openIssues = await sheetsService.getOpenIssues();
-    } catch (err) {
-      console.error("Sheets error:", err.message);
-      await say({
-        text: "Couldn't log this issue right now — please try again in a few minutes.",
-        thread_ts: event.thread_ts || event.ts,
-      });
-      return;
-    }
-
-    // Skip duplicate check if user is forcing creation
-    // Ignore issues older than 7 days for duplicate detection
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const recentIssues = openIssues.filter((issue) => {
-      const parsed = new Date(issue.date);
-      return !isNaN(parsed) && parsed >= sevenDaysAgo;
+    // Anything else: post the report form in the thread, description pre-filled
+    // from the mention text. Submission is handled by the block_actions path
+    // (src/events/maintenanceForm.js) — the form message itself carries all state.
+    await say({
+      text: "Report a maintenance issue",
+      blocks: buildMaintenanceFormBlocks(description),
+      thread_ts: threadKey,
     });
-
-    let duplicate = null;
-    if (!forceCreate) {
-      duplicate = await dedupService.findDuplicate(issueDescription, recentIssues);
-
-      if (duplicate && duplicate.confident) {
-        const existing = openIssues.find((i) => i.id === duplicate.id);
-        const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
-        await say({
-          text: `This looks like an existing issue (row ${duplicate.id}, submitted by ${existing.submitter} on ${existing.date}). Current status: *${existing.status}*\n\n<${docLink}|View in Google Sheets>\n\nIf this is a new issue, reply with \`@FH Maintenance create new: ${issueDescription}\``,
-          thread_ts: event.thread_ts || event.ts,
-        });
-        return;
-      }
-    }
-
-    console.log("[mention] generating suggestion...");
-    const suggestion = await groqService.suggestFix(issueDescription);
-    console.log("[mention] suggestion done");
-
-    let reporterName = event.user;
-    try {
-      const userInfo = await client.users.info({ user: event.user });
-      reporterName = userInfo.user.real_name || userInfo.user.name || event.user;
-    } catch (err) {
-      console.error("Failed to fetch user info:", err.message);
-    }
-
-    if (inlineSeverity) {
-      // Severity provided inline — create issue immediately
-      console.log("[mention] appending issue (inline severity)...");
-      const photos = await collectPhotos(event.files);
-
-      let id;
-      try {
-        id = await sheetsService.appendIssue({
-          reporter: reporterName,
-          description: issueDescription,
-          severity: inlineSeverity,
-          ...(photos.length ? { photos } : {}),
-        });
-      } catch {
-        await say({
-          text: "Couldn't log this issue right now — please try again in a few minutes.",
-          thread_ts: threadKey,
-        });
-        return;
-      }
-
-      createdIssues.set(threadKey, id);
-
-      const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
-      let responseText = `Logged your issue (severity: *${inlineSeverity}*). <${docLink}|View in Google Sheets>`;
-      if (duplicate && !duplicate.confident) {
-        responseText += ` This might be related to issue #${duplicate.id}.`;
-      }
-      if (suggestion) {
-        responseText += `\n\n*Suggested fix:* ${suggestion}`;
-      } else {
-        responseText += `\nCouldn't generate a suggestion right now.`;
-      }
-      responseText += `\n\nFeel free to add more details in this thread and I'll include them in the notes.`;
-      if (inlineSeverity === "Medium" || inlineSeverity === "Critical") {
-        responseText += `\n\ncc <@U05SWHWFTEH>`;
-      }
-
-      await say({ text: responseText, thread_ts: threadKey });
-      console.log("[mention] done");
-    } else {
-      // Cache pending issue (warm-path) and ask for severity. If this prompt
-      // and the reply land on different containers, the reply is recovered from
-      // the thread transcript instead — see recoverPendingFromThread.
-      pendingIssues.set(threadKey, {
-        user: event.user,
-        reporterName,
-        issueDescription,
-        suggestion,
-        duplicate,
-        files: event.files || [],
-      });
-
-      console.log("[mention] asking for severity...");
-      await say({
-        text: "How severe is this issue? Please reply with one of: *minor*, *medium*, or *critical*.",
-        thread_ts: threadKey,
-      });
-      console.log("[mention] waiting for severity reply");
-    }
   };
 }
