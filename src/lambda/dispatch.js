@@ -69,9 +69,14 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     return;
   }
 
+  // Reservation intent outside the OneStop channel only responds to an explicit
+  // @mention of the bot. Plain thread replies are NOT routed here on a keyword
+  // match — a message like "FH maintenance isn't available in this channel"
+  // must not summon OneStop in a channel it doesn't own. (Inside the OneStop
+  // channel, every message is already handled by the ambient path above.)
   if (
     reservationHandler &&
-    (event.type === "app_mention" || (event.type === "message" && event.thread_ts)) &&
+    event.type === "app_mention" &&
     !event.bot_id &&
     matchesReservationIntent(event.text || "")
   ) {
