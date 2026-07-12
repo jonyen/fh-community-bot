@@ -321,6 +321,20 @@ describe("dispatchSlackEvent reservation routing", () => {
     expect(maintenance).not.toHaveBeenCalled();
   });
 
+  it("does NOT route a reservation-keyword thread reply outside the onestop channel to reservations", async () => {
+    // A plain thread reply that merely contains a reservation keyword (e.g.
+    // "isn't available in this channel") must not summon OneStop in a channel
+    // it doesn't own — it belongs to the maintenance handler.
+    const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn(), handleChannelMessage: vi.fn() };
+    const maintenance = vi.fn().mockResolvedValue();
+    await dispatchSlackEvent({
+      slackEnvelope: { event: { type: "message", channel: "Cmisc", thread_ts: "1.1", ts: "1.2", text: "FH maintenance isn't available in this channel", user: "U1" } },
+      handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
+    });
+    expect(reservationHandler.handleMention).not.toHaveBeenCalled();
+    expect(maintenance).toHaveBeenCalled();
+  });
+
   it("falls through to maintenance for a non-reservation app_mention", async () => {
     const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn() };
     const maintenance = vi.fn().mockResolvedValue();
