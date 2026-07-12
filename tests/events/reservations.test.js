@@ -251,6 +251,15 @@ describe("ReservationHandler.handleChannelMessage", () => {
     expect(groqService.parseReservationRequest).not.toHaveBeenCalled();
   });
 
+  it("stays silent on an unrecognized intent with no target (e.g. a maintenance request)", async () => {
+    // The LLM sometimes emits an intent outside the enum (or a non-actionable
+    // one) with a null target. Ambient mode must not leak 'I don't manage null'.
+    groqService.parseReservationRequest.mockResolvedValue({ intent: "maintenance", target: null });
+    await handler.handleChannelMessage({ event: msg({ text: "@FH Maintenance could we add lights under the cabinets?" }), client });
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(reservationsService.classifyTarget).not.toHaveBeenCalled();
+  });
+
   it("asks a threaded follow-up when a reservation is missing slots", async () => {
     groqService.parseReservationRequest.mockResolvedValue({ intent: "reserve", target: "FH MPR", date: null, startTime: null, endTime: null });
     await handler.handleChannelMessage({ event: msg({ text: "can I book the MPR?" }), client });
