@@ -265,6 +265,12 @@ export function createReservationHandler({ reservationsService, groqService, one
       return;
     }
 
+    // Ambient mode: only a concrete reserve/check request should get a spoken
+    // reply. Any other intent — including ones the LLM invents outside the enum
+    // (e.g. a maintenance request) — stays silent, so a null/garbage target
+    // never leaks 'I don't manage "null"'.
+    if (parsed.intent !== "reserve" && parsed.intent !== "check") return;
+
     const missing = missingSlots(parsed);
     if (missing.length) {
       await say({ username: BOT_USERNAME, icon_emoji: BOT_ICON_EMOJI, text: followUpText(missing) });
