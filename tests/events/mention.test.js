@@ -13,7 +13,6 @@ describe("MentionHandler", () => {
   let handler;
   let mockSay;
   let mockClient;
-  let createdIssues;
 
   let mockDedup;
 
@@ -24,19 +23,18 @@ describe("MentionHandler", () => {
       updateIssueStatus: vi.fn().mockResolvedValue({}),
       appendNote: vi.fn().mockResolvedValue({}),
       appendPhotos: vi.fn().mockResolvedValue({}),
+      findIssueRowByRef: vi.fn().mockResolvedValue(null),
     };
     mockDedup = { findDuplicate: vi.fn().mockResolvedValue(null) };
     mockSay = vi.fn().mockResolvedValue({});
     mockClient = {
       reactions: { add: vi.fn().mockResolvedValue({}) },
     };
-    createdIssues = new Map();
     handler = createMentionHandler({
       sheetsService: mockSheets,
       dedupService: mockDedup,
       channelIds: new Set(["C123"]),
       spreadsheetId: "sheet-id",
-      createdIssues,
     });
   });
 
@@ -139,7 +137,7 @@ describe("MentionHandler", () => {
   });
 
   it("appends thread replies as notes for a logged issue", async () => {
-    createdIssues.set("1", "5");
+    mockSheets.findIssueRowByRef.mockResolvedValue("5");
 
     await handler({
       event: { channel: "C123", text: "it's getting worse", user: "U1", ts: "2", thread_ts: "1" },
@@ -147,6 +145,7 @@ describe("MentionHandler", () => {
       client: mockClient,
     });
 
+    expect(mockSheets.findIssueRowByRef).toHaveBeenCalledWith("1");
     expect(mockSheets.appendNote).toHaveBeenCalledWith("5", "it's getting worse");
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("added that to the notes") })
@@ -285,7 +284,7 @@ describe("MentionHandler", () => {
   });
 
   it("detects list/close commands inside an issue thread instead of appending a note", async () => {
-    createdIssues.set("1", "5");
+    mockSheets.findIssueRowByRef.mockResolvedValue("5");
     mockSheets.getOpenIssues.mockResolvedValue([
       { id: "5", description: "Printer jammed", submitter: "Alice", date: "4/1/2026", status: "Open" },
     ]);
@@ -319,7 +318,6 @@ describe("MentionHandler", () => {
   describe("photos", () => {
     let mockPhotoService;
     let photoHandler;
-    let photoCreatedIssues;
 
     beforeEach(() => {
       mockPhotoService = {
@@ -327,14 +325,12 @@ describe("MentionHandler", () => {
           { viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
         ]),
       };
-      photoCreatedIssues = new Map();
-      photoCreatedIssues.set("1", "5");
+      mockSheets.findIssueRowByRef.mockResolvedValue("5");
       photoHandler = createMentionHandler({
         sheetsService: mockSheets,
         channelIds: new Set(["C123"]),
         spreadsheetId: "sheet-id",
         photoService: mockPhotoService,
-        createdIssues: photoCreatedIssues,
       });
     });
 

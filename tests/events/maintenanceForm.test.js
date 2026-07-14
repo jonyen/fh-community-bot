@@ -28,7 +28,6 @@ describe("MaintenanceFormHandler", () => {
   let mockDedup;
   let mockPhotos;
   let mockClient;
-  let createdIssues;
   let handler;
 
   beforeEach(() => {
@@ -52,13 +51,11 @@ describe("MaintenanceFormHandler", () => {
         delete: vi.fn().mockResolvedValue({}),
       },
     };
-    createdIssues = new Map();
     handler = createMaintenanceFormHandler({
       sheetsService: mockSheets,
       dedupService: mockDedup,
       photoService: mockPhotos,
       spreadsheetId: "sheet-id",
-      createdIssues,
     });
   });
 
@@ -70,6 +67,7 @@ describe("MaintenanceFormHandler", () => {
       description: "sink leaking",
       severity: "Medium",
       type: "Plumbing",
+      slackRef: "100.1",
     });
     expect(mockClient.chat.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -82,7 +80,6 @@ describe("MaintenanceFormHandler", () => {
     expect(updateArg.text).toContain("*Medium*");
     expect(updateArg.text).toContain("*Plumbing*");
     expect(updateArg.text).toContain("docs.google.com/spreadsheets/d/sheet-id");
-    expect(createdIssues.get("100.1")).toBe("5");
   });
 
   it("ccs the facilities lead on Medium and Critical", async () => {

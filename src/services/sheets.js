@@ -1,8 +1,10 @@
-// Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTOS, J=TYPE
+// Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTOS, J=TYPE,
+// K=SLACK_REF (hidden; thread ts of the report thread — the stable key for looking a row
+// back up after humans move/sort rows between the sheet's status sections)
 // Data starts at row 5 (rows 1-4 are headers/metadata)
 const SHEET_NAME = "Maintenance Request";
 const DATA_START_ROW = 5;
-const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:J`;
+const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:K`;
 
 function parseRow(row, rowIndex) {
   return {
@@ -17,6 +19,7 @@ function parseRow(row, rowIndex) {
     notes: row[7] || "",
     photos: row[8] || "",
     type: row[9] || "",
+    slackRef: row[10] || "",
   };
 }
 
@@ -58,7 +61,14 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     return sheet.properties.sheetId;
   }
 
-  async function appendIssue({ reporter, description, severity, type, photos }) {
+  async function findIssueRowByRef(ref) {
+    if (!ref) return null;
+    const rows = await getAllRows();
+    const index = rows.findIndex((row) => (row[10] || "") === ref);
+    return index === -1 ? null : String(index + DATA_START_ROW);
+  }
+
+  async function appendIssue({ reporter, description, severity, type, photos, slackRef }) {
     const today = new Date().toLocaleDateString("en-US");
     const sheetId = await getSheetId();
 
@@ -84,12 +94,12 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     // Write data into the newly inserted row
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:J${DATA_START_ROW}`,
+      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:K${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [[
           today, reporter, description, severity || "", `=TODAY()-A${DATA_START_ROW}`, "", "Need to Assign", "",
-          photoLinksText(photos), type || "",
+          photoLinksText(photos), type || "", slackRef || "",
         ]],
       },
     });
@@ -146,5 +156,5 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     });
   }
 
-  return { getAllIssues, getOpenIssues, appendIssue, updateIssueStatus, appendNote, appendPhotos };
+  return { getAllIssues, getOpenIssues, findIssueRowByRef, appendIssue, updateIssueStatus, appendNote, appendPhotos };
 }

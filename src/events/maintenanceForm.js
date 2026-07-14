@@ -1,6 +1,6 @@
 import { extractFormValues, SUBMIT_ACTION_ID, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
 
-export function createMaintenanceFormHandler({ sheetsService, dedupService, photoService, spreadsheetId, createdIssues }) {
+export function createMaintenanceFormHandler({ sheetsService, dedupService, photoService, spreadsheetId }) {
   async function collectRootPhotos(client, channel, threadTs) {
     if (!photoService || !threadTs) return [];
     try {
@@ -109,13 +109,13 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
 
     const photos = await collectRootPhotos(client, channel, payload.message?.thread_ts);
 
-    let id;
     try {
-      id = await sheetsService.appendIssue({
+      await sheetsService.appendIssue({
         reporter: reporterName,
         description,
         severity,
         type,
+        slackRef: threadTs,
         ...(photos.length ? { photos } : {}),
       });
     } catch (err) {
@@ -143,8 +143,6 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       }
       return;
     }
-
-    createdIssues.set(threadTs, id);
 
     const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
     let text = `Logged your issue (severity: *${severity}*, type: *${type}*). <${docLink}|View in Google Sheets>`;
