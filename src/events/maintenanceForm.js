@@ -67,6 +67,23 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       return;
     }
 
+    // Claim the form before any slow work: strip the submit buttons so a
+    // second click (double-click, impatient retry) carries a message snapshot
+    // without submit_actions and is dropped by the guard above. Without this,
+    // every click during the multi-second logging window appends a duplicate
+    // row. Best-effort — if the update fails we're no worse off than before.
+    const submittingText = "Submitting your report…";
+    try {
+      await client.chat.update({
+        channel,
+        ts: formTs,
+        text: submittingText,
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: submittingText } }],
+      });
+    } catch (err) {
+      console.error("submitting-placeholder update failed:", err.message);
+    }
+
     let reporterName = userId;
     try {
       const userInfo = await client.users.info({ user: userId });
@@ -103,6 +120,18 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       });
     } catch (err) {
       console.error("appendIssue failed:", err.message);
+      // Put the form back (we replaced it with the placeholder) so the user
+      // can hit Submit again once the sheet is reachable.
+      try {
+        await client.chat.update({
+          channel,
+          ts: formTs,
+          text: payload.message?.text || "Report a maintenance issue",
+          blocks: payload.message?.blocks,
+        });
+      } catch (restoreErr) {
+        console.error("form restore failed:", restoreErr.message);
+      }
       try {
         await client.chat.postMessage({
           channel,
