@@ -49,15 +49,12 @@ export function getDeps() {
   const groqService = createGroqService(groqClient);
   const dedupService = createDedupService(groqService);
 
-  const createdIssues = new Map();
-
   const handler = createMentionHandler({
     sheetsService,
     dedupService,
     channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
     photoService,
-    createdIssues,
   });
 
   const maintenanceFormHandler = createMaintenanceFormHandler({
@@ -65,7 +62,6 @@ export function getDeps() {
     dedupService,
     photoService,
     spreadsheetId: config.googleSheetId,
-    createdIssues,
   });
 
   let genderHandler;

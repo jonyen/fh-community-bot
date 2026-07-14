@@ -49,6 +49,7 @@ describe("SheetsService", () => {
           notes: "",
           photos: "",
           type: "Structural",
+          slackRef: "",
         },
       ]);
     });
@@ -85,10 +86,10 @@ describe("SheetsService", () => {
       });
       expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith({
         spreadsheetId: "sheet-id",
-        range: "'Maintenance Request'!A5:J5",
+        range: "'Maintenance Request'!A5:K5",
         valueInputOption: "USER_ENTERED",
         requestBody: {
-          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", "", "", ""]],
+          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", "", "", "", ""]],
         },
       });
     });
@@ -106,11 +107,11 @@ describe("SheetsService", () => {
 
       expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          range: "'Maintenance Request'!A5:J5",
+          range: "'Maintenance Request'!A5:K5",
           requestBody: {
             values: [[
               expect.any(String), "U789", "Water leak", "Medium", "=TODAY()-A5", "", "Need to Assign", "",
-              "https://drive.google.com/file/d/A/view\nhttps://drive.google.com/file/d/B/view", "",
+              "https://drive.google.com/file/d/A/view\nhttps://drive.google.com/file/d/B/view", "", "",
             ]],
           },
         })
@@ -126,9 +127,9 @@ describe("SheetsService", () => {
       });
 
       const updateCall = mockSheets.spreadsheets.values.update.mock.calls[0][0];
-      expect(updateCall.range).toBe("'Maintenance Request'!A5:J5");
+      expect(updateCall.range).toBe("'Maintenance Request'!A5:K5");
       const row = updateCall.requestBody.values[0];
-      expect(row).toHaveLength(10);
+      expect(row).toHaveLength(11);
       expect(row[9]).toBe("Plumbing");
     });
 
@@ -141,6 +142,70 @@ describe("SheetsService", () => {
 
       const row = mockSheets.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0];
       expect(row[9]).toBe("");
+    });
+
+    it("writes the slack ref into column K", async () => {
+      await service.appendIssue({
+        reporter: "Test User",
+        description: "leak under sink",
+        severity: "Medium",
+        slackRef: "1720000000.123456",
+      });
+
+      const updateCall = mockSheets.spreadsheets.values.update.mock.calls[0][0];
+      expect(updateCall.range).toBe("'Maintenance Request'!A5:K5");
+      const row = updateCall.requestBody.values[0];
+      expect(row).toHaveLength(11);
+      expect(row[10]).toBe("1720000000.123456");
+    });
+
+    it("writes an empty SLACK_REF cell when slackRef is omitted", async () => {
+      await service.appendIssue({
+        reporter: "Test User",
+        description: "leak under sink",
+      });
+
+      const row = mockSheets.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0];
+      expect(row[10]).toBe("");
+    });
+  });
+
+  describe("findIssueRowByRef", () => {
+    it("returns the current row number for a matching ref", async () => {
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: {
+          values: [
+            ["4/1/2026", "Alice", "Printer jammed", "", "", "", "Open", "", "", "", "1720000000.111111"],
+            ["4/2/2026", "Charlie", "AC broken", "", "", "", "Open", "", "", "", "1720000000.222222"],
+          ],
+        },
+      });
+
+      await expect(service.findIssueRowByRef("1720000000.222222")).resolves.toBe("6");
+    });
+
+    it("returns null when no row matches", async () => {
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: {
+          values: [["4/1/2026", "Alice", "Printer jammed", "", "", "", "Open", "", "", "", "1720000000.111111"]],
+        },
+      });
+
+      await expect(service.findIssueRowByRef("1720000000.999999")).resolves.toBeNull();
+    });
+
+    it("never matches rows with a blank ref", async () => {
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: {
+          values: [
+            ["4/1/2026", "Alice", "Human-entered row", "", "", "", "Open", "", "", ""],
+            ["IN PROGRESS"],
+          ],
+        },
+      });
+
+      await expect(service.findIssueRowByRef("")).resolves.toBeNull();
+      await expect(service.findIssueRowByRef(undefined)).resolves.toBeNull();
     });
   });
 

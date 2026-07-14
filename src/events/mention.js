@@ -31,7 +31,7 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-export function createMentionHandler({ sheetsService, dedupService, channelIds, spreadsheetId, photoService, createdIssues = new Map() }) {
+export function createMentionHandler({ sheetsService, dedupService, channelIds, spreadsheetId, photoService }) {
   async function collectPhotos(files) {
     if (!photoService || !files || files.length === 0) return [];
     try {
@@ -50,7 +50,17 @@ export function createMentionHandler({ sheetsService, dedupService, channelIds, 
     const description = stripMention(event.text || "");
     const threadKey = event.thread_ts || event.ts;
     const hasMention = /<@[A-Z0-9_]+>/.test(event.text || "");
-    const issueRowId = event.thread_ts ? createdIssues.get(threadKey) : undefined;
+    // Rows move as humans sort the sheet and as new issues insert at the top,
+    // so resolve thread -> current row via the hidden SLACK_REF column at use
+    // time rather than caching row numbers.
+    let issueRowId;
+    if (event.thread_ts) {
+      try {
+        issueRowId = await sheetsService.findIssueRowByRef(threadKey);
+      } catch (err) {
+        console.error("findIssueRowByRef failed:", err.message);
+      }
+    }
 
     // Non-mention thread replies only matter in threads of issues we logged
     // (notes/photos). Anything else is other people's conversation — ignore.
