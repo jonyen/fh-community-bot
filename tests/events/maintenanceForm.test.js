@@ -78,7 +78,7 @@ describe("MaintenanceFormHandler", () => {
         text: expect.stringContaining("Logged your issue"),
       })
     );
-    const updateArg = mockClient.chat.update.mock.calls[0][0];
+    const updateArg = mockClient.chat.update.mock.calls.at(-1)[0];
     expect(updateArg.text).toContain("*Medium*");
     expect(updateArg.text).toContain("*Plumbing*");
     expect(updateArg.text).toContain("docs.google.com/spreadsheets/d/sheet-id");
@@ -87,13 +87,13 @@ describe("MaintenanceFormHandler", () => {
 
   it("ccs the facilities lead on Medium and Critical", async () => {
     await handler({ payload: makePayload(), client: mockClient });
-    expect(mockClient.chat.update.mock.calls[0][0].text).toContain("cc <@U0000000000>");
+    expect(mockClient.chat.update.mock.calls.at(-1)[0].text).toContain("cc <@U0000000000>");
 
     mockClient.chat.update.mockClear();
     const minor = makePayload();
     minor.state.values.issue_severity.severity.selected_option.value = "Minor";
     await handler({ payload: minor, client: mockClient });
-    expect(mockClient.chat.update.mock.calls[0][0].text).not.toContain("cc <@U0000000000>");
+    expect(mockClient.chat.update.mock.calls.at(-1)[0].text).not.toContain("cc <@U0000000000>");
   });
 
   it("prompts ephemerally when required fields are missing and keeps the form", async () => {
@@ -118,7 +118,7 @@ describe("MaintenanceFormHandler", () => {
     await handler({ payload: makePayload(), client: mockClient });
 
     expect(mockSheets.appendIssue).toHaveBeenCalled();
-    expect(mockClient.chat.update.mock.calls[0][0].text).toContain("related to issue #7");
+    expect(mockClient.chat.update.mock.calls.at(-1)[0].text).toContain("related to issue #7");
   });
 
   it("only checks recent issues for duplicates (7-day window)", async () => {
@@ -153,7 +153,6 @@ describe("MaintenanceFormHandler", () => {
 
     await handler({ payload: makePayload(), client: mockClient });
 
-    expect(mockClient.chat.update).not.toHaveBeenCalled();
     expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "C123",
@@ -199,6 +198,41 @@ describe("MaintenanceFormHandler", () => {
       })
     );
     expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+  });
+
+  it("strips the submit buttons before doing any slow work (double-click race)", async () => {
+    const order = [];
+    mockClient.chat.update.mockImplementation(async () => order.push("update"));
+    mockClient.users.info.mockImplementation(async () => {
+      order.push("users.info");
+      return { user: { real_name: "Test User", name: "testuser" } };
+    });
+    mockSheets.appendIssue.mockImplementation(async () => {
+      order.push("appendIssue");
+      return "5";
+    });
+
+    await handler({ payload: makePayload(), client: mockClient });
+
+    // First chat.update must land before any Slack/Sheets round-trips.
+    expect(order[0]).toBe("update");
+    const placeholder = mockClient.chat.update.mock.calls[0][0];
+    expect(placeholder).toMatchObject({ channel: "C123", ts: "100.2" });
+    const blockIds = (placeholder.blocks || []).map((b) => b.block_id);
+    expect(blockIds).not.toContain("submit_actions");
+  });
+
+  it("restores the form when the sheet write fails so the user can retry", async () => {
+    mockSheets.appendIssue.mockRejectedValue(new Error("boom"));
+    const payload = makePayload();
+
+    await handler({ payload, client: mockClient });
+
+    const lastUpdate = mockClient.chat.update.mock.calls.at(-1)[0];
+    expect(lastUpdate.blocks).toBe(payload.message.blocks);
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Couldn't log this issue") })
+    );
   });
 
   it("ignores a late duplicate submit (form already replaced)", async () => {
