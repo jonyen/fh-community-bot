@@ -31,6 +31,7 @@ describe("MaintenanceFormHandler", () => {
   let handler;
 
   beforeEach(() => {
+    process.env.ESCALATION_USER_ID = "U0000000000";
     mockSheets = {
       getOpenIssues: vi.fn().mockResolvedValue([]),
       appendIssue: vi.fn().mockResolvedValue("5"),

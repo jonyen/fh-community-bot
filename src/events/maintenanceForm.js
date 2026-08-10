@@ -150,8 +150,11 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       text += `\nThis might be related to issue #${duplicate.id}.`;
     }
     text += `\n\nFeel free to add more details in this thread and I'll include them in the notes.`;
-    if (severity === "Medium" || severity === "Critical") {
-      text += `\n\ncc <@U0000000000>`;
+    // Escalation contact for Medium/Critical issues. Set ESCALATION_USER_ID in
+    // the environment; without it the cc line is simply omitted.
+    const escalationUser = process.env.ESCALATION_USER_ID;
+    if (escalationUser && (severity === "Medium" || severity === "Critical")) {
+      text += `\n\ncc <@${escalationUser}>`;
     }
 
     try {

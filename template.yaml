@@ -9,6 +9,7 @@ Parameters:
   GoogleSheetId:        { Type: String }
   GenderSheetId:        { Type: String, Default: "" }
   ReservationsSheetId:  { Type: String, Default: "" }
+  EscalationUserId:     { Type: String, Default: "" }
   # ReservationRooms / ResourceCalendars / VenueCalendars are NOT parameters —
   # they exceed the 4096-char CFN parameter limit. They ship as bundled files
   # under runtime-config/ (written by the deploy workflow) and config.js reads
@@ -88,6 +89,7 @@ Resources:
           GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
           GROQ_API_KEY:           !Ref GroqApiKey
           ONESTOP_INFO_TABS:     !Ref OneStopInfoTabs
+          ESCALATION_USER_ID:    !Ref EscalationUserId
       Events:
         FromQueue:
           Type: SQS

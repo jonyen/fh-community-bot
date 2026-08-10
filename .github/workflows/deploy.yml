@@ -87,6 +87,7 @@ jobs:
           RESERVATIONS_CHANNEL_ID: ${{ vars.RESERVATIONS_CHANNEL_ID }}
           ONESTOP_CHANNEL_ID: ${{ vars.ONESTOP_CHANNEL_ID }}
           ONESTOP_INFO_TABS: ${{ vars.ONESTOP_INFO_TABS }}
+          ESCALATION_USER_ID: ${{ vars.ESCALATION_USER_ID }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
@@ -105,6 +106,9 @@ jobs:
           fi
           if [ -n "$ONESTOP_INFO_TABS" ]; then
             OPTIONAL_PARAMS+=("OneStopInfoTabs=$ONESTOP_INFO_TABS")
+          fi
+          if [ -n "$ESCALATION_USER_ID" ]; then
+            OPTIONAL_PARAMS+=("EscalationUserId=$ESCALATION_USER_ID")
           fi
           sam deploy \
             --no-confirm-changeset \
