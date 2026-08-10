@@ -114,3 +114,11 @@ aws sns subscribe \
       --query 'Stacks[0].Outputs[?OutputKey==`AlarmTopicArn`].OutputValue' --output text)" \
   --protocol email --notification-endpoint you@example.com
 ```
+
+## Deploy fails with an SNS or CloudWatch AccessDenied
+
+The deploy role needs SNS and CloudWatch alarm/dashboard permissions beyond the
+Lambda and SQS ones. See the `observability` inline policy in
+[`aws-bootstrap.md`](aws-bootstrap.md). CloudFormation rolls the stack back on
+this failure, so the running bot is unaffected — reapply the policy and re-run
+the deploy.

@@ -41,7 +41,51 @@ Create an IAM role `fh-maintenance-bot-deploy` with:
 }
 ```
 
-**Permissions:** for a first pass, attach `AWSCloudFormationFullAccess`, `AmazonSQSFullAccess`, `AWSLambda_FullAccess`, `IAMFullAccess`, `CloudWatchLogsFullAccess`, `AmazonS3FullAccess`. Tighten later.
+**Permissions:** for a first pass, attach `AWSCloudFormationFullAccess`,
+`AmazonSQSFullAccess`, `AWSLambda_FullAccess`, `IAMFullAccess`,
+`CloudWatchLogsFullAccess`, `AmazonS3FullAccess`. Tighten later.
+
+The stack also creates an SNS topic, four CloudWatch alarms, and a dashboard,
+none of which the policies above cover — `CloudWatchLogsFullAccess` grants
+Logs, not alarms or dashboards. Without the following the deploy fails with
+`SNS:GetTopicAttributes ... no identity-based policy allows`, and CloudFormation
+rolls the whole stack back. Add it as an inline policy on the deploy role:
+
+```bash
+aws iam put-role-policy --role-name <DEPLOY_ROLE> \
+  --policy-name observability --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AlarmTopicLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic", "sns:DeleteTopic", "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes", "sns:Subscribe", "sns:Unsubscribe",
+        "sns:ListSubscriptionsByTopic", "sns:GetSubscriptionAttributes",
+        "sns:TagResource", "sns:UntagResource", "sns:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:sns:<REGION>:<ACCOUNT_ID>:fh-community-alarms"
+    },
+    {
+      "Sid": "AlarmsAndDashboard",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms", "cloudwatch:EnableAlarmActions",
+        "cloudwatch:DisableAlarmActions", "cloudwatch:TagResource",
+        "cloudwatch:UntagResource", "cloudwatch:ListTagsForResource",
+        "cloudwatch:PutDashboard", "cloudwatch:DeleteDashboards",
+        "cloudwatch:GetDashboard", "cloudwatch:ListDashboards"
+      ],
+      "Resource": "*"
+    }
+  ]
+}'
+```
+
+`DescribeAlarms`, `ListDashboards`, and `GetDashboard` do not support
+resource-level permissions, which is why that statement is `*`.
 
 Record the role ARN.
 
