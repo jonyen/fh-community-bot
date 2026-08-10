@@ -10,3 +10,12 @@ google-auth-url.txt
 .claire/
 .claude/worktrees/
 .superpowers/
+
+# Service account keys and other credential material — never commit.
+# A GCP service account JSON was published from this repo once already.
+*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].json
+*service-account*.json
+*serviceaccount*.json
+*credentials*.json
+*.pem
+*.p12
