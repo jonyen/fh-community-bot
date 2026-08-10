@@ -10,6 +10,7 @@ Parameters:
   GenderSheetId:        { Type: String, Default: "" }
   ReservationsSheetId:  { Type: String, Default: "" }
   EscalationUserId:     { Type: String, Default: "" }
+  AlarmChannel:         { Type: String, Default: "" }
   # ReservationRooms / ResourceCalendars / VenueCalendars are NOT parameters —
   # they exceed the 4096-char CFN parameter limit. They ship as bundled files
   # under runtime-config/ (written by the deploy workflow) and config.js reads
@@ -103,6 +104,187 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${WorkerFn}
       RetentionInDays: 14
 
+  # ---------------------------------------------------------------------------
+  # Observability
+  #
+  # Alarms publish to SNS; a dedicated Lambda relays them to Slack. The alert
+  # path deliberately avoids the bot's own code path, because the alarms worth
+  # having are the ones firing because the bot is broken. Subscribe an email
+  # address to AlarmTopic for a path that survives a Slack outage.
+  # ---------------------------------------------------------------------------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: fh-community-alarms
+      DisplayName: fh-community-bot alarms
+
+  AlarmNotifierFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/alarmNotifier.handler
+      Description: Relays CloudWatch alarm state changes into Slack
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN: !Ref SlackBotToken
+          ALARM_CHANNEL:   !Ref AlarmChannel
+      Events:
+        Alarms:
+          Type: SNS
+          Properties:
+            Topic: !Ref AlarmTopic
+
+  # The most important alarm here. Messages reach the DLQ only after
+  # maxReceiveCount 3, so anything landing has already failed three times and
+  # will not retry itself — a report is sitting unlogged and nobody knows.
+  DLQNotEmptyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-dlq-not-empty
+      AlarmDescription: >-
+        Messages are in the dead letter queue. Each one is a Slack event that
+        failed three times and will not be retried. See docs/RUNBOOK.md for the
+        redrive procedure.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt EventDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # Backlog rather than failure: the worker is keeping up or it is not.
+  QueueBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-queue-backlog
+      AlarmDescription: >-
+        Events have been waiting over five minutes. Someone filed a report and
+        is still looking at an unanswered form.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt EventQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  IssueFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-issue-write-failed
+      AlarmDescription: >-
+        An issue report could not be written to the Sheet. The reporter was
+        told to try again, so the report is lost unless they do.
+      Namespace: FhCommunityBot
+      MetricName: IssueFailed
+      Dimensions:
+        - Name: Flow
+          Value: maintenanceForm
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  ReceiverLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-receiver-slow
+      AlarmDescription: >-
+        Receiver p99 is approaching Slack's 3s deadline. Past it Slack retries
+        the delivery, which produces duplicate events.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ReceiverFn
+      ExtendedStatistic: p99
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: fh-community-bot
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric", "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Issues logged vs failed",
+                "region": "${AWS::Region}",
+                "stat": "Sum", "period": 86400,
+                "metrics": [
+                  [ "FhCommunityBot", "IssueLogged", "Flow", "maintenanceForm" ],
+                  [ ".", "IssueFailed", ".", "." ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Queue depth and DLQ",
+                "region": "${AWS::Region}",
+                "stat": "Maximum", "period": 300,
+                "metrics": [
+                  [ "AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${EventQueue.QueueName}" ],
+                  [ "...", "${EventDLQ.QueueName}" ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Receiver latency against Slack's 3s deadline",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": { "left": { "min": 0 } },
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ReceiverFn}", { "stat": "p50" } ],
+                  [ "...", { "stat": "p99" } ]
+                ],
+                "annotations": { "horizontal": [ { "label": "Slack deadline", "value": 3000 } ] }
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Worker throughput and sheet write latency",
+                "region": "${AWS::Region}",
+                "period": 3600,
+                "metrics": [
+                  [ "FhCommunityBot", "EventProcessed", "Lambda", "worker", { "stat": "Sum" } ],
+                  [ ".", "EventFailed", ".", ".", { "stat": "Sum" } ],
+                  [ ".", "SheetWriteMs", "Flow", "maintenanceForm", { "stat": "p99", "yAxis": "right" } ]
+                ]
+              }
+            }
+          ]
+        }
+
 Outputs:
   FunctionUrl:
     Description: Paste this into the Slack app Event Subscriptions → Request URL
@@ -111,3 +293,8 @@ Outputs:
     Value: !Ref EventQueue
   EventDLQUrl:
     Value: !Ref EventDLQ
+  AlarmTopicArn:
+    Description: Subscribe an email address here for an alert path independent of Slack
+    Value: !Ref AlarmTopic
+  DashboardUrl:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=fh-community-bot

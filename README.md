@@ -154,6 +154,36 @@ Before the gender feature works in production, update the Slack app config:
 - **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
 - Invite the bot to each channel where these triggers should work.
 
+## Observability
+
+**SLO: 99.5% of submitted issue reports reach the Google Sheet, monthly.**
+
+The SLI is the `FhCommunityBot/IssueLogged` metric rather than Lambda success —
+a worker that completes without writing a row is a failure by this definition,
+because somebody filed an issue and nobody will see it.
+
+- **Structured logs.** One JSON object per line. Every line from a Slack event
+  carries the same `correlationId` (the SQS message id), which survives a DLQ
+  redrive, so a replayed message logs under the same id as its first attempt.
+- **Metrics** via CloudWatch Embedded Metric Format — carried inside the log
+  line, so no `PutMetricData` call, no latency on the request path, no
+  per-metric cost.
+- **Alarms** publish to the `fh-community-alarms` SNS topic, relayed to Slack by
+  a dedicated Lambda that deliberately avoids the bot's own code path.
+  Subscribe an email address to the same topic for a path that survives a Slack
+  outage.
+- **Dashboard** `fh-community-bot`, defined in `template.yaml`.
+
+| Alarm | Fires when |
+| --- | --- |
+| `dlq-not-empty` | Events failed 3× and landed in the DLQ |
+| `queue-backlog` | Oldest event waiting over 5 minutes |
+| `issue-write-failed` | An issue could not be written to the Sheet |
+| `receiver-slow` | Receiver p99 above 2s against Slack's 3s deadline |
+
+See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for diagnosis steps and the DLQ
+redrive procedure.
+
 ## Project structure
 
 ```

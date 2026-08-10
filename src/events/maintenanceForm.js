@@ -1,4 +1,7 @@
 import { extractFormValues, SUBMIT_ACTION_ID, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
+import { log, metric } from "../lib/logger.js";
+
+const DIMENSIONS = { Flow: "maintenanceForm" };
 
 export function createMaintenanceFormHandler({ sheetsService, dedupService, photoService, spreadsheetId }) {
   async function collectRootPhotos(client, channel, threadTs) {
@@ -109,6 +112,7 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
 
     const photos = await collectRootPhotos(client, channel, payload.message?.thread_ts);
 
+    const appendStartedAt = Date.now();
     try {
       await sheetsService.appendIssue({
         reporter: reporterName,
@@ -118,8 +122,17 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
         slackRef: threadTs,
         ...(photos.length ? { photos } : {}),
       });
+      // The SLI. An issue only counts as reported once it is in the sheet —
+      // the Lambda succeeding says nothing about whether facilities will see it.
+      metric("IssueLogged", 1, { dimensions: DIMENSIONS, fields: { severity, type } });
+      metric("SheetWriteMs", Date.now() - appendStartedAt, {
+        unit: "Milliseconds",
+        dimensions: DIMENSIONS,
+      });
+      log.info("issue logged", { severity, type, photos: photos.length });
     } catch (err) {
-      console.error("appendIssue failed:", err.message);
+      metric("IssueFailed", 1, { dimensions: DIMENSIONS });
+      log.error("appendIssue failed", { error: err, severity, type });
       // Put the form back (we replaced it with the placeholder) so the user
       // can hit Submit again once the sheet is reachable.
       try {
