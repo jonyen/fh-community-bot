@@ -21,7 +21,7 @@ function selectOptions(values) {
   }));
 }
 
-export function buildMaintenanceFormBlocks(initialDescription, duplicate) {
+export function buildMaintenanceFormBlocks(initialDescription, duplicate, reporterId) {
   const descriptionElement = {
     type: "plain_text_input",
     action_id: "description",
@@ -34,7 +34,7 @@ export function buildMaintenanceFormBlocks(initialDescription, duplicate) {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "Thanks for reporting an issue! Please fill out the details below and hit Submit.",
+        text: `Thanks for reporting an issue${reporterId ? `, <@${reporterId}>` : ""}! Please fill out the details below and hit Submit.`,
       },
     },
     ...(duplicate
