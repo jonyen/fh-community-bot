@@ -220,7 +220,7 @@ export function createMentionHandler({ sheetsService, dedupService, channelIds, 
 
     await say({
       text: "Report a maintenance issue",
-      blocks: buildMaintenanceFormBlocks(description, duplicate),
+      blocks: buildMaintenanceFormBlocks(description, duplicate, event.user),
       thread_ts: threadKey,
     });
   };

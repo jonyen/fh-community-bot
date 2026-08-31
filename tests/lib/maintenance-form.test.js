@@ -15,6 +15,16 @@ describe("buildMaintenanceFormBlocks", () => {
     expect(blocks[0].text.text).toMatch(/thanks for reporting/i);
   });
 
+  it("mentions the reporter in the intro when a reporter id is passed", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking", null, "U12345");
+    expect(blocks[0].text.text).toContain("Thanks for reporting an issue, <@U12345>!");
+  });
+
+  it("keeps the plain intro when no reporter id is passed", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking");
+    expect(blocks[0].text.text).toContain("Thanks for reporting an issue!");
+  });
+
   it("shows a duplicate warning block when a possible duplicate is passed", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking", {
       id: "7",
