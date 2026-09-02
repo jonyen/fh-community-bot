@@ -147,3 +147,97 @@ describe("answerInfoQuestion", () => {
     expect(await svc.answerInfoQuestion("q", "corpus")).toBe("Can't reach OneStop right now.");
   });
 });
+
+describe("classifyIssueReport", () => {
+  const LISTS = {
+    types: ["Lighting", "Elevator", "Pest Control", "Electrical", "Plumbing", "HVAC", "Janitorial", "Other"],
+    severities: ["Minor", "Medium", "Critical"],
+  };
+
+  function svcWith(content) {
+    return createGroqService({
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({ choices: [{ message: { content } }] }),
+        },
+      },
+    });
+  }
+
+  it("returns the type and severity the model picked", async () => {
+    const svc = svcWith('{"type": "Plumbing", "severity": "Critical"}');
+    expect(await svc.classifyIssueReport("sewage backing up", LISTS)).toEqual({
+      type: "Plumbing",
+      severity: "Critical",
+    });
+  });
+
+  it("keeps a null the model returned for a field it could not place", async () => {
+    const svc = svcWith('{"type": "Lighting", "severity": null}');
+    expect(await svc.classifyIssueReport("hallway light is out", LISTS)).toEqual({
+      type: "Lighting",
+      severity: null,
+    });
+  });
+
+  it("digs the JSON out of a chatty reply", async () => {
+    const svc = svcWith('Here you go:\n{"type": "HVAC", "severity": "Medium"}\nHope that helps!');
+    expect(await svc.classifyIssueReport("AC is out", LISTS)).toEqual({
+      type: "HVAC",
+      severity: "Medium",
+    });
+  });
+
+  it("matches the offered labels case-insensitively", async () => {
+    const svc = svcWith('{"type": "plumbing", "severity": "critical"}');
+    expect(await svc.classifyIssueReport("burst pipe", LISTS)).toEqual({
+      type: "Plumbing",
+      severity: "Critical",
+    });
+  });
+
+  it("drops a label the form does not offer", async () => {
+    const svc = svcWith('{"type": "Roofing", "severity": "Catastrophic"}');
+    expect(await svc.classifyIssueReport("roof is leaking", LISTS)).toEqual({
+      type: null,
+      severity: null,
+    });
+  });
+
+  it("returns null when the model answers with no JSON at all", async () => {
+    const svc = svcWith("I am not sure what this is about.");
+    expect(await svc.classifyIssueReport("???", LISTS)).toBeNull();
+  });
+
+  it("returns null when the JSON is malformed", async () => {
+    const svc = svcWith('{"type": "Plumbing", "severity":}');
+    expect(await svc.classifyIssueReport("sink", LISTS)).toBeNull();
+  });
+
+  it("returns null when the API fails, so the caller can fall back", async () => {
+    const svc = createGroqService({
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("API down")) } },
+    });
+    expect(await svc.classifyIssueReport("sink leaking", LISTS)).toBeNull();
+  });
+
+  it("does not call the model for empty text", async () => {
+    const create = vi.fn();
+    const svc = createGroqService({ chat: { completions: { create } } });
+    expect(await svc.classifyIssueReport("   ", LISTS)).toEqual({ type: null, severity: null });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("sends the allowed labels along with the report", async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValue({ choices: [{ message: { content: '{"type":null,"severity":null}' } }] });
+    const svc = createGroqService({ chat: { completions: { create } } });
+    await svc.classifyIssueReport("the elevator is grinding", LISTS);
+
+    const userMessage = create.mock.calls[0][0].messages.at(-1).content;
+    expect(userMessage).toContain("Pest Control");
+    expect(userMessage).toContain("Critical");
+    expect(userMessage).toContain("the elevator is grinding");
+  });
+});

@@ -5,7 +5,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 ## Features
 
 - **Issue reporting** via Slack @mentions — the bot replies with an in-thread form (description, issue type: Lighting / Elevator / Pest Control / Electrical / Plumbing / HVAC / Janitorial / Other, severity: Minor / Medium / Critical); submission is logged to Google Sheets
-- **Form pre-fill** — the description, and where the wording is unambiguous the type and severity, are parsed out of the @mention itself; an ambiguous report leaves those dropdowns empty rather than guessing wrong
+- **Form pre-fill** — the description comes straight from the @mention, and the type and severity are read out of it by the LLM; a report the model won't commit on leaves those dropdowns empty rather than guessing wrong. Falls back to a keyword table when the model is unreachable
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
@@ -45,7 +45,12 @@ idempotency key.
 - GitHub Actions + OIDC for deploys
 - [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
 - [Google Sheets API](https://developers.google.com/sheets/api)
-- [Groq](https://groq.com/) (Llama 3.3 70B)
+- [Groq](https://groq.com/) (Llama 3.3 70B) — duplicate detection, reservation
+  parsing, and form pre-fill. The pre-fill call goes through
+  `createIssueClassifierService`, which depends only on a
+  `classifyIssueReport(text, { types, severities })` method: pointing it at
+  another provider means writing that one method in a new service and swapping
+  the argument in `src/lambda/clients.js`.
 
 ## Setup
 

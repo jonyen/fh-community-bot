@@ -15,6 +15,7 @@ describe("MentionHandler", () => {
   let mockClient;
 
   let mockDedup;
+  let mockClassifier;
 
   beforeEach(() => {
     mockSheets = {
@@ -26,6 +27,9 @@ describe("MentionHandler", () => {
       findIssueRowByRef: vi.fn().mockResolvedValue(null),
     };
     mockDedup = { findDuplicate: vi.fn().mockResolvedValue(null) };
+    mockClassifier = {
+      classify: vi.fn().mockResolvedValue({ type: null, severity: null }),
+    };
     mockSay = vi.fn().mockResolvedValue({});
     mockClient = {
       reactions: { add: vi.fn().mockResolvedValue({}) },
@@ -33,6 +37,7 @@ describe("MentionHandler", () => {
     handler = createMentionHandler({
       sheetsService: mockSheets,
       dedupService: mockDedup,
+      issueClassifier: mockClassifier,
       channelIds: new Set(["C123"]),
       spreadsheetId: "sheet-id",
     });
@@ -65,7 +70,9 @@ describe("MentionHandler", () => {
     expect(submit.elements[0].action_id).toBe(SUBMIT_ACTION_ID);
   });
 
-  it("pre-selects type and severity parsed out of the mention", async () => {
+  it("pre-selects the type and severity the classifier read out of the mention", async () => {
+    mockClassifier.classify.mockResolvedValue({ type: "Plumbing", severity: "Critical" });
+
     await handler({
       event: {
         channel: "C123",
@@ -77,6 +84,10 @@ describe("MentionHandler", () => {
       client: mockClient,
     });
 
+    // Classified on the report text, with the @mention stripped out.
+    expect(mockClassifier.classify).toHaveBeenCalledWith(
+      "the toilet on 2 is clogged, this is urgent"
+    );
     const blocks = mockSay.mock.calls[0][0].blocks;
     expect(blocks.find((b) => b.block_id === "issue_type").element.initial_option.value).toBe(
       "Plumbing"
@@ -86,7 +97,9 @@ describe("MentionHandler", () => {
     ).toBe("Critical");
   });
 
-  it("leaves the selects empty when the mention doesn't say", async () => {
+  it("leaves the selects empty when the classifier won't commit", async () => {
+    mockClassifier.classify.mockResolvedValue({ type: null, severity: null });
+
     await handler({
       event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
       say: mockSay,
@@ -100,6 +113,75 @@ describe("MentionHandler", () => {
     expect(blocks.find((b) => b.block_id === "issue_severity").element).not.toHaveProperty(
       "initial_option"
     );
+  });
+
+  it("still posts the form when the classifier blows up", async () => {
+    mockClassifier.classify.mockRejectedValue(new Error("groq down"));
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> sink leaking", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    const blocks = mockSay.mock.calls[0][0].blocks;
+    expect(blocks.find((b) => b.block_id === "issue_description").element.initial_value).toBe(
+      "sink leaking"
+    );
+    expect(blocks.find((b) => b.block_id === "issue_type").element).not.toHaveProperty(
+      "initial_option"
+    );
+  });
+
+  it("classifies without a classifier wired in, using the keyword fallback", async () => {
+    const bare = createMentionHandler({
+      sheetsService: mockSheets,
+      dedupService: mockDedup,
+      channelIds: new Set(["C123"]),
+      spreadsheetId: "sheet-id",
+    });
+
+    await bare({
+      event: { channel: "C123", text: "<@U_BOT> roaches in the kitchen", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(
+      mockSay.mock.calls[0][0].blocks.find((b) => b.block_id === "issue_type").element
+        .initial_option.value
+    ).toBe("Pest Control");
+  });
+
+  it("runs the dedup check and the classifier together, not one after the other", async () => {
+    // Assert after the handler returns, not inside the mock: the handler
+    // catches classifier failures, so a throw in there would be swallowed and
+    // this test would pass against sequential code.
+    let dedupSettled = false;
+    let classifierStartedBeforeDedupSettled = null;
+
+    mockDedup.findDuplicate.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            dedupSettled = true;
+            resolve(null);
+          }, 20)
+        )
+    );
+    mockClassifier.classify.mockImplementation(async () => {
+      classifierStartedBeforeDedupSettled = !dedupSettled;
+      return { type: null, severity: null };
+    });
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> sink leaking", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(classifierStartedBeforeDedupSettled).toBe(true);
+    expect(mockSay).toHaveBeenCalled();
   });
 
   it("lists a possible duplicate in the form when one matches", async () => {

@@ -32,7 +32,7 @@ function findMatchingIssues(description, openIssues) {
   return scored;
 }
 
-export function createMentionHandler({ sheetsService, dedupService, channelIds, spreadsheetId, photoService }) {
+export function createMentionHandler({ sheetsService, dedupService, issueClassifier, channelIds, spreadsheetId, photoService }) {
   async function collectPhotos(files) {
     if (!photoService || !files || files.length === 0) return [];
     try {
@@ -199,8 +199,8 @@ export function createMentionHandler({ sheetsService, dedupService, channelIds, 
     // (src/events/maintenanceForm.js) — the form message itself carries all state.
     // Warn-only dedup check against the last 7 days of open issues so the
     // reporter can bail out before filling in the form.
-    let duplicate = null;
-    if (description && dedupService) {
+    async function checkForDuplicate() {
+      if (!description || !dedupService) return null;
       try {
         const openIssues = await sheetsService.getOpenIssues();
         const sevenDaysAgo = new Date();
@@ -210,20 +210,36 @@ export function createMentionHandler({ sheetsService, dedupService, channelIds, 
           return !isNaN(parsed) && parsed >= sevenDaysAgo;
         });
         const match = await dedupService.findDuplicate(description, recentIssues);
-        if (match) {
-          const issue = recentIssues.find((i) => i.id === match.id);
-          if (issue) duplicate = { id: issue.id, description: issue.description };
-        }
+        if (!match) return null;
+        const issue = recentIssues.find((i) => i.id === match.id);
+        return issue ? { id: issue.id, description: issue.description } : null;
       } catch (err) {
         console.error("form dedup check failed:", err.message);
+        return null;
       }
     }
 
-    // Pre-fill type/severity when the report says so plainly. classifyIssue
-    // returns nulls whenever the wording is ambiguous, which leaves those
-    // dropdowns empty rather than putting a wrong answer in front of the
-    // reporter — the submit path still requires both to be set.
-    const prefill = classifyIssue(description);
+    // Ask the model for the type and severity. It answers with a null for
+    // anything the report doesn't make clear, which leaves that dropdown empty
+    // rather than putting a wrong answer in front of the reporter — the submit
+    // path still requires both to be set.
+    async function classifyForPrefill() {
+      if (!issueClassifier) return classifyIssue(description);
+      try {
+        return await issueClassifier.classify(description);
+      } catch (err) {
+        console.error("form classification failed:", err.message);
+        return { type: null, severity: null };
+      }
+    }
+
+    // Both are model round-trips over the same sentence, and the form can't be
+    // posted until both are back — so start them together rather than paying
+    // for them one after the other.
+    const [duplicate, prefill] = await Promise.all([
+      checkForDuplicate(),
+      classifyForPrefill(),
+    ]);
 
     await say({
       text: "Report a maintenance issue",

@@ -7,6 +7,7 @@ import { createDriveService } from "../services/drive.js";
 import { createPhotoService } from "../lib/photos.js";
 import { createGroqService } from "../services/groq.js";
 import { createDedupService } from "../services/dedup.js";
+import { createIssueClassifierService } from "../services/issueClassifier.js";
 import { createMentionHandler } from "../events/mention.js";
 import { createMaintenanceFormHandler } from "../events/maintenanceForm.js";
 import { createGenderMapService } from "../services/genderMap.js";
@@ -48,10 +49,14 @@ export function getDeps() {
   });
   const groqService = createGroqService(groqClient);
   const dedupService = createDedupService(groqService);
+  // Swapping the model provider means handing this a different service that
+  // implements classifyIssueReport — nothing downstream of it changes.
+  const issueClassifier = createIssueClassifierService(groqService);
 
   const handler = createMentionHandler({
     sheetsService,
     dedupService,
+    issueClassifier,
     channelIds: config.slackChannelIds,
     spreadsheetId: config.googleSheetId,
     photoService,
