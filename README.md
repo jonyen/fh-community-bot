@@ -5,6 +5,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 ## Features
 
 - **Issue reporting** via Slack @mentions — the bot replies with an in-thread form (description, issue type: Lighting / Elevator / Pest Control / Electrical / Plumbing / HVAC / Janitorial / Other, severity: Minor / Medium / Critical); submission is logged to Google Sheets
+- **Form pre-fill** — the description, and where the wording is unambiguous the type and severity, are parsed out of the @mention itself; an ambiguous report leaves those dropdowns empty rather than guessing wrong
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
@@ -28,6 +29,14 @@ avoids this entirely: the in-thread form message carries its own state, and the
 `block_actions` payload Slack sends on Submit contains every field value. The
 same endpoint receives both Events API posts and interactivity payloads
 (enable **Interactivity** in the Slack app config with the same Request URL).
+
+Slack redelivers a payload up to three times when it doesn't get a response
+within those 3 seconds, which a cold start can miss. Duplicates are suppressed
+in two places: the receiver acks but doesn't re-enqueue a retry whose
+`X-Slack-Retry-Reason` is `http_timeout` (we did get it, we just answered
+late), and the submit path refuses to write a second sheet row for a thread
+that already has one — the hidden `SLACK_REF` column makes the thread ts the
+idempotency key.
 
 ## Tech Stack
 

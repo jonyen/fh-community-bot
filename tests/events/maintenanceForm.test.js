@@ -35,6 +35,7 @@ describe("MaintenanceFormHandler", () => {
     mockSheets = {
       getOpenIssues: vi.fn().mockResolvedValue([]),
       appendIssue: vi.fn().mockResolvedValue("5"),
+      findIssueRowByRef: vi.fn().mockResolvedValue(null),
     };
     mockDedup = { findDuplicate: vi.fn().mockResolvedValue(null) };
     mockPhotos = { collectPhotos: vi.fn().mockResolvedValue([]) };
@@ -105,6 +106,48 @@ describe("MaintenanceFormHandler", () => {
     expect(mockClient.chat.postEphemeral).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "C123", user: "U1", thread_ts: "100.1" })
     );
+  });
+
+  it("logs against the thread ts so a replay can be recognised", async () => {
+    await handler({ payload: makePayload(), client: mockClient });
+    expect(mockSheets.findIssueRowByRef).toHaveBeenCalledWith("100.1");
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ slackRef: "100.1" })
+    );
+  });
+
+  it("does not log a second row when this thread already has an issue", async () => {
+    mockSheets.findIssueRowByRef.mockResolvedValue("5");
+
+    await handler({ payload: makePayload(), client: mockClient });
+
+    expect(mockSheets.appendIssue).not.toHaveBeenCalled();
+    const updateArg = mockClient.chat.update.mock.calls.at(-1)[0];
+    expect(updateArg.ts).toBe("100.2");
+    expect(updateArg.text).toContain("Already logged");
+    expect(updateArg.text).toContain("#5");
+  });
+
+  it("logs once when the same submission is delivered twice", async () => {
+    // Slack redelivers the identical payload — form blocks and all — when our
+    // ack is late, so the message-snapshot guard can't tell the two apart.
+    mockSheets.findIssueRowByRef
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("5");
+
+    await handler({ payload: makePayload(), client: mockClient });
+    await handler({ payload: makePayload(), client: mockClient });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("still logs the issue when the replay lookup fails", async () => {
+    mockSheets.findIssueRowByRef.mockRejectedValue(new Error("sheets down"));
+
+    await handler({ payload: makePayload(), client: mockClient });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalled();
+    expect(mockClient.chat.update.mock.calls.at(-1)[0].text).toContain("Logged your issue");
   });
 
   it("warns about a possible duplicate but logs anyway", async () => {
