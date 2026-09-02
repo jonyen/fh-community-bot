@@ -257,3 +257,104 @@ describe("receiver.handler", () => {
     delete process.env.ONESTOP_CHANNEL_ID;
   });
 });
+
+describe("Slack retry handling", () => {
+  beforeEach(() => {
+    sendMock.mockReset();
+    sendMock.mockResolvedValue({});
+    process.env.SLACK_SIGNING_SECRET = SECRET;
+    process.env.EVENT_QUEUE_URL = "https://sqs.example/q";
+  });
+
+  function retryEvent(body, retryHeaders) {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const event = buildEvent({ body, timestamp: ts, signature: sign(body, ts) });
+    Object.assign(event.headers, retryHeaders);
+    return event;
+  }
+
+  const mentionBody = JSON.stringify({
+    type: "event_callback",
+    event: { type: "app_mention", channel: "C1", user: "U1", ts: "1.1", text: "<@U_BOT> sink leaking" },
+  });
+
+  const submitBody = new URLSearchParams({
+    payload: JSON.stringify({
+      type: "block_actions",
+      actions: [{ action_id: "submit_maintenance_form" }],
+    }),
+  }).toString();
+
+  it("acks a timed-out retry without enqueuing it again", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const res = await handler(
+      retryEvent(mentionBody, {
+        "x-slack-retry-num": "1",
+        "x-slack-retry-reason": "http_timeout",
+      })
+    );
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("drops the retry of a form submission too", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const event = retryEvent(submitBody, {
+      "x-slack-retry-num": "2",
+      "x-slack-retry-reason": "http_timeout",
+    });
+    event.headers["content-type"] = "application/x-www-form-urlencoded";
+    const res = await handler(event);
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("still enqueues a retry we never successfully handled", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    for (const reason of ["http_error", "connection_failed"]) {
+      sendMock.mockClear();
+      await handler(
+        retryEvent(mentionBody, {
+          "x-slack-retry-num": "1",
+          "x-slack-retry-reason": reason,
+        })
+      );
+      expect(sendMock, reason).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("enqueues a first delivery, retry headers absent", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    await handler(retryEvent(mentionBody, {}));
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the signature before honouring retry headers", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const event = buildEvent({ body: mentionBody, timestamp: ts, signature: "v0=bad" });
+    event.headers["x-slack-retry-num"] = "1";
+    const res = await handler(event);
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("isDuplicateSlackRetry", () => {
+  it("is false without a retry header", async () => {
+    const { isDuplicateSlackRetry } = await import("../../src/lambda/receiver.js");
+    expect(isDuplicateSlackRetry({})).toBe(false);
+    expect(isDuplicateSlackRetry(undefined)).toBe(false);
+  });
+
+  it("matches the header case-insensitively", async () => {
+    const { isDuplicateSlackRetry } = await import("../../src/lambda/receiver.js");
+    expect(
+      isDuplicateSlackRetry({ "X-Slack-Retry-Num": "1", "X-Slack-Retry-Reason": "http_timeout" })
+    ).toBe(true);
+  });
+
+  it("treats a retry with no stated reason as a duplicate", async () => {
+    const { isDuplicateSlackRetry } = await import("../../src/lambda/receiver.js");
+    expect(isDuplicateSlackRetry({ "x-slack-retry-num": "1" })).toBe(true);
+  });
+});

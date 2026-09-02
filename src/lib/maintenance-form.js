@@ -21,13 +21,48 @@ function selectOptions(values) {
   }));
 }
 
-export function buildMaintenanceFormBlocks(initialDescription, duplicate, reporterId) {
+// Slack requires initial_option to be one of the options by identity of value,
+// so build it from the same list rather than constructing a fresh object. An
+// unrecognised guess is dropped and the select comes up empty.
+function selectElement(actionId, values, placeholder, initialValue) {
+  const options = selectOptions(values);
+  const initialOption = options.find((o) => o.value === initialValue);
+  return {
+    type: "static_select",
+    action_id: actionId,
+    placeholder: { type: "plain_text", text: placeholder },
+    options,
+    ...(initialOption ? { initial_option: initialOption } : {}),
+  };
+}
+
+export function buildMaintenanceFormBlocks(
+  initialDescription,
+  duplicate,
+  reporterId,
+  prefill = {}
+) {
   const descriptionElement = {
     type: "plain_text_input",
     action_id: "description",
     multiline: true,
     ...(initialDescription ? { initial_value: initialDescription } : {}),
   };
+
+  const typeElement = selectElement("type", ISSUE_TYPES, "Select a type", prefill.type);
+  const severityElement = selectElement(
+    "severity",
+    SEVERITIES,
+    "Select severity",
+    prefill.severity
+  );
+
+  // Name the fields that were guessed, so a wrong guess reads as something to
+  // correct rather than as a value the reporter chose and forgot about.
+  const guessed = [
+    typeElement.initial_option ? "type" : null,
+    severityElement.initial_option ? "severity" : null,
+  ].filter(Boolean);
 
   return [
     {
@@ -49,6 +84,20 @@ export function buildMaintenanceFormBlocks(initialDescription, duplicate, report
           },
         ]
       : []),
+    ...(guessed.length
+      ? [
+          {
+            type: "context",
+            block_id: "prefill_note",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: `I guessed the ${guessed.join(" and ")} from your message — please correct ${guessed.length > 1 ? "them" : "it"} if I got ${guessed.length > 1 ? "them" : "it"} wrong.`,
+              },
+            ],
+          },
+        ]
+      : []),
     {
       type: "input",
       block_id: "issue_description",
@@ -59,23 +108,13 @@ export function buildMaintenanceFormBlocks(initialDescription, duplicate, report
       type: "input",
       block_id: "issue_type",
       label: { type: "plain_text", text: "Type" },
-      element: {
-        type: "static_select",
-        action_id: "type",
-        placeholder: { type: "plain_text", text: "Select a type" },
-        options: selectOptions(ISSUE_TYPES),
-      },
+      element: typeElement,
     },
     {
       type: "input",
       block_id: "issue_severity",
       label: { type: "plain_text", text: "Severity" },
-      element: {
-        type: "static_select",
-        action_id: "severity",
-        placeholder: { type: "plain_text", text: "Select severity" },
-        options: selectOptions(SEVERITIES),
-      },
+      element: severityElement,
     },
     {
       type: "actions",

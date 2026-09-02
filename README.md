@@ -5,6 +5,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 ## Features
 
 - **Issue reporting** via Slack @mentions — the bot replies with an in-thread form (description, issue type: Lighting / Elevator / Pest Control / Electrical / Plumbing / HVAC / Janitorial / Other, severity: Minor / Medium / Critical); submission is logged to Google Sheets
+- **Form pre-fill** — the description comes straight from the @mention, and the type and severity are read out of it by the LLM; a report the model won't commit on leaves those dropdowns empty rather than guessing wrong. Falls back to a keyword table when the model is unreachable
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
@@ -29,6 +30,14 @@ avoids this entirely: the in-thread form message carries its own state, and the
 same endpoint receives both Events API posts and interactivity payloads
 (enable **Interactivity** in the Slack app config with the same Request URL).
 
+Slack redelivers a payload up to three times when it doesn't get a response
+within those 3 seconds, which a cold start can miss. Duplicates are suppressed
+in two places: the receiver acks but doesn't re-enqueue a retry whose
+`X-Slack-Retry-Reason` is `http_timeout` (we did get it, we just answered
+late), and the submit path refuses to write a second sheet row for a thread
+that already has one — the hidden `SLACK_REF` column makes the thread ts the
+idempotency key.
+
 ## Tech Stack
 
 - AWS Lambda (Node 22, arm64), SQS, CloudWatch Logs
@@ -36,7 +45,12 @@ same endpoint receives both Events API posts and interactivity payloads
 - GitHub Actions + OIDC for deploys
 - [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
 - [Google Sheets API](https://developers.google.com/sheets/api)
-- [Groq](https://groq.com/) (Llama 3.3 70B)
+- [Groq](https://groq.com/) (Llama 3.3 70B) — duplicate detection, reservation
+  parsing, and form pre-fill. The pre-fill call goes through
+  `createIssueClassifierService`, which depends only on a
+  `classifyIssueReport(text, { types, severities })` method: pointing it at
+  another provider means writing that one method in a new service and swapping
+  the argument in `src/lambda/clients.js`.
 
 ## Setup
 

@@ -13,6 +13,24 @@ function getHeader(headers, name) {
   return undefined;
 }
 
+// Slack gives this endpoint 3 seconds to respond and redelivers the identical
+// payload up to three times when it doesn't hear back in time. A cold start
+// blows that budget easily, and every redelivery used to be enqueued as a
+// fresh event — which is how one @mention became three report forms in a
+// thread, and one Submit became three rows in the sheet.
+//
+// `http_timeout` means Slack reached us and we simply answered late: the
+// original invocation is still running and will enqueue, so the retry is a
+// duplicate and gets dropped. Any other reason (we returned an error, Slack
+// couldn't connect) means the first attempt may never have landed, so those
+// are still processed.
+export function isDuplicateSlackRetry(headers) {
+  const retryNum = getHeader(headers, "x-slack-retry-num");
+  if (!retryNum) return false;
+  const reason = (getHeader(headers, "x-slack-retry-reason") || "http_timeout").toLowerCase();
+  return reason === "http_timeout";
+}
+
 function readBody(event) {
   if (!event.body) return "";
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
@@ -64,6 +82,15 @@ export async function handler(event) {
   });
   if (!ok) {
     return { statusCode: 401, body: "invalid signature" };
+  }
+
+  // Ack (so Slack stops retrying) but don't enqueue — the first delivery of
+  // this same payload is already on the queue.
+  if (isDuplicateSlackRetry(event.headers)) {
+    console.log(
+      `[receiver] dropping Slack retry num=${getHeader(event.headers, "x-slack-retry-num")} reason=${getHeader(event.headers, "x-slack-retry-reason")}`
+    );
+    return { statusCode: 200, body: "" };
   }
 
   if (isFormEncoded(contentType)) {

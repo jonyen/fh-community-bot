@@ -87,6 +87,38 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       console.error("submitting-placeholder update failed:", err.message);
     }
 
+    // Second line of defence against a double-logged issue, for the replays the
+    // form-blocks guard above can't see: SQS is at-least-once, and a Slack
+    // redelivery carries a message snapshot that still has the submit buttons.
+    // A thread maps to exactly one issue everywhere else in this bot (notes and
+    // photos resolve thread -> row through SLACK_REF), so a row already
+    // carrying this thread ts means the report is in the sheet and this click
+    // is a replay.
+    try {
+      const existingRowId = await sheetsService.findIssueRowByRef(threadTs);
+      if (existingRowId) {
+        metric("IssueDuplicateSubmit", 1, { dimensions: DIMENSIONS });
+        log.info("duplicate submit ignored", { rowId: existingRowId });
+        const docLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+        const text = `Already logged this issue (#${existingRowId}). <${docLink}|View in Google Sheets>`;
+        try {
+          await client.chat.update({
+            channel,
+            ts: formTs,
+            text,
+            blocks: [{ type: "section", text: { type: "mrkdwn", text } }],
+          });
+        } catch (err) {
+          console.error("duplicate-submit update failed:", err.message);
+        }
+        return;
+      }
+    } catch (err) {
+      // Never let a failed lookup block a real report — worst case we are back
+      // to the behaviour we had before this check existed.
+      console.error("findIssueRowByRef failed:", err.message);
+    }
+
     let reporterName = userId;
     try {
       const userInfo = await client.users.info({ user: userId });
