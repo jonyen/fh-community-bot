@@ -98,6 +98,83 @@ describe("buildMaintenanceFormBlocks", () => {
     expect(description.element).not.toHaveProperty("initial_value");
   });
 
+  it("leaves both selects empty when nothing was guessed", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking");
+    const type = blocks.find((b) => b.block_id === "issue_type");
+    const severity = blocks.find((b) => b.block_id === "issue_severity");
+    expect(type.element).not.toHaveProperty("initial_option");
+    expect(severity.element).not.toHaveProperty("initial_option");
+    expect(blocks.find((b) => b.block_id === "prefill_note")).toBeUndefined();
+  });
+
+  it("pre-selects the guessed type and severity", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
+      type: "Plumbing",
+      severity: "Minor",
+    });
+
+    const type = blocks.find((b) => b.block_id === "issue_type");
+    expect(type.element.initial_option).toEqual({
+      text: { type: "plain_text", text: "Plumbing" },
+      value: "Plumbing",
+    });
+    // The initial option must be one of the offered options, or Slack rejects
+    // the block outright.
+    expect(type.element.options).toContainEqual(type.element.initial_option);
+
+    const severity = blocks.find((b) => b.block_id === "issue_severity");
+    expect(severity.element.initial_option.value).toBe("Minor");
+    expect(severity.element.options).toContainEqual(severity.element.initial_option);
+  });
+
+  it("pre-selects only the field that was guessed", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
+      type: "Plumbing",
+      severity: null,
+    });
+    expect(blocks.find((b) => b.block_id === "issue_type").element.initial_option.value).toBe(
+      "Plumbing"
+    );
+    expect(
+      blocks.find((b) => b.block_id === "issue_severity").element
+    ).not.toHaveProperty("initial_option");
+  });
+
+  it("ignores a guess that is not one of the offered options", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
+      type: "Roofing",
+      severity: "Catastrophic",
+    });
+    expect(blocks.find((b) => b.block_id === "issue_type").element).not.toHaveProperty(
+      "initial_option"
+    );
+    expect(blocks.find((b) => b.block_id === "issue_severity").element).not.toHaveProperty(
+      "initial_option"
+    );
+  });
+
+  it("flags the guessed fields so a wrong guess reads as correctable", () => {
+    const both = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
+      type: "Plumbing",
+      severity: "Minor",
+    }).find((b) => b.block_id === "prefill_note");
+    expect(both.type).toBe("context");
+    expect(both.elements[0].text).toContain("type and severity");
+
+    const oneField = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
+      type: "Plumbing",
+    }).find((b) => b.block_id === "prefill_note");
+    expect(oneField.elements[0].text).toContain("type");
+    expect(oneField.elements[0].text).not.toContain("severity");
+  });
+
+  it("keeps the prefill note above the inputs", () => {
+    const blocks = buildMaintenanceFormBlocks("sink leaking", null, "U1", { type: "Plumbing" });
+    expect(blocks.findIndex((b) => b.block_id === "prefill_note")).toBeLessThan(
+      blocks.findIndex((b) => b.block_id === "issue_description")
+    );
+  });
+
   it("offers the expected issue types in order", () => {
     expect(ISSUE_TYPES).toEqual([
       "Lighting", "Elevator", "Pest Control", "Electrical",

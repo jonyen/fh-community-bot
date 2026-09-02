@@ -65,6 +65,43 @@ describe("MentionHandler", () => {
     expect(submit.elements[0].action_id).toBe(SUBMIT_ACTION_ID);
   });
 
+  it("pre-selects type and severity parsed out of the mention", async () => {
+    await handler({
+      event: {
+        channel: "C123",
+        text: "<@U_BOT> the toilet on 2 is clogged, this is urgent",
+        user: "U1",
+        ts: "1",
+      },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    const blocks = mockSay.mock.calls[0][0].blocks;
+    expect(blocks.find((b) => b.block_id === "issue_type").element.initial_option.value).toBe(
+      "Plumbing"
+    );
+    expect(
+      blocks.find((b) => b.block_id === "issue_severity").element.initial_option.value
+    ).toBe("Critical");
+  });
+
+  it("leaves the selects empty when the mention doesn't say", async () => {
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> lobby printer jammed", user: "U1", ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    const blocks = mockSay.mock.calls[0][0].blocks;
+    expect(blocks.find((b) => b.block_id === "issue_type").element).not.toHaveProperty(
+      "initial_option"
+    );
+    expect(blocks.find((b) => b.block_id === "issue_severity").element).not.toHaveProperty(
+      "initial_option"
+    );
+  });
+
   it("lists a possible duplicate in the form when one matches", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
       { id: "7", description: "leak under the sink", date: recentDate(2), status: "Open" },

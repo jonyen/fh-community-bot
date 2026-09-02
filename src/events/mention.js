@@ -1,4 +1,5 @@
 import { buildMaintenanceFormBlocks } from "../lib/maintenance-form.js";
+import { classifyIssue } from "../lib/issue-classify.js";
 
 function stripMention(text) {
   return text.replace(/<@[A-Z0-9_]+>/g, "").trim();
@@ -218,9 +219,15 @@ export function createMentionHandler({ sheetsService, dedupService, channelIds, 
       }
     }
 
+    // Pre-fill type/severity when the report says so plainly. classifyIssue
+    // returns nulls whenever the wording is ambiguous, which leaves those
+    // dropdowns empty rather than putting a wrong answer in front of the
+    // reporter — the submit path still requires both to be set.
+    const prefill = classifyIssue(description);
+
     await say({
       text: "Report a maintenance issue",
-      blocks: buildMaintenanceFormBlocks(description, duplicate, event.user),
+      blocks: buildMaintenanceFormBlocks(description, duplicate, event.user, prefill),
       thread_ts: threadKey,
     });
   };
