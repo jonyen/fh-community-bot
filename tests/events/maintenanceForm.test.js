@@ -51,6 +51,10 @@ describe("MaintenanceFormHandler", () => {
         postMessage: vi.fn().mockResolvedValue({}),
         postEphemeral: vi.fn().mockResolvedValue({}),
         delete: vi.fn().mockResolvedValue({}),
+        getPermalink: vi.fn().mockResolvedValue({
+          ok: true,
+          permalink: "https://example.slack.com/archives/C123/p1002000000000000",
+        }),
       },
     };
     handler = createMaintenanceFormHandler({
@@ -70,6 +74,7 @@ describe("MaintenanceFormHandler", () => {
       severity: "Medium",
       type: "Plumbing",
       slackRef: "100.1",
+      slackLink: "https://example.slack.com/archives/C123/p1002000000000000",
     });
     expect(mockClient.chat.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -82,6 +87,29 @@ describe("MaintenanceFormHandler", () => {
     expect(updateArg.text).toContain("*Medium*");
     expect(updateArg.text).toContain("*Plumbing*");
     expect(updateArg.text).toContain("docs.google.com/spreadsheets/d/sheet-id");
+  });
+
+  it("records a permalink to the report thread alongside the issue", async () => {
+    await handler({ payload: makePayload(), client: mockClient });
+
+    expect(mockClient.chat.getPermalink).toHaveBeenCalledWith({
+      channel: "C123",
+      message_ts: "100.1",
+    });
+    expect(mockSheets.appendIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slackLink: "https://example.slack.com/archives/C123/p1002000000000000",
+      })
+    );
+  });
+
+  it("still logs the issue when the permalink lookup fails", async () => {
+    mockClient.chat.getPermalink.mockRejectedValue(new Error("channel_not_found"));
+
+    await handler({ payload: makePayload(), client: mockClient });
+
+    expect(mockSheets.appendIssue).toHaveBeenCalled();
+    expect(mockSheets.appendIssue.mock.calls[0][0]).not.toHaveProperty("slackLink");
   });
 
   it("ccs the facilities lead on Medium and Critical", async () => {

@@ -50,6 +50,7 @@ describe("SheetsService", () => {
           photos: "",
           type: "Structural",
           slackRef: "",
+          slackLink: "",
         },
       ]);
     });
@@ -86,12 +87,49 @@ describe("SheetsService", () => {
       });
       expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith({
         spreadsheetId: "sheet-id",
-        range: "'Maintenance Request'!A5:K5",
+        range: "'Maintenance Request'!A5:L5",
         valueInputOption: "USER_ENTERED",
         requestBody: {
-          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", "", "", "", ""]],
+          values: [[expect.any(String), "U789", "Water leak in bathroom", "", "=TODAY()-A5", "", "Need to Assign", "", "", "", "", ""]],
         },
       });
+    });
+
+    it("writes a link back to the Slack thread into column L", async () => {
+      await service.appendIssue({
+        reporter: "Test User",
+        description: "outlet cover popping out",
+        severity: "Minor",
+        type: "Electrical",
+        slackRef: "1788883645.693749",
+        slackLink: "https://example.slack.com/archives/C072CCD520K/p1788883645693749",
+      });
+
+      const call = mockSheets.spreadsheets.values.update.mock.calls[0][0];
+      expect(call.range).toBe("'Maintenance Request'!A5:L5");
+      expect(call.requestBody.values[0][11]).toBe(
+        "https://example.slack.com/archives/C072CCD520K/p1788883645693749"
+      );
+    });
+
+    it("writes the Slack ref as text so Sheets cannot round it into a number", async () => {
+      // Written plainly, USER_ENTERED parses "1788883645.693749" as a number
+      // and reads back as "1788883646" — which never matches the ts we look
+      // rows up by, so every thread reply and replay guard missed its row.
+      await service.appendIssue({
+        reporter: "Test User",
+        description: "outlet cover popping out",
+        slackRef: "1788883645.693749",
+      });
+
+      const call = mockSheets.spreadsheets.values.update.mock.calls[0][0];
+      expect(call.requestBody.values[0][10]).toBe("'1788883645.693749");
+    });
+
+    it("leaves the link cell empty when there is no permalink", async () => {
+      await service.appendIssue({ reporter: "Test User", description: "no link" });
+      const call = mockSheets.spreadsheets.values.update.mock.calls[0][0];
+      expect(call.requestBody.values[0][11]).toBe("");
     });
 
     it("writes photo links when photos are present", async () => {
@@ -107,11 +145,11 @@ describe("SheetsService", () => {
 
       expect(mockSheets.spreadsheets.values.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          range: "'Maintenance Request'!A5:K5",
+          range: "'Maintenance Request'!A5:L5",
           requestBody: {
             values: [[
               expect.any(String), "U789", "Water leak", "Medium", "=TODAY()-A5", "", "Need to Assign", "",
-              "https://drive.google.com/file/d/A/view\nhttps://drive.google.com/file/d/B/view", "", "",
+              "https://drive.google.com/file/d/A/view\nhttps://drive.google.com/file/d/B/view", "", "", "",
             ]],
           },
         })
@@ -127,9 +165,9 @@ describe("SheetsService", () => {
       });
 
       const updateCall = mockSheets.spreadsheets.values.update.mock.calls[0][0];
-      expect(updateCall.range).toBe("'Maintenance Request'!A5:K5");
+      expect(updateCall.range).toBe("'Maintenance Request'!A5:L5");
       const row = updateCall.requestBody.values[0];
-      expect(row).toHaveLength(11);
+      expect(row).toHaveLength(12);
       expect(row[9]).toBe("Plumbing");
     });
 
@@ -153,10 +191,11 @@ describe("SheetsService", () => {
       });
 
       const updateCall = mockSheets.spreadsheets.values.update.mock.calls[0][0];
-      expect(updateCall.range).toBe("'Maintenance Request'!A5:K5");
+      expect(updateCall.range).toBe("'Maintenance Request'!A5:L5");
       const row = updateCall.requestBody.values[0];
-      expect(row).toHaveLength(11);
-      expect(row[10]).toBe("1720000000.123456");
+      expect(row).toHaveLength(12);
+      // Apostrophe-prefixed so Sheets keeps the ts as text (see slackRefCell).
+      expect(row[10]).toBe("'1720000000.123456");
     });
 
     it("writes an empty SLACK_REF cell when slackRef is omitted", async () => {
@@ -182,6 +221,33 @@ describe("SheetsService", () => {
       });
 
       await expect(service.findIssueRowByRef("1720000000.222222")).resolves.toBe("6");
+    });
+
+    it("matches a legacy row whose ref was stored as a rounded number", async () => {
+      // Rows written before the ref was stored as text read back rounded to
+      // the second. Fall back to a to-the-second comparison so notes, photos
+      // and the duplicate-submit guard still find those rows.
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: {
+          values: [
+            ["9/8/2026", "Sarah Chu", "outlet cover", "", "", "", "Open", "", "", "", "1788883646"],
+          ],
+        },
+      });
+
+      await expect(service.findIssueRowByRef("1788883645.693749")).resolves.toBe("5");
+    });
+
+    it("does not match a legacy row more than a second away", async () => {
+      mockSheets.spreadsheets.values.get.mockResolvedValue({
+        data: {
+          values: [
+            ["9/8/2026", "Sarah Chu", "outlet cover", "", "", "", "Open", "", "", "", "1788883646"],
+          ],
+        },
+      });
+
+      await expect(service.findIssueRowByRef("1788883648.100000")).resolves.toBeNull();
     });
 
     it("returns null when no row matches", async () => {

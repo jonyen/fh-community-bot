@@ -1,10 +1,11 @@
 // Columns: A=DATE, B=SUBMITTER, C=ISSUE, D=PRIORITY, E=DAYS SINCE FILED, F=IN CHARGE, G=STATUS, H=NOTES, I=PHOTOS, J=TYPE,
 // K=SLACK_REF (hidden; thread ts of the report thread — the stable key for looking a row
-// back up after humans move/sort rows between the sheet's status sections)
+// back up after humans move/sort rows between the sheet's status sections),
+// L=SLACK LINK (permalink to the report thread, so a row can be opened in Slack)
 // Data starts at row 5 (rows 1-4 are headers/metadata)
 const SHEET_NAME = "Maintenance Request";
 const DATA_START_ROW = 5;
-const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:K`;
+const DATA_RANGE = `'${SHEET_NAME}'!A${DATA_START_ROW}:L`;
 
 function parseRow(row, rowIndex) {
   return {
@@ -20,12 +21,37 @@ function parseRow(row, rowIndex) {
     photos: row[8] || "",
     type: row[9] || "",
     slackRef: row[10] || "",
+    slackLink: row[11] || "",
   };
 }
 
 // Photos are stored as newline-separated Drive links (Sheets auto-linkifies
 // them). No =IMAGE() thumbnail: the org blocks public sharing, and IMAGE()
 // can only fetch publicly accessible URLs.
+// A ts written plainly is parsed by USER_ENTERED as a number: it comes back
+// rounded to the second ("1788883646"), so it never equals the ts we look rows
+// up by, and notes, photos and the duplicate-submit guard all missed their row.
+// A leading apostrophe forces Sheets to keep it as text; the apostrophe is not
+// part of the stored value and does not come back on read.
+function slackRefCell(slackRef) {
+  return slackRef ? `'${slackRef}` : "";
+}
+
+// Refs written before slackRefCell existed are numbers in the sheet and read
+// back rounded to a whole second, so an exact comparison can never match them.
+// Only those rounded cells get the to-the-second comparison — a cell that
+// still carries its fractional part is a text ref and must match exactly, or
+// two threads logged in the same second would resolve to each other's row.
+function refsMatch(cell, ref) {
+  if (!cell) return false;
+  if (cell === ref) return true;
+  if (cell.includes(".")) return false;
+  const cellNum = Number(cell);
+  const refNum = Number(ref);
+  if (!Number.isFinite(cellNum) || !Number.isFinite(refNum)) return false;
+  return Math.round(cellNum) === Math.round(refNum);
+}
+
 function photoLinksText(photos) {
   if (!photos || photos.length === 0) return "";
   return photos.map((p) => p.viewUrl).join("\n");
@@ -64,11 +90,11 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
   async function findIssueRowByRef(ref) {
     if (!ref) return null;
     const rows = await getAllRows();
-    const index = rows.findIndex((row) => (row[10] || "") === ref);
+    const index = rows.findIndex((row) => refsMatch(row[10] || "", ref));
     return index === -1 ? null : String(index + DATA_START_ROW);
   }
 
-  async function appendIssue({ reporter, description, severity, type, photos, slackRef }) {
+  async function appendIssue({ reporter, description, severity, type, photos, slackRef, slackLink }) {
     const today = new Date().toLocaleDateString("en-US");
     const sheetId = await getSheetId();
 
@@ -94,12 +120,12 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     // Write data into the newly inserted row
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:K${DATA_START_ROW}`,
+      range: `'${SHEET_NAME}'!A${DATA_START_ROW}:L${DATA_START_ROW}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [[
           today, reporter, description, severity || "", `=TODAY()-A${DATA_START_ROW}`, "", "Need to Assign", "",
-          photoLinksText(photos), type || "", slackRef || "",
+          photoLinksText(photos), type || "", slackRefCell(slackRef), slackLink || "",
         ]],
       },
     });
