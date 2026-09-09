@@ -10,13 +10,13 @@ function makePayload(overrides = {}) {
     message: {
       ts: "100.2",
       thread_ts: "100.1",
-      blocks: [{ block_id: "submit_actions", type: "actions" }],
+      blocks: [{ block_id: "submit_actions:100.1", type: "actions" }],
     },
     state: {
       values: {
-        issue_description: { description: { value: "sink leaking" } },
-        issue_type: { type: { selected_option: { value: "Plumbing" } } },
-        issue_severity: { severity: { selected_option: { value: "Medium" } } },
+        "issue_description:100.1": { description: { value: "sink leaking" } },
+        "issue_type:100.1": { type: { selected_option: { value: "Plumbing" } } },
+        "issue_severity:100.1": { severity: { selected_option: { value: "Medium" } } },
       },
     },
     ...overrides,
@@ -90,14 +90,14 @@ describe("MaintenanceFormHandler", () => {
 
     mockClient.chat.update.mockClear();
     const minor = makePayload();
-    minor.state.values.issue_severity.severity.selected_option.value = "Minor";
+    minor.state.values["issue_severity:100.1"].severity.selected_option.value = "Minor";
     await handler({ payload: minor, client: mockClient });
     expect(mockClient.chat.update.mock.calls.at(-1)[0].text).not.toContain("cc <@U0000000000>");
   });
 
   it("prompts ephemerally when required fields are missing and keeps the form", async () => {
     const payload = makePayload();
-    payload.state.values.issue_description.description.value = "   ";
+    payload.state.values["issue_description:100.1"].description.value = "   ";
 
     await handler({ payload, client: mockClient });
 
@@ -259,8 +259,8 @@ describe("MaintenanceFormHandler", () => {
     expect(order[0]).toBe("update");
     const placeholder = mockClient.chat.update.mock.calls[0][0];
     expect(placeholder).toMatchObject({ channel: "C123", ts: "100.2" });
-    const blockIds = (placeholder.blocks || []).map((b) => b.block_id);
-    expect(blockIds).not.toContain("submit_actions");
+    const blockIds = (placeholder.blocks || []).map((b) => b.block_id || "");
+    expect(blockIds.some((id) => id.startsWith("submit_actions"))).toBe(false);
   });
 
   it("restores the form when the sheet write fails so the user can retry", async () => {
