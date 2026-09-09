@@ -243,7 +243,9 @@ export function createMentionHandler({ sheetsService, dedupService, issueClassif
 
     await say({
       text: "Report a maintenance issue",
-      blocks: buildMaintenanceFormBlocks(description, duplicate, event.user, prefill),
+      // Scope the form's block_ids to this mention so the Slack client cannot
+      // surface another form's typed-in state (see formBlockId).
+      blocks: buildMaintenanceFormBlocks(description, duplicate, event.user, prefill, event.ts),
       thread_ts: threadKey,
     });
   };

@@ -1,4 +1,4 @@
-import { extractFormValues, SUBMIT_ACTION_ID, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
+import { extractFormValues, findFormBlock, SUBMIT_ACTION_ID, CANCEL_ACTION_ID } from "../lib/maintenance-form.js";
 import { log, metric } from "../lib/logger.js";
 
 const DIMENSIONS = { Flow: "maintenanceForm" };
@@ -30,9 +30,7 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
 
     // A submit for a message whose form blocks are gone is a late duplicate
     // click — the first submit already replaced the form with a confirmation.
-    const stillHasForm = (payload.message?.blocks || []).some(
-      (b) => b.block_id === "submit_actions"
-    );
+    const stillHasForm = Boolean(findFormBlock(payload.message?.blocks, "submit_actions"));
     if (!stillHasForm) return;
 
     if (actionId === CANCEL_ACTION_ID) {

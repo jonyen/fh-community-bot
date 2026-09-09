@@ -14,6 +14,25 @@ export const ISSUE_TYPES = [
 
 export const SEVERITIES = ["Minor", "Medium", "Critical"];
 
+// Slack keys a message's input state by block_id, and that state outlives the
+// message: when two forms in one channel carried identical block_ids, the
+// client showed the previous report's description in the new form (a Sept 8
+// outlet report came up pre-filled with a Sept 4 "leak in cold storage").
+// Every block_id is therefore scoped to a per-form key — the mention ts —
+// and readers match on the prefix rather than the literal id.
+export function formBlockId(name, formKey) {
+  return `${name}:${formKey}`;
+}
+
+export function isFormBlock(block, name) {
+  const id = block?.block_id || "";
+  return id === name || id.startsWith(`${name}:`);
+}
+
+export function findFormBlock(blocks, name) {
+  return (blocks || []).find((b) => isFormBlock(b, name));
+}
+
 function selectOptions(values) {
   return values.map((v) => ({
     text: { type: "plain_text", text: v },
@@ -40,8 +59,10 @@ export function buildMaintenanceFormBlocks(
   initialDescription,
   duplicate,
   reporterId,
-  prefill = {}
+  prefill = {},
+  formKey = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`
 ) {
+  const id = (name) => formBlockId(name, formKey);
   const descriptionElement = {
     type: "plain_text_input",
     action_id: "description",
@@ -67,6 +88,7 @@ export function buildMaintenanceFormBlocks(
   return [
     {
       type: "section",
+      block_id: id("form_intro"),
       text: {
         type: "mrkdwn",
         text: `Thanks for reporting an issue${reporterId ? `, <@${reporterId}>` : ""}! Please fill out the details below and hit Submit.`,
@@ -76,7 +98,7 @@ export function buildMaintenanceFormBlocks(
       ? [
           {
             type: "section",
-            block_id: "duplicate_warning",
+            block_id: id("duplicate_warning"),
             text: {
               type: "mrkdwn",
               text: `:warning: This might be a duplicate of issue #${duplicate.id} — *${duplicate.description}*. If it's the same problem, hit Cancel.`,
@@ -88,7 +110,7 @@ export function buildMaintenanceFormBlocks(
       ? [
           {
             type: "context",
-            block_id: "prefill_note",
+            block_id: id("prefill_note"),
             elements: [
               {
                 type: "mrkdwn",
@@ -100,25 +122,25 @@ export function buildMaintenanceFormBlocks(
       : []),
     {
       type: "input",
-      block_id: "issue_description",
+      block_id: id("issue_description"),
       label: { type: "plain_text", text: "Issue" },
       element: descriptionElement,
     },
     {
       type: "input",
-      block_id: "issue_type",
+      block_id: id("issue_type"),
       label: { type: "plain_text", text: "Type" },
       element: typeElement,
     },
     {
       type: "input",
-      block_id: "issue_severity",
+      block_id: id("issue_severity"),
       label: { type: "plain_text", text: "Severity" },
       element: severityElement,
     },
     {
       type: "actions",
-      block_id: "submit_actions",
+      block_id: id("submit_actions"),
       elements: [
         {
           type: "button",
@@ -147,11 +169,16 @@ export function buildMaintenanceFormBlocks(
 }
 
 export function extractFormValues(stateValues) {
-  const description =
-    (stateValues?.issue_description?.description?.value || "").trim() || null;
-  const type =
-    stateValues?.issue_type?.type?.selected_option?.value || null;
-  const severity =
-    stateValues?.issue_severity?.severity?.selected_option?.value || null;
+  // state.values is keyed by block_id, which is form-scoped — so look up each
+  // field by its action_id, which is stable across forms.
+  const byAction = {};
+  for (const block of Object.values(stateValues || {})) {
+    for (const [actionId, state] of Object.entries(block || {})) {
+      byAction[actionId] = state;
+    }
+  }
+  const description = (byAction.description?.value || "").trim() || null;
+  const type = byAction.type?.selected_option?.value || null;
+  const severity = byAction.severity?.selected_option?.value || null;
   return { description, type, severity };
 }

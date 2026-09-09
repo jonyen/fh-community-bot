@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMentionHandler } from "../../src/events/mention.js";
-import { SUBMIT_ACTION_ID } from "../../src/lib/maintenance-form.js";
+import { SUBMIT_ACTION_ID, findFormBlock } from "../../src/lib/maintenance-form.js";
 
 function recentDate(daysAgo = 0) {
   const d = new Date();
@@ -64,10 +64,21 @@ describe("MentionHandler", () => {
     const call = mockSay.mock.calls[0][0];
     expect(call.thread_ts).toBe("1");
     expect(call.blocks).toBeDefined();
-    const description = call.blocks.find((b) => b.block_id === "issue_description");
+    const description = findFormBlock(call.blocks, "issue_description");
     expect(description.element.initial_value).toBe("lobby printer jammed");
-    const submit = call.blocks.find((b) => b.block_id === "submit_actions");
+    const submit = findFormBlock(call.blocks, "submit_actions");
     expect(submit.elements[0].action_id).toBe(SUBMIT_ACTION_ID);
+  });
+
+  it("scopes the form's block_ids to the mention ts", async () => {
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> outlet cover popping out", user: "U1", ts: "1788883645.693749" },
+      say: mockSay,
+      client: mockClient,
+    });
+    const ids = mockSay.mock.calls[0][0].blocks.map((b) => b.block_id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.every((id) => id.endsWith(":1788883645.693749"))).toBe(true);
   });
 
   it("pre-selects the type and severity the classifier read out of the mention", async () => {
@@ -89,11 +100,11 @@ describe("MentionHandler", () => {
       "the toilet on 2 is clogged, this is urgent"
     );
     const blocks = mockSay.mock.calls[0][0].blocks;
-    expect(blocks.find((b) => b.block_id === "issue_type").element.initial_option.value).toBe(
+    expect(findFormBlock(blocks, "issue_type").element.initial_option.value).toBe(
       "Plumbing"
     );
     expect(
-      blocks.find((b) => b.block_id === "issue_severity").element.initial_option.value
+      findFormBlock(blocks, "issue_severity").element.initial_option.value
     ).toBe("Critical");
   });
 
@@ -107,10 +118,10 @@ describe("MentionHandler", () => {
     });
 
     const blocks = mockSay.mock.calls[0][0].blocks;
-    expect(blocks.find((b) => b.block_id === "issue_type").element).not.toHaveProperty(
+    expect(findFormBlock(blocks, "issue_type").element).not.toHaveProperty(
       "initial_option"
     );
-    expect(blocks.find((b) => b.block_id === "issue_severity").element).not.toHaveProperty(
+    expect(findFormBlock(blocks, "issue_severity").element).not.toHaveProperty(
       "initial_option"
     );
   });
@@ -125,10 +136,10 @@ describe("MentionHandler", () => {
     });
 
     const blocks = mockSay.mock.calls[0][0].blocks;
-    expect(blocks.find((b) => b.block_id === "issue_description").element.initial_value).toBe(
+    expect(findFormBlock(blocks, "issue_description").element.initial_value).toBe(
       "sink leaking"
     );
-    expect(blocks.find((b) => b.block_id === "issue_type").element).not.toHaveProperty(
+    expect(findFormBlock(blocks, "issue_type").element).not.toHaveProperty(
       "initial_option"
     );
   });
@@ -148,7 +159,7 @@ describe("MentionHandler", () => {
     });
 
     expect(
-      mockSay.mock.calls[0][0].blocks.find((b) => b.block_id === "issue_type").element
+      findFormBlock(mockSay.mock.calls[0][0].blocks, "issue_type").element
         .initial_option.value
     ).toBe("Pest Control");
   });
@@ -202,7 +213,7 @@ describe("MentionHandler", () => {
       expect.objectContaining({ id: "7" }),
     ]);
     const call = mockSay.mock.calls[0][0];
-    const warning = call.blocks.find((b) => b.block_id === "duplicate_warning");
+    const warning = findFormBlock(call.blocks, "duplicate_warning");
     expect(warning).toBeDefined();
     expect(warning.text.text).toContain("#7");
     expect(warning.text.text).toContain("leak under the sink");
@@ -218,8 +229,8 @@ describe("MentionHandler", () => {
     });
 
     const call = mockSay.mock.calls[0][0];
-    expect(call.blocks.find((b) => b.block_id === "duplicate_warning")).toBeUndefined();
-    expect(call.blocks.find((b) => b.block_id === "issue_description")).toBeDefined();
+    expect(findFormBlock(call.blocks, "duplicate_warning")).toBeUndefined();
+    expect(findFormBlock(call.blocks, "issue_description")).toBeDefined();
   });
 
   it("skips the dedup check when the mention has no description", async () => {
@@ -240,7 +251,7 @@ describe("MentionHandler", () => {
     });
 
     const call = mockSay.mock.calls[0][0];
-    const description = call.blocks.find((b) => b.block_id === "issue_description");
+    const description = findFormBlock(call.blocks, "issue_description");
     expect(description.element).not.toHaveProperty("initial_value");
   });
 

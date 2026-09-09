@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   buildMaintenanceFormBlocks,
   extractFormValues,
+  findFormBlock,
+  formBlockId,
+  isFormBlock,
   SUBMIT_ACTION_ID,
   CANCEL_ACTION_ID,
   ISSUE_TYPES,
@@ -30,24 +33,24 @@ describe("buildMaintenanceFormBlocks", () => {
       id: "7",
       description: "leak under the sink",
     });
-    const warning = blocks.find((b) => b.block_id === "duplicate_warning");
+    const warning = findFormBlock(blocks, "duplicate_warning");
     expect(warning).toBeDefined();
     expect(warning.text.text).toContain("#7");
     expect(warning.text.text).toContain("leak under the sink");
     // Warning sits above the input fields
     const warningIdx = blocks.indexOf(warning);
-    const descriptionIdx = blocks.findIndex((b) => b.block_id === "issue_description");
+    const descriptionIdx = blocks.indexOf(findFormBlock(blocks, "issue_description"));
     expect(warningIdx).toBeLessThan(descriptionIdx);
   });
 
   it("omits the duplicate warning block when no duplicate", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
-    expect(blocks.find((b) => b.block_id === "duplicate_warning")).toBeUndefined();
+    expect(findFormBlock(blocks, "duplicate_warning")).toBeUndefined();
   });
 
   it("includes a cancel button alongside submit", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
-    const actions = blocks.find((b) => b.block_id === "submit_actions");
+    const actions = findFormBlock(blocks, "submit_actions");
     const actionIds = actions.elements.map((e) => e.action_id);
     expect(actionIds).toContain(SUBMIT_ACTION_ID);
     expect(actionIds).toContain(CANCEL_ACTION_ID);
@@ -58,7 +61,7 @@ describe("buildMaintenanceFormBlocks", () => {
 
   it("asks for confirmation before cancelling", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
-    const actions = blocks.find((b) => b.block_id === "submit_actions");
+    const actions = findFormBlock(blocks, "submit_actions");
     const cancel = actions.elements.find((e) => e.action_id === CANCEL_ACTION_ID);
     expect(cancel.confirm).toBeDefined();
     expect(cancel.confirm.title.text).toBeTruthy();
@@ -70,41 +73,41 @@ describe("buildMaintenanceFormBlocks", () => {
   it("builds description, type, severity inputs and a submit button", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
 
-    const description = blocks.find((b) => b.block_id === "issue_description");
+    const description = findFormBlock(blocks, "issue_description");
     expect(description.type).toBe("input");
     expect(description.element.type).toBe("plain_text_input");
     expect(description.element.action_id).toBe("description");
     expect(description.element.multiline).toBe(true);
     expect(description.element.initial_value).toBe("sink leaking");
 
-    const type = blocks.find((b) => b.block_id === "issue_type");
+    const type = findFormBlock(blocks, "issue_type");
     expect(type.element.type).toBe("static_select");
     expect(type.element.action_id).toBe("type");
     expect(type.element.options.map((o) => o.value)).toEqual(ISSUE_TYPES);
 
-    const severity = blocks.find((b) => b.block_id === "issue_severity");
+    const severity = findFormBlock(blocks, "issue_severity");
     expect(severity.element.type).toBe("static_select");
     expect(severity.element.action_id).toBe("severity");
     expect(severity.element.options.map((o) => o.value)).toEqual(SEVERITIES);
 
-    const actions = blocks.find((b) => b.block_id === "submit_actions");
+    const actions = findFormBlock(blocks, "submit_actions");
     expect(actions.type).toBe("actions");
     expect(actions.elements[0].action_id).toBe(SUBMIT_ACTION_ID);
   });
 
   it("omits initial_value when no description prefill", () => {
     const blocks = buildMaintenanceFormBlocks("");
-    const description = blocks.find((b) => b.block_id === "issue_description");
+    const description = findFormBlock(blocks, "issue_description");
     expect(description.element).not.toHaveProperty("initial_value");
   });
 
   it("leaves both selects empty when nothing was guessed", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking");
-    const type = blocks.find((b) => b.block_id === "issue_type");
-    const severity = blocks.find((b) => b.block_id === "issue_severity");
+    const type = findFormBlock(blocks, "issue_type");
+    const severity = findFormBlock(blocks, "issue_severity");
     expect(type.element).not.toHaveProperty("initial_option");
     expect(severity.element).not.toHaveProperty("initial_option");
-    expect(blocks.find((b) => b.block_id === "prefill_note")).toBeUndefined();
+    expect(findFormBlock(blocks, "prefill_note")).toBeUndefined();
   });
 
   it("pre-selects the guessed type and severity", () => {
@@ -113,7 +116,7 @@ describe("buildMaintenanceFormBlocks", () => {
       severity: "Minor",
     });
 
-    const type = blocks.find((b) => b.block_id === "issue_type");
+    const type = findFormBlock(blocks, "issue_type");
     expect(type.element.initial_option).toEqual({
       text: { type: "plain_text", text: "Plumbing" },
       value: "Plumbing",
@@ -122,7 +125,7 @@ describe("buildMaintenanceFormBlocks", () => {
     // the block outright.
     expect(type.element.options).toContainEqual(type.element.initial_option);
 
-    const severity = blocks.find((b) => b.block_id === "issue_severity");
+    const severity = findFormBlock(blocks, "issue_severity");
     expect(severity.element.initial_option.value).toBe("Minor");
     expect(severity.element.options).toContainEqual(severity.element.initial_option);
   });
@@ -132,11 +135,11 @@ describe("buildMaintenanceFormBlocks", () => {
       type: "Plumbing",
       severity: null,
     });
-    expect(blocks.find((b) => b.block_id === "issue_type").element.initial_option.value).toBe(
+    expect(findFormBlock(blocks, "issue_type").element.initial_option.value).toBe(
       "Plumbing"
     );
     expect(
-      blocks.find((b) => b.block_id === "issue_severity").element
+      findFormBlock(blocks, "issue_severity").element
     ).not.toHaveProperty("initial_option");
   });
 
@@ -145,10 +148,10 @@ describe("buildMaintenanceFormBlocks", () => {
       type: "Roofing",
       severity: "Catastrophic",
     });
-    expect(blocks.find((b) => b.block_id === "issue_type").element).not.toHaveProperty(
+    expect(findFormBlock(blocks, "issue_type").element).not.toHaveProperty(
       "initial_option"
     );
-    expect(blocks.find((b) => b.block_id === "issue_severity").element).not.toHaveProperty(
+    expect(findFormBlock(blocks, "issue_severity").element).not.toHaveProperty(
       "initial_option"
     );
   });
@@ -157,22 +160,44 @@ describe("buildMaintenanceFormBlocks", () => {
     const both = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
       type: "Plumbing",
       severity: "Minor",
-    }).find((b) => b.block_id === "prefill_note");
+    }).find((b) => isFormBlock(b, "prefill_note"));
     expect(both.type).toBe("context");
     expect(both.elements[0].text).toContain("type and severity");
 
     const oneField = buildMaintenanceFormBlocks("sink leaking", null, "U1", {
       type: "Plumbing",
-    }).find((b) => b.block_id === "prefill_note");
+    }).find((b) => isFormBlock(b, "prefill_note"));
     expect(oneField.elements[0].text).toContain("type");
     expect(oneField.elements[0].text).not.toContain("severity");
   });
 
   it("keeps the prefill note above the inputs", () => {
     const blocks = buildMaintenanceFormBlocks("sink leaking", null, "U1", { type: "Plumbing" });
-    expect(blocks.findIndex((b) => b.block_id === "prefill_note")).toBeLessThan(
-      blocks.findIndex((b) => b.block_id === "issue_description")
+    expect(blocks.indexOf(findFormBlock(blocks, "prefill_note"))).toBeLessThan(
+      blocks.indexOf(findFormBlock(blocks, "issue_description"))
     );
+  });
+
+  it("scopes every block_id to the form key so Slack cannot reuse another form's input state", () => {
+    // Slack keys a message's input state by block_id. Two forms in one channel
+    // with identical block_ids made the client show the previous report's
+    // description in the new form.
+    const a = buildMaintenanceFormBlocks("outlet cover popping out", null, "U1", {}, "1788883645.693749");
+    const b = buildMaintenanceFormBlocks("leak in cold storage", null, "U2", {}, "1788529269.327099");
+    const idsA = a.map((x) => x.block_id);
+    const idsB = b.map((x) => x.block_id);
+    expect(idsA.every((id) => id.endsWith(":1788883645.693749"))).toBe(true);
+    expect(idsA.filter((id) => idsB.includes(id))).toEqual([]);
+    expect(findFormBlock(a, "issue_description").block_id).toBe(
+      formBlockId("issue_description", "1788883645.693749")
+    );
+  });
+
+  it("still produces unique block_ids when no form key is passed", () => {
+    const a = buildMaintenanceFormBlocks("x").map((b) => b.block_id);
+    const b = buildMaintenanceFormBlocks("x").map((b) => b.block_id);
+    expect(a.every((id) => id.includes(":"))).toBe(true);
+    expect(new Set([...a, ...b]).size).toBe(a.length + b.length);
   });
 
   it("offers the expected issue types in order", () => {
@@ -194,6 +219,19 @@ describe("extractFormValues", () => {
       description: "sink leaking",
       type: "Plumbing",
       severity: "Medium",
+    });
+  });
+
+  it("reads values from form-key-scoped block_ids", () => {
+    const stateValues = {
+      "issue_description:100.1": { description: { type: "plain_text_input", value: "outlet cover" } },
+      "issue_type:100.1": { type: { type: "static_select", selected_option: { value: "Electrical" } } },
+      "issue_severity:100.1": { severity: { type: "static_select", selected_option: { value: "Minor" } } },
+    };
+    expect(extractFormValues(stateValues)).toEqual({
+      description: "outlet cover",
+      type: "Electrical",
+      severity: "Minor",
     });
   });
 
