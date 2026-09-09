@@ -140,6 +140,17 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
       console.error("dedup check failed:", err.message);
     }
 
+    // A link straight to the report thread, so a row in the sheet can be opened
+    // in Slack without searching for it. Best-effort: a missing link is a
+    // less convenient row, not a reason to drop the report.
+    let slackLink = null;
+    try {
+      const res = await client.chat.getPermalink({ channel, message_ts: threadTs });
+      slackLink = res?.permalink || null;
+    } catch (err) {
+      console.error("chat.getPermalink failed:", err.message);
+    }
+
     const photos = await collectRootPhotos(client, channel, payload.message?.thread_ts);
 
     const appendStartedAt = Date.now();
@@ -150,6 +161,7 @@ export function createMaintenanceFormHandler({ sheetsService, dedupService, phot
         severity,
         type,
         slackRef: threadTs,
+        ...(slackLink ? { slackLink } : {}),
         ...(photos.length ? { photos } : {}),
       });
       // The SLI. An issue only counts as reported once it is in the sheet —
