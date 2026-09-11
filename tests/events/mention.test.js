@@ -277,9 +277,7 @@ describe("MentionHandler", () => {
 
     expect(mockSheets.findIssueRowByRef).toHaveBeenCalledWith("1");
     expect(mockSheets.appendNote).toHaveBeenCalledWith("5", "it's getting worse");
-    expect(mockSay).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("added that to the notes") })
-    );
+    expect(mockSay).not.toHaveBeenCalled();
   });
 
   it("closes an issue by ID", async () => {
@@ -360,7 +358,7 @@ describe("MentionHandler", () => {
     );
   });
 
-  it("lists open requests from the past 7 days", async () => {
+  it("lists all open requests", async () => {
     mockSheets.getOpenIssues.mockResolvedValue([
       { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(1), status: "Open" },
       { id: "6", description: "AC broken", submitter: "Bob", date: recentDate(20), status: "Open" },
@@ -374,31 +372,12 @@ describe("MentionHandler", () => {
 
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Requests from the Past 7 Days"),
+        text: expect.stringContaining("Open Requests (2)"),
       })
     );
     const call = mockSay.mock.calls[0][0];
     expect(call.text).toContain("Printer jammed");
-    expect(call.text).not.toContain("AC broken");
-  });
-
-  it("falls back to 5 most recent requests when none are within 7 days", async () => {
-    mockSheets.getOpenIssues.mockResolvedValue([
-      { id: "5", description: "Printer jammed", submitter: "Alice", date: recentDate(20), status: "Open" },
-      { id: "6", description: "AC broken", submitter: "Bob", date: recentDate(30), status: "Open" },
-    ]);
-
-    await handler({
-      event: { channel: "C123", text: "<@U_BOT> list", user: "U1", ts: "1" },
-      say: mockSay,
-      client: mockClient,
-    });
-
-    expect(mockSay).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("5 Most Recent Requests"),
-      })
-    );
+    expect(call.text).toContain("AC broken");
   });
 
   it("reports no open requests", async () => {
@@ -477,9 +456,7 @@ describe("MentionHandler", () => {
       expect(mockSheets.appendPhotos).toHaveBeenCalledWith("5", [
         { viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
       ]);
-      expect(mockSay).toHaveBeenCalledWith(
-        expect.objectContaining({ text: expect.stringContaining("added that to the notes"), thread_ts: "1" })
-      );
+      expect(mockSay).not.toHaveBeenCalled();
     });
 
     it("appends a photo-only thread reply to an existing issue", async () => {
@@ -493,9 +470,7 @@ describe("MentionHandler", () => {
       expect(mockSheets.appendPhotos).toHaveBeenCalledWith("5", [
         { viewUrl: "https://drive.google.com/file/d/A/view", name: "a.jpg" },
       ]);
-      expect(mockSay).toHaveBeenCalledWith(
-        expect.objectContaining({ text: expect.stringContaining("photo"), thread_ts: "1" })
-      );
+      expect(mockSay).not.toHaveBeenCalled();
     });
   });
 });

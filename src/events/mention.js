@@ -92,10 +92,6 @@ export function createMentionHandler({ sheetsService, dedupService, issueClassif
           try {
             if (description) await sheetsService.appendNote(issueRowId, description);
             if (photos.length) await sheetsService.appendPhotos(issueRowId, photos);
-            const text = description
-              ? "Got it, added that to the notes."
-              : "Got it, added that photo to the issue.";
-            await say({ text, thread_ts: threadKey });
           } catch (err) {
             console.error("Sheets error:", err.message);
             await say({ text: "Couldn't update the notes right now.", thread_ts: threadKey });
@@ -113,20 +109,11 @@ export function createMentionHandler({ sheetsService, dedupService, issueClassif
         if (openIssues.length === 0) {
           await say({ text: "No open requests right now.", thread_ts: event.ts });
         } else {
-          // Show past 7 days of requests, or the 5 most recent if none in that window
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          const recentIssues = openIssues.filter((i) => {
-            const parsed = new Date(i.date);
-            return !isNaN(parsed) && parsed >= sevenDaysAgo;
-          });
-          const issuesToShow = recentIssues.length > 0 ? recentIssues : openIssues.slice(0, 5);
-          const label = recentIssues.length > 0 ? "Requests from the Past 7 Days" : "5 Most Recent Requests";
-          const lines = issuesToShow.map(
+          const lines = openIssues.map(
             (i) => `• *${i.description}* — submitted by ${i.submitter} on ${i.date} (Status: ${i.status})`
           );
           await say({
-            text: `*${label} (${issuesToShow.length}):*\n${lines.join("\n")}`,
+            text: `*Open Requests (${openIssues.length}):*\n${lines.join("\n")}`,
             thread_ts: event.thread_ts || event.ts,
           });
         }
