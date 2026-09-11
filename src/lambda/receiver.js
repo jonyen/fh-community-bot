@@ -48,7 +48,6 @@ export function shouldEnqueueEvent(parsed) {
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
-  if (event.thread_ts) return true;
   return false;
 }
 

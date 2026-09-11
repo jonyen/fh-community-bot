@@ -266,11 +266,26 @@ describe("MentionHandler", () => {
     expect(mockClient.reactions.add).not.toHaveBeenCalled();
   });
 
-  it("appends thread replies as notes for a logged issue", async () => {
+  it("ignores non-mention thread replies even in a logged issue's thread", async () => {
     mockSheets.findIssueRowByRef.mockResolvedValue("5");
 
     await handler({
       event: { channel: "C123", text: "it's getting worse", user: "U1", ts: "2", thread_ts: "1" },
+      say: mockSay,
+      client: mockClient,
+    });
+
+    expect(mockSheets.findIssueRowByRef).not.toHaveBeenCalled();
+    expect(mockSheets.appendNote).not.toHaveBeenCalled();
+    expect(mockSay).not.toHaveBeenCalled();
+    expect(mockClient.reactions.add).not.toHaveBeenCalled();
+  });
+
+  it("appends mentioned thread replies as notes for a logged issue", async () => {
+    mockSheets.findIssueRowByRef.mockResolvedValue("5");
+
+    await handler({
+      event: { channel: "C123", text: "<@U_BOT> it's getting worse", user: "U1", ts: "2", thread_ts: "1" },
       say: mockSay,
       client: mockClient,
     });
@@ -399,7 +414,7 @@ describe("MentionHandler", () => {
     ]);
 
     await handler({
-      event: { channel: "C123", text: "close #5", user: "U1", ts: "2", thread_ts: "1" },
+      event: { channel: "C123", text: "<@U_BOT> close #5", user: "U1", ts: "2", thread_ts: "1" },
       say: mockSay,
       client: mockClient,
     });
@@ -446,7 +461,7 @@ describe("MentionHandler", () => {
     it("appends a text + photo thread reply to an existing issue", async () => {
       const files = [{ id: "F2", name: "more.jpg", mimetype: "image/jpeg", url_private_download: "u2" }];
       await photoHandler({
-        event: { channel: "C123", text: "here's a photo", user: "U1", ts: "3", thread_ts: "1", files },
+        event: { channel: "C123", text: "<@U_BOT> here's a photo", user: "U1", ts: "3", thread_ts: "1", files },
         say: mockSay,
         client: mockClient,
       });
@@ -462,7 +477,7 @@ describe("MentionHandler", () => {
     it("appends a photo-only thread reply to an existing issue", async () => {
       const files = [{ id: "F2", name: "more.jpg", mimetype: "image/jpeg", url_private_download: "u2" }];
       await photoHandler({
-        event: { channel: "C123", text: "", user: "U1", ts: "3", thread_ts: "1", files },
+        event: { channel: "C123", text: "<@U_BOT>", user: "U1", ts: "3", thread_ts: "1", files },
         say: mockSay,
         client: mockClient,
       });
