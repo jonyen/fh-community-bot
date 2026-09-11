@@ -71,14 +71,14 @@ describe("dispatchSlackEvent", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("passes thread replies (no @mention, not a bot) through to the handler", async () => {
+  it("skips thread replies with no @mention (the bot only acts when invoked)", async () => {
     const handler = vi.fn().mockResolvedValue();
     await dispatchSlackEvent({
       slackEnvelope: { event: { type: "message", channel: "C1", thread_ts: "1", text: "more info", user: "U1" } },
       handler,
       client: makeClient(),
     });
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it("always passes app_mention through", async () => {
@@ -164,7 +164,7 @@ describe("dispatchSlackEvent", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("still routes non-gender thread messages to the maintenance handler", async () => {
+  it("does not route non-gender thread messages anywhere", async () => {
     const handler = vi.fn().mockResolvedValue();
     const genderHandler = vi.fn();
     await dispatchSlackEvent({
@@ -174,7 +174,7 @@ describe("dispatchSlackEvent", () => {
       client: makeClient(),
     });
     expect(genderHandler).not.toHaveBeenCalled();
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it("routes /refresh-genders slash envelope to slashRefreshHandler", async () => {
@@ -222,7 +222,7 @@ describe("dispatchSlackEvent", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("passes a file_share thread reply (no @mention) through to the handler", async () => {
+  it("skips a file_share thread reply with no @mention", async () => {
     const handler = vi.fn().mockResolvedValue();
     await dispatchSlackEvent({
       slackEnvelope: {
@@ -239,7 +239,7 @@ describe("dispatchSlackEvent", () => {
       handler,
       client: makeClient(),
     });
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it("skips a file_share thread reply that contains an @mention (handled by app_mention path)", async () => {
@@ -324,7 +324,7 @@ describe("dispatchSlackEvent reservation routing", () => {
   it("does NOT route a reservation-keyword thread reply outside the onestop channel to reservations", async () => {
     // A plain thread reply that merely contains a reservation keyword (e.g.
     // "isn't available in this channel") must not summon OneStop in a channel
-    // it doesn't own — it belongs to the maintenance handler.
+    // it doesn't own — and with no @mention, nothing else handles it either.
     const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn(), handleChannelMessage: vi.fn() };
     const maintenance = vi.fn().mockResolvedValue();
     await dispatchSlackEvent({
@@ -332,7 +332,7 @@ describe("dispatchSlackEvent reservation routing", () => {
       handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
     });
     expect(reservationHandler.handleMention).not.toHaveBeenCalled();
-    expect(maintenance).toHaveBeenCalled();
+    expect(maintenance).not.toHaveBeenCalled();
   });
 
   it("falls through to maintenance for a non-reservation app_mention", async () => {

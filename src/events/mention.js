@@ -48,9 +48,12 @@ export function createMentionHandler({ sheetsService, dedupService, issueClassif
 
     if (!channelIds.has(event.channel)) return;
 
+    // Only act when directly invoked. Un-mentioned thread replies are other
+    // people's conversation, even inside an issue's thread.
+    if (!/<@[A-Z0-9_]+>/.test(event.text || "")) return;
+
     const description = stripMention(event.text || "");
     const threadKey = event.thread_ts || event.ts;
-    const hasMention = /<@[A-Z0-9_]+>/.test(event.text || "");
     // Rows move as humans sort the sheet and as new issues insert at the top,
     // so resolve thread -> current row via the hidden SLACK_REF column at use
     // time rather than caching row numbers.
@@ -63,10 +66,6 @@ export function createMentionHandler({ sheetsService, dedupService, issueClassif
       }
     }
 
-    // Non-mention thread replies only matter in threads of issues we logged
-    // (notes/photos). Anything else is other people's conversation — ignore.
-    if (!hasMention && !issueRowId) return;
-
     // Acknowledge receipt immediately
     try {
       await client.reactions.add({
@@ -78,8 +77,8 @@ export function createMentionHandler({ sheetsService, dedupService, issueClassif
       console.error("Failed to add reaction:", err.message);
     }
 
-    // If this is a thread reply for a created issue and not a command, append the
-    // text as a note and/or attach any photos.
+    // A mention in a logged issue's thread that isn't a command appends the
+    // text as a note and/or attaches any photos.
     if (issueRowId) {
       const isCommand =
         description &&

@@ -1,19 +1,11 @@
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
 import { matchesReservationIntent } from "../lib/reservation-triggers.js";
 
+// The maintenance handler only ever acts on an explicit @mention. Plain
+// thread replies (even inside an issue's thread) are other people's
+// conversation and never reach it.
 function shouldSkip(event) {
-  if (event.type === "app_mention") return false;
-
-  if (event.type === "message") {
-    if (!event.thread_ts) return true;
-    if (event.bot_id) return true;
-    // Allow file_share (photo uploads) through; skip other subtypes (edits, joins, etc.)
-    if (event.subtype && event.subtype !== "file_share") return true;
-    if (/<@[A-Z0-9_]+>/.test(event.text || "")) return true;
-    return false;
-  }
-
-  return true;
+  return event.type !== "app_mention";
 }
 
 export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, reservationHandler, maintenanceFormHandler, onestopChannelId, client }) {

@@ -99,13 +99,13 @@ describe("receiver.handler", () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
-  it("enqueues a thread reply with no mention", async () => {
+  it("drops a thread reply with no mention", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const body = eventCallback({ type: "message", channel: "C1", thread_ts: "1", text: "more info", user: "U1" });
     const ts = Math.floor(Date.now() / 1000).toString();
     const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
     expect(res.statusCode).toBe(200);
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).not.toHaveBeenCalled();
   });
 
   it("enqueues a top-level message with a Slack mention", async () => {
@@ -117,7 +117,7 @@ describe("receiver.handler", () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
-  it("drops ordinary top-level chatter (no trigger, no mention, no thread)", async () => {
+  it("drops ordinary top-level chatter (no trigger, no mention)", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const body = eventCallback({ type: "message", channel: "C1", text: "good morning everyone", user: "U1", ts: "1" });
     const ts = Math.floor(Date.now() / 1000).toString();

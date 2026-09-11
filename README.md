@@ -8,7 +8,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Form pre-fill** — the description comes straight from the @mention, and the type and severity are read out of it by the LLM; a report the model won't commit on leaves those dropdowns empty rather than guessing wrong. Falls back to a keyword table when the model is unreachable
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
-- **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
+- **Photo attachments** — photos on a report, or on an @mention reply in the issue's thread, are copied to Google Drive and linked in the sheet's Photos column (internal links)
 
 ## Architecture
 
@@ -88,7 +88,7 @@ node scripts/get-google-token.js <client_id> <client_secret>
 
 ## Photos
 
-Users can attach photos to a maintenance report (or to any reply in the issue's thread). Each image is copied from Slack into a Google Drive folder and listed as a clickable link in the sheet's **Photos** column (column I), which grows as more photos are added in the thread.
+Users can attach photos to a maintenance report (or to any reply in the issue's thread that @mentions the bot). Each image is copied from Slack into a Google Drive folder and listed as a clickable link in the sheet's **Photos** column (column I), which grows as more photos are added in the thread.
 
 The links are **internal**: the uploaded files are not made public (the Workspace org blocks "anyone with link" sharing), so they open for people who can already see the Drive folder / spreadsheet. There is no inline thumbnail — Google Sheets' `=IMAGE()` can only render publicly accessible images, which this setup intentionally avoids.
 
@@ -113,6 +113,9 @@ In the configured Slack channel:
 | `@bot list` or `@bot show` | List all open issues |
 | `@bot close #<ID>` | Resolve an issue by ID |
 | `@bot close <description>` | Resolve an issue by description |
+| `@bot <text>` (in an issue's thread) | Append text and/or photos to that issue's notes |
+
+The bot only acts when it is @mentioned. Plain thread replies, even inside an issue's thread, are ignored.
 | `@bot create new: <description>` | Force-create, bypassing duplicate detection |
 
 ## Gender Aliases
