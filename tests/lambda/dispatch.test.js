@@ -30,7 +30,7 @@ describe("dispatchSlackEvent", () => {
     await args.say({ text: "hello", thread_ts: "1" });
     expect(client.chat.postMessage).toHaveBeenCalledWith({
       channel: "C1",
-      username: "FH Maintenance (beta)",
+      username: "FH Maintenance",
       text: "hello",
       thread_ts: "1",
     });
@@ -291,93 +291,25 @@ function client() {
   return { chat: { postMessage: vi.fn().mockResolvedValue({}) } };
 }
 
-describe("dispatchSlackEvent reservation routing", () => {
-  it("routes /list to the reservation handler", async () => {
-    const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn().mockResolvedValue() };
-    await dispatchSlackEvent({
-      slackEnvelope: { type: "slash_command", command: "/list", text: "all reservations tomorrow" },
-      reservationHandler, client: client(),
-    });
-    expect(reservationHandler.handleSlash).toHaveBeenCalled();
-  });
-
-  it("routes /reserve to the reservation handler", async () => {
-    const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn().mockResolvedValue() };
-    await dispatchSlackEvent({
-      slackEnvelope: { type: "slash_command", command: "/reserve", text: "MPR fri 7-10pm" },
-      reservationHandler, client: client(),
-    });
-    expect(reservationHandler.handleSlash).toHaveBeenCalled();
-  });
-
-  it("routes a reservation-intent app_mention to the reservation handler, not maintenance", async () => {
-    const reservationHandler = { handleMention: vi.fn().mockResolvedValue(), handleSlash: vi.fn() };
-    const maintenance = vi.fn();
+describe("dispatchSlackEvent with OneStop removed", () => {
+  it("sends a booking-sounding mention to maintenance", async () => {
+    const maintenance = vi.fn().mockResolvedValue();
     await dispatchSlackEvent({
       slackEnvelope: { event: { type: "app_mention", text: "<@U1> is the MPR free friday?", channel: "C1", ts: "1.1" } },
-      handler: maintenance, reservationHandler, client: client(),
+      handler: maintenance, client: client(),
     });
-    expect(reservationHandler.handleMention).toHaveBeenCalled();
-    expect(maintenance).not.toHaveBeenCalled();
-  });
-
-  it("does NOT route a reservation-keyword thread reply outside the onestop channel to reservations", async () => {
-    // A plain thread reply that merely contains a reservation keyword (e.g.
-    // "isn't available in this channel") must not summon OneStop in a channel
-    // it doesn't own — it belongs to the maintenance handler.
-    const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn(), handleChannelMessage: vi.fn() };
-    const maintenance = vi.fn().mockResolvedValue();
-    await dispatchSlackEvent({
-      slackEnvelope: { event: { type: "message", channel: "Cmisc", thread_ts: "1.1", ts: "1.2", text: "FH maintenance isn't available in this channel", user: "U1" } },
-      handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
-    });
-    expect(reservationHandler.handleMention).not.toHaveBeenCalled();
     expect(maintenance).toHaveBeenCalled();
   });
 
-  it("falls through to maintenance for a non-reservation app_mention", async () => {
-    const reservationHandler = { handleMention: vi.fn(), handleSlash: vi.fn() };
-    const maintenance = vi.fn().mockResolvedValue();
-    await dispatchSlackEvent({
-      slackEnvelope: { event: { type: "app_mention", text: "<@U1> the sink is leaking", channel: "C1", ts: "2.2" } },
-      handler: maintenance, reservationHandler, client: client(),
-    });
-    expect(reservationHandler.handleMention).not.toHaveBeenCalled();
-    expect(maintenance).toHaveBeenCalled();
-  });
-});
-
-describe("dispatchSlackEvent ambient onestop channel", () => {
-  function client() { return { chat: { postMessage: vi.fn().mockResolvedValue({}) } }; }
-
-  it("routes a plain message in the onestop channel to handleChannelMessage", async () => {
-    const reservationHandler = { handleChannelMessage: vi.fn().mockResolvedValue(), handleMention: vi.fn(), handleSlash: vi.fn() };
+  it("ignores the old /reserve, /check and /list commands", async () => {
     const maintenance = vi.fn();
-    await dispatchSlackEvent({
-      slackEnvelope: { event: { type: "message", channel: "Cres", user: "U1", ts: "1.1", text: "book the MPR friday" } },
-      handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
-    });
-    expect(reservationHandler.handleChannelMessage).toHaveBeenCalled();
+    for (const command of ["/reserve", "/check", "/list"]) {
+      await dispatchSlackEvent({
+        slackEnvelope: { type: "slash_command", command, text: "MPR fri 7-10pm" },
+        handler: maintenance, client: client(),
+      });
+    }
     expect(maintenance).not.toHaveBeenCalled();
-  });
-
-  it("ignores bot messages in the onestop channel", async () => {
-    const reservationHandler = { handleChannelMessage: vi.fn(), handleMention: vi.fn(), handleSlash: vi.fn() };
-    await dispatchSlackEvent({
-      slackEnvelope: { event: { type: "message", channel: "Cres", bot_id: "B1", ts: "1.1", text: "x" } },
-      reservationHandler, onestopChannelId: "Cres", client: client(),
-    });
-    expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
-  });
-
-  it("does not ambient-route a message in another channel", async () => {
-    const reservationHandler = { handleChannelMessage: vi.fn(), handleMention: vi.fn(), handleSlash: vi.fn() };
-    const maintenance = vi.fn().mockResolvedValue();
-    await dispatchSlackEvent({
-      slackEnvelope: { event: { type: "message", channel: "Cother", user: "U1", thread_ts: "1.1", ts: "1.2", text: "the sink is leaking" } },
-      handler: maintenance, reservationHandler, onestopChannelId: "Cres", client: client(),
-    });
-    expect(reservationHandler.handleChannelMessage).not.toHaveBeenCalled();
   });
 });
 

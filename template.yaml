@@ -8,21 +8,13 @@ Parameters:
   SlackChannelIds:      { Type: CommaDelimitedList }
   GoogleSheetId:        { Type: String }
   GenderSheetId:        { Type: String, Default: "" }
-  ReservationsSheetId:  { Type: String, Default: "" }
   EscalationUserId:     { Type: String, Default: "" }
   AlarmChannel:         { Type: String, Default: "" }
-  # ReservationRooms / ResourceCalendars / VenueCalendars are NOT parameters —
-  # they exceed the 4096-char CFN parameter limit. They ship as bundled files
-  # under runtime-config/ (written by the deploy workflow) and config.js reads
-  # them at runtime.
   GoogleClientId:       { Type: String, NoEcho: true }
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
   GoogleDriveFolderId:  { Type: String, Default: "" }
   GroqApiKey:           { Type: String, NoEcho: true }
-  ReservationsChannelId: { Type: String, Default: "" }
-  OneStopChannelId:      { Type: String, Default: "" }
-  OneStopInfoTabs:       { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -55,8 +47,6 @@ Resources:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
           EVENT_QUEUE_URL:      !Ref EventQueue
-          ONESTOP_CHANNEL_ID: !Ref OneStopChannelId
-          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
@@ -81,15 +71,11 @@ Resources:
           SLACK_CHANNEL_IDS:      !Join [",", !Ref SlackChannelIds]
           GOOGLE_SHEET_ID:        !Ref GoogleSheetId
           GENDER_SHEET_ID:        !Ref GenderSheetId
-          RESERVATIONS_SHEET_ID: !Ref ReservationsSheetId
-          ONESTOP_CHANNEL_ID: !Ref OneStopChannelId
-          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
           GOOGLE_CLIENT_ID:       !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
           GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
           GROQ_API_KEY:           !Ref GroqApiKey
-          ONESTOP_INFO_TABS:     !Ref OneStopInfoTabs
           ESCALATION_USER_ID:    !Ref EscalationUserId
       Events:
         FromQueue:

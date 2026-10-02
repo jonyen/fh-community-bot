@@ -45,8 +45,8 @@ idempotency key.
 - GitHub Actions + OIDC for deploys
 - [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
 - [Google Sheets API](https://developers.google.com/sheets/api)
-- [Groq](https://groq.com/) (Llama 3.3 70B) — duplicate detection, reservation
-  parsing, and form pre-fill. The pre-fill call goes through
+- [Groq](https://groq.com/) (Llama 3.3 70B) — duplicate detection and form
+  pre-fill. The pre-fill call goes through
   `createIssueClassifierService`, which depends only on a
   `classifyIssueReport(text, { types, severities })` method: pointing it at
   another provider means writing that one method in a new service and swapping

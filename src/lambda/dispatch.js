@@ -1,5 +1,4 @@
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
-import { matchesReservationIntent } from "../lib/reservation-triggers.js";
 
 function shouldSkip(event) {
   if (event.type === "app_mention") return false;
@@ -16,17 +15,10 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, reservationHandler, maintenanceFormHandler, onestopChannelId, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, client }) {
   if (slackEnvelope.type === "slash_command") {
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
-    } else if (
-      reservationHandler &&
-      (slackEnvelope.command === "/reserve" ||
-        slackEnvelope.command === "/check" ||
-        slackEnvelope.command === "/list")
-    ) {
-      await reservationHandler.handleSlash({ envelope: slackEnvelope, client });
     }
     return;
   }
@@ -40,17 +32,6 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
 
   const event = slackEnvelope.event;
   if (!event) return;
-
-  if (
-    reservationHandler &&
-    onestopChannelId &&
-    event.type === "message" &&
-    !event.bot_id &&
-    event.channel === onestopChannelId
-  ) {
-    await reservationHandler.handleChannelMessage({ event, client });
-    return;
-  }
 
   if (
     genderHandler &&
@@ -69,31 +50,14 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     return;
   }
 
-  // Reservation intent outside the OneStop channel only responds to an explicit
-  // @mention of the bot. Plain thread replies are NOT routed here on a keyword
-  // match — a message like "FH maintenance isn't available in this channel"
-  // must not summon OneStop in a channel it doesn't own. (Inside the OneStop
-  // channel, every message is already handled by the ambient path above.)
-  if (
-    reservationHandler &&
-    event.type === "app_mention" &&
-    !event.bot_id &&
-    matchesReservationIntent(event.text || "")
-  ) {
-    const say = (msg) =>
-      client.chat.postMessage({ channel: event.channel, ...msg });
-    await reservationHandler.handleMention({ event, say, client });
-    return;
-  }
-
   if (shouldSkip(event)) return;
 
   const say = (msg) =>
     client.chat.postMessage({
       channel: event.channel,
-      // Append a "(beta)" suffix to the bot's display name on maintenance
-      // replies via chat:write.customize, without renaming the Slack app.
-      username: "FH Maintenance (beta)",
+      // Name the maintenance replies via chat:write.customize, whatever the
+      // Slack app itself is called.
+      username: "FH Maintenance",
       ...msg,
     });
 

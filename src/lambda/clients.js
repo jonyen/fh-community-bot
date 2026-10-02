@@ -13,12 +13,6 @@ import { createMaintenanceFormHandler } from "../events/maintenanceForm.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
 import { createSlashRefreshHandler } from "../events/slashRefresh.js";
-import { createReservationsSheetService } from "../services/reservationsSheet.js";
-import { createCalendarService } from "../services/calendar.js";
-import { createReservationsService } from "../services/reservations.js";
-import { createRoomMatcher } from "../lib/reservation-rooms.js";
-import { createReservationHandler } from "../events/reservations.js";
-import { createOneStopInfoService } from "../services/onestopInfo.js";
 
 let cached;
 
@@ -82,41 +76,7 @@ export function getDeps() {
     slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
-  let reservationHandler;
-  if (config.reservationsSheetId) {
-    const reservationsSheetClient = google.sheets({ version: "v4", auth: oauth2Client });
-    const reservationsSheetService = createReservationsSheetService(
-      reservationsSheetClient,
-      config.reservationsSheetId
-    );
-    const calendarClient = google.calendar({ version: "v3", auth: oauth2Client });
-    const calendarService = createCalendarService(calendarClient);
-    const roomMatcher = createRoomMatcher(
-      config.reservationRooms.rooms || [],
-      config.reservationRooms.aliases || {}
-    );
-    const reservationsService = createReservationsService({
-      sheetService: reservationsSheetService,
-      calendarService,
-      roomMatcher,
-      resourceCalendars: config.resourceCalendars,
-      now: () => new Date(),
-    });
-    const onestopInfoService = createOneStopInfoService({
-      sheetsClient: google.sheets({ version: "v4", auth: oauth2Client }),
-      sheetId: config.reservationsSheetId,
-      tabs: config.onestopInfoTabs, // undefined → service allowlist default
-      now: () => new Date(),
-    });
-    reservationHandler = createReservationHandler({
-      reservationsService,
-      groqService,
-      onestopInfoService,
-      now: () => new Date(),
-    });
-  }
-
-  cached = { client: slack, handler, maintenanceFormHandler, genderHandler, slashRefreshHandler, reservationHandler, onestopChannelId: config.onestopChannelId };
+  cached = { client: slack, handler, maintenanceFormHandler, genderHandler, slashRefreshHandler };
   return cached;
 }
 

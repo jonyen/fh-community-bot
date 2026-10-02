@@ -59,34 +59,12 @@ jobs:
           echo "Stack still busy after 10 minutes; giving up." >&2
           exit 1
 
-      # The reservation room list and resource/venue calendar maps are too large
-      # for CloudFormation parameters (4096 chars) and Lambda env vars (4 KB), so
-      # we bundle them into the deployment package as files under runtime-config/
-      # and config.js reads them at runtime. Written BEFORE `sam build` so they
-      # are included in the build artifact.
-      - name: Write runtime config files
-        env:
-          RESERVATION_ROOMS: ${{ vars.RESERVATION_ROOMS }}
-          RESOURCE_CALENDARS: ${{ vars.RESOURCE_CALENDARS }}
-          VENUE_CALENDARS: ${{ vars.VENUE_CALENDARS }}
-        run: |
-          mkdir -p runtime-config
-          [ -n "$RESERVATION_ROOMS" ] && printf %s "$RESERVATION_ROOMS" > runtime-config/reservation-rooms.json
-          [ -n "$RESOURCE_CALENDARS" ] && printf %s "$RESOURCE_CALENDARS" > runtime-config/resource-calendars.json
-          [ -n "$VENUE_CALENDARS" ] && printf %s "$VENUE_CALENDARS" > runtime-config/venue-calendars.json
-          echo "runtime-config written:"; ls -l runtime-config
-
       - name: SAM build
         run: sam build
 
       - name: SAM deploy
         env:
           GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
-          # Only RESERVATIONS_SHEET_ID is small enough to remain a CFN parameter.
-          RESERVATIONS_SHEET_ID: ${{ vars.RESERVATIONS_SHEET_ID }}
-          RESERVATIONS_CHANNEL_ID: ${{ vars.RESERVATIONS_CHANNEL_ID }}
-          ONESTOP_CHANNEL_ID: ${{ vars.ONESTOP_CHANNEL_ID }}
-          ONESTOP_INFO_TABS: ${{ vars.ONESTOP_INFO_TABS }}
           ESCALATION_USER_ID: ${{ vars.ESCALATION_USER_ID }}
           ALARM_CHANNEL: ${{ vars.ALARM_CHANNEL }}
         run: |
@@ -95,18 +73,6 @@ jobs:
           OPTIONAL_PARAMS=()
           if [ -n "$GOOGLE_DRIVE_FOLDER_ID" ]; then
             OPTIONAL_PARAMS+=("GoogleDriveFolderId=$GOOGLE_DRIVE_FOLDER_ID")
-          fi
-          if [ -n "$RESERVATIONS_SHEET_ID" ]; then
-            OPTIONAL_PARAMS+=("ReservationsSheetId=$RESERVATIONS_SHEET_ID")
-          fi
-          if [ -n "$RESERVATIONS_CHANNEL_ID" ]; then
-            OPTIONAL_PARAMS+=("ReservationsChannelId=$RESERVATIONS_CHANNEL_ID")
-          fi
-          if [ -n "$ONESTOP_CHANNEL_ID" ]; then
-            OPTIONAL_PARAMS+=("OneStopChannelId=$ONESTOP_CHANNEL_ID")
-          fi
-          if [ -n "$ONESTOP_INFO_TABS" ]; then
-            OPTIONAL_PARAMS+=("OneStopInfoTabs=$ONESTOP_INFO_TABS")
           fi
           if [ -n "$ESCALATION_USER_ID" ]; then
             OPTIONAL_PARAMS+=("EscalationUserId=$ESCALATION_USER_ID")

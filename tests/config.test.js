@@ -1,67 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config.js";
-
-const RUNTIME_CONFIG_DIR = fileURLToPath(new URL("../runtime-config", import.meta.url));
-
-describe("loadConfig reservations vars", () => {
-  const base = {
-    SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C1", GOOGLE_SHEET_ID: "s",
-    GOOGLE_CLIENT_ID: "c", GOOGLE_CLIENT_SECRET: "cs", GOOGLE_REFRESH_TOKEN: "r", GROQ_API_KEY: "g",
-  };
-  let saved;
-  beforeEach(() => { saved = { ...process.env }; Object.assign(process.env, base); });
-  afterEach(() => { process.env = saved; });
-
-  it("defaults reservations config to null/empty when unset", () => {
-    delete process.env.RESERVATIONS_SHEET_ID;
-    const cfg = loadConfig();
-    expect(cfg.reservationsSheetId).toBeNull();
-  });
-
-  it("parses room and calendar JSON when set", () => {
-    process.env.RESERVATIONS_SHEET_ID = "RS1";
-    process.env.RESERVATION_ROOMS = JSON.stringify({ rooms: ["FH MPR"], aliases: { mpr: "FH MPR" } });
-    process.env.RESOURCE_CALENDARS = JSON.stringify({ projector: "cal@x" });
-    const cfg = loadConfig();
-    expect(cfg.reservationsSheetId).toBe("RS1");
-    expect(cfg.reservationRooms.rooms).toEqual(["FH MPR"]);
-    expect(cfg.resourceCalendars).toEqual({ projector: "cal@x" });
-  });
-
-  it("parses base64-encoded JSON (deploy delivers it base64 to survive SAM)", () => {
-    const rooms = { rooms: ["FH MPR", "Childcare Room"], aliases: { mpr: "FH MPR" } };
-    process.env.RESERVATION_ROOMS = Buffer.from(JSON.stringify(rooms)).toString("base64");
-    process.env.RESOURCE_CALENDARS = Buffer.from(JSON.stringify({ "DMV Accessories-Popcorn Machine": "c_1@x" })).toString("base64");
-    const cfg = loadConfig();
-    expect(cfg.reservationRooms.rooms).toEqual(["FH MPR", "Childcare Room"]);
-    expect(cfg.resourceCalendars).toEqual({ "DMV Accessories-Popcorn Machine": "c_1@x" });
-  });
-
-  it("falls back to defaults (no throw) when a JSON var is malformed", () => {
-    process.env.RESERVATION_ROOMS = "{"; // truncated — must NOT crash loadConfig/getDeps
-    process.env.VENUE_CALENDARS = "not json at all";
-    const cfg = loadConfig();
-    expect(cfg.reservationRooms).toEqual({ rooms: [], aliases: {} });
-    expect(cfg.venueCalendars).toEqual({});
-  });
-
-  it("reads a bundled runtime-config file in preference to the env var", () => {
-    const file = `${RUNTIME_CONFIG_DIR}/resource-calendars.json`;
-    const createdDir = !existsSync(RUNTIME_CONFIG_DIR);
-    mkdirSync(RUNTIME_CONFIG_DIR, { recursive: true });
-    writeFileSync(file, JSON.stringify({ "DMV Accessories-Popcorn Machine": "c_file@x" }));
-    process.env.RESOURCE_CALENDARS = JSON.stringify({ "ignored": "c_env@x" }); // file wins
-    try {
-      const cfg = loadConfig();
-      expect(cfg.resourceCalendars).toEqual({ "DMV Accessories-Popcorn Machine": "c_file@x" });
-    } finally {
-      rmSync(file, { force: true });
-      if (createdDir) rmSync(RUNTIME_CONFIG_DIR, { recursive: true, force: true });
-    }
-  });
-});
 
 describe("loadConfig", () => {
   const VALID_ENV = {
@@ -164,22 +102,4 @@ describe("loadConfig", () => {
     expect(loadConfig().googleDriveFolderId).toBe("FOLDER1");
   });
 
-  it("loads onestopChannelId from ONESTOP_CHANNEL_ID, falling back to RESERVATIONS_CHANNEL_ID", () => {
-    Object.assign(process.env, VALID_ENV);
-    delete process.env.ONESTOP_CHANNEL_ID;
-    delete process.env.RESERVATIONS_CHANNEL_ID;
-    expect(loadConfig().onestopChannelId).toBeNull();
-    process.env.RESERVATIONS_CHANNEL_ID = "Cold";
-    expect(loadConfig().onestopChannelId).toBe("Cold"); // fallback
-    process.env.ONESTOP_CHANNEL_ID = "Conestop";
-    expect(loadConfig().onestopChannelId).toBe("Conestop"); // new var wins
-  });
-
-  it("parses ONESTOP_INFO_TABS into a trimmed array (undefined when unset)", () => {
-    Object.assign(process.env, VALID_ENV);
-    delete process.env.ONESTOP_INFO_TABS;
-    expect(loadConfig().onestopInfoTabs).toBeUndefined();
-    process.env.ONESTOP_INFO_TABS = "BULLETIN, Links ,IH";
-    expect(loadConfig().onestopInfoTabs).toEqual(["BULLETIN", "Links", "IH"]);
-  });
 });

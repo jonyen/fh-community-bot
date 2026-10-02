@@ -5,7 +5,7 @@ import { log, metric, withCorrelationId } from "../lib/logger.js";
 const DIMENSIONS = { Lambda: "worker" };
 
 export async function handler(sqsEvent) {
-  const { client, handler: mentionHandler, genderHandler, slashRefreshHandler, reservationHandler, maintenanceFormHandler, onestopChannelId } = getDeps();
+  const { client, handler: mentionHandler, genderHandler, slashRefreshHandler, maintenanceFormHandler } = getDeps();
 
   for (const record of sqsEvent.Records || []) {
     // The SQS message id ties every line from this event back together, and it
@@ -23,9 +23,7 @@ export async function handler(sqsEvent) {
           handler: mentionHandler,
           genderHandler,
           slashRefreshHandler,
-          reservationHandler,
           maintenanceFormHandler,
-          onestopChannelId,
           client,
         });
         metric("EventProcessed", 1, { dimensions: DIMENSIONS });
