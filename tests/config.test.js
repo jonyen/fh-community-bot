@@ -103,3 +103,36 @@ describe("loadConfig", () => {
   });
 
 });
+
+describe("loadConfig — CREA tickets", () => {
+  const CREA_KEYS = ["CREA_TICKETS_ENABLED", "CREA_TWA_USERNAME", "CREA_TWA_PASSWORD", "CREA_TWA_PHONE", "CREA_TICKET_USER_IDS"];
+  const saved = {};
+  beforeEach(() => {
+    for (const k of [...CREA_KEYS, "SLACK_BOT_TOKEN", "SLACK_CHANNEL_IDS", "GOOGLE_SHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN", "GROQ_API_KEY"]) saved[k] = process.env[k];
+    Object.assign(process.env, {
+      SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C1", GOOGLE_SHEET_ID: "s", GOOGLE_CLIENT_ID: "c",
+      GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r", GROQ_API_KEY: "g",
+      CREA_TWA_USERNAME: "u", CREA_TWA_PASSWORD: "p", CREA_TWA_PHONE: "555", CREA_TICKET_USER_IDS: "U1, U2",
+    });
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("is off unless CREA_TICKETS_ENABLED is true, even with a login", () => {
+    delete process.env.CREA_TICKETS_ENABLED;
+    expect(loadConfig().creaTwa).toBeNull();
+    process.env.CREA_TICKETS_ENABLED = "false";
+    expect(loadConfig().creaTwa).toBeNull();
+  });
+
+  it("is on when enabled and the login is set", () => {
+    process.env.CREA_TICKETS_ENABLED = "true";
+    const { creaTwa } = loadConfig();
+    expect(creaTwa.username).toBe("u");
+    expect([...creaTwa.allowedUserIds]).toEqual(["U1", "U2"]);
+  });
+});

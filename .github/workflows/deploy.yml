@@ -67,6 +67,12 @@ jobs:
           GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
           ESCALATION_USER_ID: ${{ vars.ESCALATION_USER_ID }}
           ALARM_CHANNEL: ${{ vars.ALARM_CHANNEL }}
+          CREA_TICKETS_ENABLED: ${{ vars.CREA_TICKETS_ENABLED }}
+          CREA_TWA_USERNAME: ${{ secrets.CREA_TWA_USERNAME }}
+          CREA_TWA_PASSWORD: ${{ secrets.CREA_TWA_PASSWORD }}
+          CREA_TWA_PHONE: ${{ vars.CREA_TWA_PHONE }}
+          CREA_TWA_ALLOW_ENTRY: ${{ vars.CREA_TWA_ALLOW_ENTRY }}
+          CREA_TICKET_USER_IDS: ${{ vars.CREA_TICKET_USER_IDS }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
@@ -79,6 +85,18 @@ jobs:
           fi
           if [ -n "$ALARM_CHANNEL" ]; then
             OPTIONAL_PARAMS+=("AlarmChannel=$ALARM_CHANNEL")
+          fi
+          if [ -n "$CREA_TICKETS_ENABLED" ]; then
+            OPTIONAL_PARAMS+=("CreaTicketsEnabled=$CREA_TICKETS_ENABLED")
+          fi
+          if [ -n "$CREA_TWA_USERNAME" ]; then
+            OPTIONAL_PARAMS+=("CreaTwaUsername=$CREA_TWA_USERNAME" "CreaTwaPassword=$CREA_TWA_PASSWORD" "CreaTwaPhone=$CREA_TWA_PHONE")
+          fi
+          if [ -n "$CREA_TICKET_USER_IDS" ]; then
+            OPTIONAL_PARAMS+=("CreaTicketUserIds=$CREA_TICKET_USER_IDS")
+          fi
+          if [ -n "$CREA_TWA_ALLOW_ENTRY" ]; then
+            OPTIONAL_PARAMS+=("CreaTwaAllowEntry=$CREA_TWA_ALLOW_ENTRY")
           fi
           sam deploy \
             --no-confirm-changeset \

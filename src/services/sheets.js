@@ -94,6 +94,13 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     return index === -1 ? null : String(index + DATA_START_ROW);
   }
 
+  async function findIssueByRef(ref) {
+    if (!ref) return null;
+    const rows = await getAllRows();
+    const index = rows.findIndex((row) => refsMatch(row[10] || "", ref));
+    return index === -1 ? null : parseRow(rows[index], index);
+  }
+
   async function appendIssue({ reporter, description, severity, type, photos, slackRef, slackLink }) {
     const today = new Date().toLocaleDateString("en-US");
     const sheetId = await getSheetId();
@@ -182,5 +189,5 @@ export function createSheetsService(sheetsClient, spreadsheetId) {
     });
   }
 
-  return { getAllIssues, getOpenIssues, findIssueRowByRef, appendIssue, updateIssueStatus, appendNote, appendPhotos };
+  return { getAllIssues, getOpenIssues, findIssueRowByRef, findIssueByRef, appendIssue, updateIssueStatus, appendNote, appendPhotos };
 }

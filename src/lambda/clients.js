@@ -13,6 +13,8 @@ import { createMaintenanceFormHandler } from "../events/maintenanceForm.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
 import { createSlashRefreshHandler } from "../events/slashRefresh.js";
+import { createRentManagerTwaService } from "../services/rentManagerTwa.js";
+import { createCreaTicketHandler } from "../events/creaTicket.js";
 
 let cached;
 
@@ -63,6 +65,17 @@ export function getDeps() {
     spreadsheetId: config.googleSheetId,
   });
 
+  let creaTicketHandler;
+  if (config.creaTwa) {
+    creaTicketHandler = createCreaTicketHandler({
+      twaService: createRentManagerTwaService(config.creaTwa),
+      sheetsService,
+      channelIds: config.slackChannelIds,
+      allowedUserIds: config.creaTwa.allowedUserIds,
+      slackBotToken: config.slackBotToken,
+    });
+  }
+
   let genderHandler;
   let slashRefreshHandler;
   if (config.genderSheetId) {
@@ -76,7 +89,7 @@ export function getDeps() {
     slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
-  cached = { client: slack, handler, maintenanceFormHandler, genderHandler, slashRefreshHandler };
+  cached = { client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler };
   return cached;
 }
 

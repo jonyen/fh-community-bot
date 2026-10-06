@@ -15,7 +15,7 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, client }) {
   if (slackEnvelope.type === "slash_command") {
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
@@ -32,6 +32,11 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
 
   const event = slackEnvelope.event;
   if (!event) return;
+
+  if (event.type === "reaction_added") {
+    if (creaTicketHandler) await creaTicketHandler({ event, client });
+    return;
+  }
 
   if (
     genderHandler &&
