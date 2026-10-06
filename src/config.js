@@ -22,6 +22,26 @@ function parseChannelIds(raw) {
   return new Set(ids);
 }
 
+// The CREA portal integration is on only when CREA_TICKETS_ENABLED is "true"
+// and login and the phone number the portal requires are all set; otherwise
+// ticket reactions are ignored.
+function loadCreaTwa() {
+  const { CREA_TICKETS_ENABLED, CREA_TWA_USERNAME, CREA_TWA_PASSWORD, CREA_TWA_PHONE } = process.env;
+  if ((CREA_TICKETS_ENABLED || "").toLowerCase() !== "true") return null;
+  if (!CREA_TWA_USERNAME || !CREA_TWA_PASSWORD || !CREA_TWA_PHONE) return null;
+  return {
+    // Slack user IDs allowed to file tickets. Empty means nobody can.
+    allowedUserIds: new Set(
+      (process.env.CREA_TICKET_USER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean)
+    ),
+    baseUrl: process.env.CREA_TWA_URL || "https://creallc.twa.rentmanager.com",
+    username: CREA_TWA_USERNAME,
+    password: CREA_TWA_PASSWORD,
+    phone: CREA_TWA_PHONE,
+    allowEntry: (process.env.CREA_TWA_ALLOW_ENTRY || "").toLowerCase() === "true",
+  };
+}
+
 export function loadConfig() {
   for (const key of REQUIRED) {
     if (!process.env[key]) {
@@ -46,5 +66,6 @@ export function loadConfig() {
     genderSheetId: process.env.GENDER_SHEET_ID || null,
     genderSheetTab: process.env.GENDER_SHEET_TAB || "Gender Map",
     genderCacheTtlDays,
+    creaTwa: loadCreaTwa(),
   };
 }

@@ -334,3 +334,20 @@ describe("dispatchSlackEvent block_actions routing", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
+
+describe("dispatchSlackEvent — CREA ticket reactions", () => {
+  it("routes reaction_added to the CREA ticket handler", async () => {
+    const creaTicketHandler = vi.fn().mockResolvedValue();
+    const handler = vi.fn();
+    const event = { type: "reaction_added", reaction: "ticket", item: { type: "message", channel: "C1", ts: "1.1" } };
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler, creaTicketHandler, client: {} });
+    expect(creaTicketHandler).toHaveBeenCalledWith({ event, client: {} });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("drops reaction_added when the CREA integration is off", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({ slackEnvelope: { event: { type: "reaction_added", reaction: "ticket" } }, handler, client: {} });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});

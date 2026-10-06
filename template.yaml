@@ -15,6 +15,14 @@ Parameters:
   GoogleRefreshToken:   { Type: String, NoEcho: true }
   GoogleDriveFolderId:  { Type: String, Default: "" }
   GroqApiKey:           { Type: String, NoEcho: true }
+  # CREA (landlord) Rent Manager tenant portal. Filing tickets by :ticket:
+  # reaction is off unless CreaTicketsEnabled is "true" and a username is set.
+  CreaTicketsEnabled:    { Type: String, Default: "false", AllowedValues: ["true", "false"] }
+  CreaTwaUsername:       { Type: String, Default: "", NoEcho: true }
+  CreaTwaPassword:       { Type: String, Default: "", NoEcho: true }
+  CreaTwaPhone:          { Type: String, Default: "" }
+  CreaTwaAllowEntry:     { Type: String, Default: "false", AllowedValues: ["true", "false"] }
+  CreaTicketUserIds:     { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -64,7 +72,9 @@ Resources:
     Properties:
       Handler: src/lambda/worker.handler
       MemorySize: 256
-      Timeout: 30
+      # 60s: a :ticket: reaction logs in to the landlord portal, uploads
+      # photos and posts the ticket, several slow round-trips in one event.
+      Timeout: 60
       Environment:
         Variables:
           SLACK_BOT_TOKEN:        !Ref SlackBotToken
@@ -77,6 +87,12 @@ Resources:
           GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
           GROQ_API_KEY:           !Ref GroqApiKey
           ESCALATION_USER_ID:    !Ref EscalationUserId
+          CREA_TICKETS_ENABLED:  !Ref CreaTicketsEnabled
+          CREA_TWA_USERNAME:     !Ref CreaTwaUsername
+          CREA_TWA_PASSWORD:     !Ref CreaTwaPassword
+          CREA_TWA_PHONE:        !Ref CreaTwaPhone
+          CREA_TWA_ALLOW_ENTRY:  !Ref CreaTwaAllowEntry
+          CREA_TICKET_USER_IDS:  !Ref CreaTicketUserIds
       Events:
         FromQueue:
           Type: SQS

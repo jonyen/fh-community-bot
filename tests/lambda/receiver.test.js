@@ -342,3 +342,12 @@ describe("isDuplicateSlackRetry", () => {
     expect(isDuplicateSlackRetry({ "x-slack-retry-num": "1" })).toBe(true);
   });
 });
+
+describe("shouldEnqueueEvent — reactions", () => {
+  it("enqueues only ticket-emoji reactions", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent({ event: { type: "reaction_added", reaction: "ticket" } })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { type: "reaction_added", reaction: "admission_tickets" } })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { type: "reaction_added", reaction: "thumbsup" } })).toBe(false);
+  });
+});

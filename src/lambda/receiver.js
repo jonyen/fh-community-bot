@@ -1,6 +1,7 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { verifySlackSignature } from "./slack-signature.js";
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
+import { isCreaTicketReaction } from "../lib/crea-ticket.js";
 
 const sqs = new SQSClient({});
 
@@ -39,6 +40,9 @@ function readBody(event) {
 export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
+  // Every reaction in every channel the bot is in arrives here; only the
+  // ticket emoji means anything, so drop the rest before they cost a Lambda.
+  if (event.type === "reaction_added") return isCreaTicketReaction(event.reaction);
   if (event.type !== "message") return true;
   if (event.bot_id) return false; // never enqueue our own / other bots' messages
   const text = event.text || "";

@@ -103,6 +103,26 @@ Run the `verify-drive` workflow any time to confirm the token can upload into th
 
 The Event Subscriptions already in place for the gender feature (`message.channels` / `message.groups`) also deliver the `file_share` events that carry photos, so no additional event subscriptions are needed.
 
+## Filing with CREA (landlord)
+
+A facilities lead (listed in `CREA_TICKET_USER_IDS`) reacts to a logged report (the original message or anything in its thread) with :ticket: 🎫 or :admission_tickets: 🎟️ and the bot files it as a service issue in CREA LLC's Rent Manager tenant portal (`creallc.twa.rentmanager.com`). It sends the sheet row's description, type and severity, the reporter's name, and the photos on the original report. Only reports CREA is responsible for should get a ticket; nothing is sent automatically.
+
+- The bot marks the report with 📨 (`:incoming_envelope:`) when it takes the request. Slack won't let it add that reaction twice, so a second 🎫 on the same report does nothing.
+- On failure the bot removes 📨 and explains in the thread; react again to retry.
+- If the portal's reply isn't recognised, 📨 stays and the bot asks someone to check Service Issues in the portal before resending.
+- The sheet's NOTES column gets a "sent to CREA portal" line.
+- Anyone not on the list who adds 🎫 gets a private note saying only the facilities leads can send to CREA.
+
+Rent Manager's REST API would be cleaner, but CREA's instance isn't licensed for it ("You do not have licensing for this product"), so the bot logs in to the tenant portal and posts its HTML forms (`src/services/rentManagerTwa.js`).
+
+Setup:
+
+1. Store the portal login as repo secrets `CREA_TWA_USERNAME` / `CREA_TWA_PASSWORD`, and the contact phone the portal requires as repo variable `CREA_TWA_PHONE`. Set repo variable `CREA_TICKET_USER_IDS` to the comma-separated Slack member IDs allowed to file (empty means nobody). Optional variable `CREA_TWA_ALLOW_ENTRY` (`true`/`false`, default `false`) answers "Is technician allowed to enter if tenant is not present?".
+2. Slack app: add the `reactions:read` bot scope, subscribe to the `reaction_added` bot event, and reinstall.
+3. Check the login without filing anything: `doppler run -- node scripts/crea-twa-login-check.mjs`.
+
+The feature is switched by repo variable `CREA_TICKETS_ENABLED` (`true`/`false`, default `false`). Unless it is `true` and the portal login is set, ticket reactions are ignored. Changing it takes effect on the next deploy.
+
 ## Usage
 
 In the configured Slack channel:
