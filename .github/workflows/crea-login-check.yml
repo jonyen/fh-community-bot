@@ -1,0 +1,28 @@
+name: crea-login-check
+
+# Diagnostic: confirm the CREA Rent Manager tenant portal login
+# (CREA_TWA_USERNAME / CREA_TWA_PASSWORD) works from a cloud runner. Logs in
+# and stops; files nothing. Run manually after changing the credentials and
+# before turning on CREA_TICKETS_ENABLED.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # rentManagerTwa.js uses only Node built-ins, so no npm install.
+      - name: Log in to the CREA portal
+        env:
+          CREA_TWA_USERNAME: ${{ secrets.CREA_TWA_USERNAME }}
+          CREA_TWA_PASSWORD: ${{ secrets.CREA_TWA_PASSWORD }}
+        run: node scripts/crea-twa-login-check.mjs
