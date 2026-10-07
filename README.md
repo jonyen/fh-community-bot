@@ -119,7 +119,7 @@ Setup:
 
 1. Store the portal login as repo secrets `CREA_TWA_USERNAME` / `CREA_TWA_PASSWORD`, and the contact phone the portal requires as repo variable `CREA_TWA_PHONE`. Set repo variable `CREA_TICKET_USER_IDS` to the comma-separated Slack member IDs allowed to file (empty means nobody). Optional variable `CREA_TWA_ALLOW_ENTRY` (`true`/`false`, default `false`) answers "Is technician allowed to enter if tenant is not present?".
 2. Slack app: add the `reactions:read` bot scope, subscribe to the `reaction_added` bot event, and reinstall.
-3. Check the login without filing anything: `doppler run -- node scripts/crea-twa-login-check.mjs`.
+3. Check the login without filing anything: run the `crea-login-check` workflow (`gh workflow run crea-login-check`), or locally `doppler run -- node scripts/crea-twa-login-check.mjs`.
 
 The feature is switched by repo variable `CREA_TICKETS_ENABLED` (`true`/`false`, default `false`). Unless it is `true` and the portal login is set, ticket reactions are ignored. Changing it takes effect on the next deploy.
 

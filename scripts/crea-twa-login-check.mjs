@@ -2,6 +2,7 @@
 // Confirms the credentials and that login from this machine works.
 //
 //   doppler run -- node scripts/crea-twa-login-check.mjs
+//   (or in CI: gh workflow run crea-login-check)
 import { createRentManagerTwaService } from "../src/services/rentManagerTwa.js";
 
 const { CREA_TWA_USERNAME, CREA_TWA_PASSWORD, CREA_TWA_URL } = process.env;
