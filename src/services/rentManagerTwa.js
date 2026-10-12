@@ -11,8 +11,8 @@
 const DEFAULT_BASE_URL = "https://creallc.twa.rentmanager.com";
 const MAX_REDIRECTS = 5;
 const TITLE_MAX = 225; // server-side max length of the Issue field
-const ALLOWED_PHOTO_TYPES = new Set(["image/gif", "image/jpeg", "image/png"]);
-const MAX_PHOTO_BYTES = 5_000_000;
+export const ALLOWED_PHOTO_TYPES = new Set(["image/gif", "image/jpeg", "image/png"]);
+export const MAX_PHOTO_BYTES = 5_000_000;
 
 // The portal's own "Issue" dropdown. The bot's issue types were copied from it,
 // so a report's type maps across unchanged.

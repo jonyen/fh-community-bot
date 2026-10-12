@@ -111,7 +111,8 @@ describe("CreaTicketHandler", () => {
       const draft = postedDraft();
       expect(draft).toMatchObject({ channel: "C123", thread_ts: "100.1" });
       expect(draftInputValue(draft.blocks, "crea_description")).toBe("The kitchen sink is leaking.");
-      expect(JSON.stringify(draft.blocks)).toContain("Severity: Medium");
+      expect(JSON.stringify(draft.blocks)).not.toContain("Severity");
+      expect(JSON.stringify(draft.blocks)).not.toContain("Test User");
       expect(JSON.stringify(draft.blocks)).toContain("send_crea_ticket");
       expect(twa.submitServiceIssue).not.toHaveBeenCalled();
     });
@@ -198,14 +199,14 @@ describe("CreaTicketHandler", () => {
       expect(twa.submitServiceIssue).not.toHaveBeenCalled();
     });
 
-    it("files the draft as edited, with severity and reporter from the sheet", async () => {
+    it("files the draft exactly as edited, with no severity or reporter added", async () => {
       const payload = makeDraftPayload({ description: "Kitchen sink leaks under the basin." });
       await crea.handleDraftAction({ payload, client });
 
       expect(twa.submitServiceIssue).toHaveBeenCalledWith({
         type: "Plumbing",
         title: "Kitchen sink leaks under the basin.",
-        description: "Kitchen sink leaks under the basin.\n\nSeverity: Medium\nReported by: Test User",
+        description: "Kitchen sink leaks under the basin.",
         photos: [],
       });
     });
@@ -250,7 +251,7 @@ describe("CreaTicketHandler", () => {
       const last = client.chat.update.mock.calls.at(-1)[0];
       expect(last.text).toContain("Sent to CREA as a service issue by <@U1>.");
       expect(last.text).toContain("> The kitchen sink is leaking.");
-      expect(last.text).toContain("> Severity: Medium");
+      expect(last.text).not.toContain("Severity");
       expect(sheets.appendNote).toHaveBeenCalledWith("9", expect.stringContaining("sent to CREA portal"));
     });
 
@@ -300,6 +301,30 @@ describe("CreaTicketHandler", () => {
       expect(photos).toHaveLength(1);
       expect(photos[0]).toMatchObject({ name: "leak.jpg", mimeType: "image/jpeg" });
       expect(photos[0].buffer.toString()).toBe("jpegbytes");
+    });
+
+    it("sends an iPhone HEIC as a JPEG made from Slack's largest preview", async () => {
+      const { PNG } = await import("pngjs");
+      const png = new PNG({ width: 2, height: 2 });
+      png.data.fill(200);
+      client.conversations.replies.mockResolvedValue({
+        messages: [{
+          ts: "100.1",
+          files: [{
+            id: "F1", name: "IMG_7061.HEIC", mimetype: "image/heic", size: 2_116_704,
+            url_private_download: "https://files.slack/orig.heic",
+            thumb_480: "https://files.slack/t480.png", thumb_1024: "https://files.slack/t1024.png",
+          }],
+        }],
+      });
+      fetchImpl.mockResolvedValue(new Response(PNG.sync.write(png), { headers: { "content-type": "image/png" } }));
+
+      await crea.handleDraftAction({ payload: makeDraftPayload(), client });
+
+      expect(fetchImpl).toHaveBeenCalledWith("https://files.slack/t1024.png", { headers: { Authorization: "Bearer xoxb" } });
+      const [photo] = twa.submitServiceIssue.mock.calls[0][0].photos;
+      expect(photo).toMatchObject({ name: "IMG_7061.jpg", mimeType: "image/jpeg" });
+      expect([...photo.buffer.subarray(0, 2)]).toEqual([0xff, 0xd8]);
     });
 
     it("Cancel deletes the draft and frees the report for a new :ticket:", async () => {

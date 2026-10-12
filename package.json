@@ -19,7 +19,9 @@
     "@slack/web-api": "^7.16.0",
     "dotenv": "^17.4.1",
     "googleapis": "^171.4.0",
-    "openai": "^6.33.0"
+    "jpeg-js": "^0.4.4",
+    "openai": "^6.33.0",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "vitest": "^4.1.3"

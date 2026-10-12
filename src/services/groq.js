@@ -1,3 +1,10 @@
+// Groq retired llama-3.3-70b-versatile (404 "does not exist"), and every
+// call here fails soft, so a dead model looks like a model with no opinion.
+// gpt-oss is a reasoning model: its reasoning counts against max_tokens, so
+// the limits below leave room for it on top of the short answers.
+const MODEL = "openai/gpt-oss-120b";
+const REASONING = { reasoning_effort: "low" };
+
 const SYSTEM_PROMPT_DEDUP = `You are a duplicate issue detector. Given a new issue report and a list of existing open issues, determine if the new report is about the same problem as any existing issue. If it matches an existing issue, respond with ONLY the ID number. If it does not match any, respond with ONLY the word "none". Do not explain.`;
 
 const SYSTEM_PROMPT_TRIAGE = `You triage maintenance reports for a community building. Given one report, output ONLY a JSON object: {"type": <type or null>, "severity": <severity or null>}.
@@ -23,7 +30,7 @@ Rules:
 - Never add facts the report does not state: no guessed locations, causes, dates or urgency.
 - Keep every concrete detail the report gives: room, floor, fixture, symptoms, timing, what was already tried.
 - Drop chat filler, jokes, slang, emoji, @-mentions, people's names and complaints about the landlord.
-- Do not add a greeting, sign-off, severity or reporter line; those are added separately.
+- Do not add a greeting, sign-off, severity, urgency or reporter line.
 
 Output only the JSON object, no prose.`;
 
@@ -35,7 +42,8 @@ export function createGroqService(client) {
         .join("\n");
 
       const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: MODEL,
+        ...REASONING,
         messages: [
           { role: "system", content: SYSTEM_PROMPT_DEDUP },
           {
@@ -43,7 +51,7 @@ export function createGroqService(client) {
             content: `New report: "${newDescription}"\n\nExisting open issues:\n${issueList}`,
           },
         ],
-        max_tokens: 32,
+        max_tokens: 512,
       });
 
       const answer = res.choices[0].message.content.trim().toLowerCase();
@@ -67,7 +75,8 @@ export function createGroqService(client) {
     if (!String(text || "").trim()) return { type: null, severity: null };
     try {
       const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: MODEL,
+        ...REASONING,
         messages: [
           { role: "system", content: SYSTEM_PROMPT_TRIAGE },
           {
@@ -75,7 +84,7 @@ export function createGroqService(client) {
             content: `Types: ${types.join(", ")}\nSeverities: ${severities.join(", ")}\n\nReport: ${text}`,
           },
         ],
-        max_tokens: 64,
+        max_tokens: 512,
       });
       const raw = res.choices[0].message.content.trim();
       const jsonStart = raw.indexOf("{");
@@ -100,7 +109,8 @@ export function createGroqService(client) {
     if (!String(text || "").trim()) return null;
     try {
       const res = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: MODEL,
+        ...REASONING,
         messages: [
           { role: "system", content: SYSTEM_PROMPT_LANDLORD },
           {
@@ -108,7 +118,7 @@ export function createGroqService(client) {
             content: `${type ? `Issue type: ${type}\n\n` : ""}Report: ${text}`,
           },
         ],
-        max_tokens: 600,
+        max_tokens: 1500,
       });
       const raw = res.choices[0].message.content.trim();
       const jsonStart = raw.indexOf("{");
