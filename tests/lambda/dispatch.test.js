@@ -324,6 +324,18 @@ describe("dispatchSlackEvent block_actions routing", () => {
     expect(maintenanceFormHandler).toHaveBeenCalledWith({ payload: envelope.payload, client });
   });
 
+  it("also hands block_actions to the CREA draft handler", async () => {
+    const maintenanceFormHandler = vi.fn().mockResolvedValue();
+    const creaTicketHandler = { handleReaction: vi.fn(), handleDraftAction: vi.fn().mockResolvedValue() };
+    const client = {};
+    const envelope = { type: "block_actions", payload: { actions: [{ action_id: "send_crea_ticket" }] } };
+
+    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), maintenanceFormHandler, creaTicketHandler, client });
+
+    expect(creaTicketHandler.handleDraftAction).toHaveBeenCalledWith({ payload: envelope.payload, client });
+    expect(creaTicketHandler.handleReaction).not.toHaveBeenCalled();
+  });
+
   it("is a no-op for block_actions when no maintenanceFormHandler provided", async () => {
     const handler = vi.fn();
     await dispatchSlackEvent({
@@ -337,11 +349,11 @@ describe("dispatchSlackEvent block_actions routing", () => {
 
 describe("dispatchSlackEvent — CREA ticket reactions", () => {
   it("routes reaction_added to the CREA ticket handler", async () => {
-    const creaTicketHandler = vi.fn().mockResolvedValue();
+    const creaTicketHandler = { handleReaction: vi.fn().mockResolvedValue(), handleDraftAction: vi.fn() };
     const handler = vi.fn();
     const event = { type: "reaction_added", reaction: "ticket", item: { type: "message", channel: "C1", ts: "1.1" } };
     await dispatchSlackEvent({ slackEnvelope: { event }, handler, creaTicketHandler, client: {} });
-    expect(creaTicketHandler).toHaveBeenCalledWith({ event, client: {} });
+    expect(creaTicketHandler.handleReaction).toHaveBeenCalledWith({ event, client: {} });
     expect(handler).not.toHaveBeenCalled();
   });
 

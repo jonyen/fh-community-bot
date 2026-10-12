@@ -105,13 +105,16 @@ The Event Subscriptions already in place for the gender feature (`message.channe
 
 ## Filing with CREA (landlord)
 
-A facilities lead (listed in `CREA_TICKET_USER_IDS`) reacts to a logged report (the original message or anything in its thread) with :ticket: 🎫 or :admission_tickets: 🎟️ and the bot files it as a service issue in CREA LLC's Rent Manager tenant portal (`creallc.twa.rentmanager.com`). It sends the sheet row's description, type and severity, the reporter's name, and the photos on the original report. Only reports CREA is responsible for should get a ticket; nothing is sent automatically.
+A facilities lead (listed in `CREA_TICKET_USER_IDS`) reacts to a logged report (the original message or anything in its thread) with :ticket: 🎫 or :admission_tickets: 🎟️ and the bot posts a draft service issue in the thread for CREA LLC's Rent Manager tenant portal (`creallc.twa.rentmanager.com`). Nothing is filed until someone on the list hits **Send to CREA** on the draft. Only reports CREA is responsible for should get a ticket.
 
-- The bot marks the report with 📨 (`:incoming_envelope:`) when it takes the request. Slack won't let it add that reaction twice, so a second 🎫 on the same report does nothing.
-- On failure the bot removes 📨 and explains in the thread; react again to retry.
-- If the portal's reply isn't recognised, 📨 stays and the bot asks someone to check Service Issues in the portal before resending.
-- The sheet's NOTES column gets a "sent to CREA portal" line.
-- Anyone not on the list who adds 🎫 gets a private note saying only the facilities leads can send to CREA.
+- The draft starts from the sheet row's description, rewritten by the model into a clear, factual request (`writeLandlordTicket` in `src/services/groq.js`). If the model fails, it starts from the description as written. The sheet keeps the original wording.
+- The description is editable, and so is the title when the type is Other (the portal files every other type under the type's name). Type, severity and the reporter's name are re-read from the sheet when Send is pressed and added below the description, and the photos on the original report are attached.
+- Anyone on the list can send or cancel a draft, not only whoever reacted. Cancel deletes the draft so a later 🎫 starts over.
+- The bot marks the report with 📨 (`:incoming_envelope:`) when it posts the draft. Slack won't let it add that reaction twice, so a second 🎫 on the same report does nothing while a draft is open or after it is sent.
+- After sending, the draft is replaced with exactly what CREA received, and the sheet's NOTES column gets a "sent to CREA portal" line.
+- On failure the draft comes back with the edits kept and the bot explains in the thread; hit Send again to retry.
+- If the portal's reply isn't recognised, the bot asks someone to check Service Issues in the portal before resending.
+- Anyone not on the list who adds 🎫 or presses a draft button gets a private note saying only the facilities leads can send to CREA.
 
 Rent Manager's REST API would be cleaner, but CREA's instance isn't licensed for it ("You do not have licensing for this product"), so the bot logs in to the tenant portal and posts its HTML forms (`src/services/rentManagerTwa.js`).
 

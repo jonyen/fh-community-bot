@@ -23,9 +23,13 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     return;
   }
 
+  // Each block_actions handler ignores action_ids that aren't its own.
   if (slackEnvelope.type === "block_actions") {
     if (maintenanceFormHandler) {
       await maintenanceFormHandler({ payload: slackEnvelope.payload, client });
+    }
+    if (creaTicketHandler) {
+      await creaTicketHandler.handleDraftAction({ payload: slackEnvelope.payload, client });
     }
     return;
   }
@@ -34,7 +38,7 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
   if (!event) return;
 
   if (event.type === "reaction_added") {
-    if (creaTicketHandler) await creaTicketHandler({ event, client });
+    if (creaTicketHandler) await creaTicketHandler.handleReaction({ event, client });
     return;
   }
 

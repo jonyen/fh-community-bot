@@ -70,6 +70,7 @@ export function getDeps() {
     creaTicketHandler = createCreaTicketHandler({
       twaService: createRentManagerTwaService(config.creaTwa),
       sheetsService,
+      ticketWriter: groqService,
       channelIds: config.slackChannelIds,
       allowedUserIds: config.creaTwa.allowedUserIds,
       slackBotToken: config.slackBotToken,

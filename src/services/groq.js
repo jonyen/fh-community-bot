@@ -14,6 +14,19 @@ Judge the situation described, not how upset the reporter sounds. If the report 
 
 Output only the JSON object, no prose.`;
 
+const SYSTEM_PROMPT_LANDLORD = `You turn a maintenance report written by a tenant's members, often casually in a group chat, into a service request for the building's landlord. Output ONLY a JSON object: {"title": <string>, "description": <string>}.
+
+- title: a short, specific summary of the problem, under 80 characters, no trailing period. Example: "Leaking faucet in 2nd floor women's restroom".
+- description: clear, polite, factual prose a maintenance technician can act on. Say what is wrong, where, and since when, using only details in the report.
+
+Rules:
+- Never add facts the report does not state: no guessed locations, causes, dates or urgency.
+- Keep every concrete detail the report gives: room, floor, fixture, symptoms, timing, what was already tried.
+- Drop chat filler, jokes, slang, emoji, @-mentions, people's names and complaints about the landlord.
+- Do not add a greeting, sign-off, severity or reporter line; those are added separately.
+
+Output only the JSON object, no prose.`;
+
 export function createGroqService(client) {
   async function checkDuplicate(newDescription, openIssues) {
     try {
@@ -80,8 +93,40 @@ export function createGroqService(client) {
     }
   }
 
+  // Rewrites a report into a title and description fit to send the landlord.
+  // Returns null when the call fails or the reply isn't usable, so the caller
+  // can fall back to the report as written.
+  async function writeLandlordTicket(text, { type } = {}) {
+    if (!String(text || "").trim()) return null;
+    try {
+      const res = await client.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT_LANDLORD },
+          {
+            role: "user",
+            content: `${type ? `Issue type: ${type}\n\n` : ""}Report: ${text}`,
+          },
+        ],
+        max_tokens: 600,
+      });
+      const raw = res.choices[0].message.content.trim();
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      if (jsonStart === -1 || jsonEnd === -1) return null;
+      const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+      const title = String(parsed.title ?? "").trim();
+      const description = String(parsed.description ?? "").trim();
+      if (!title || !description) return null;
+      return { title, description };
+    } catch {
+      return null;
+    }
+  }
+
   return {
     checkDuplicate,
     classifyIssueReport,
+    writeLandlordTicket,
   };
 }
