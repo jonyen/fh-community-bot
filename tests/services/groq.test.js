@@ -145,3 +145,47 @@ describe("classifyIssueReport", () => {
     expect(userMessage).toContain("the elevator is grinding");
   });
 });
+
+describe("writeLandlordTicket", () => {
+  function svcWith(create) {
+    return createGroqService({ chat: { completions: { create } } });
+  }
+  const reply = (content) => vi.fn().mockResolvedValue({ choices: [{ message: { content } }] });
+
+  it("returns the model's title and description", async () => {
+    const svc = svcWith(reply('{"title": "Leaking sink in kitchen", "description": "The kitchen sink is leaking."}'));
+    expect(await svc.writeLandlordTicket("yo the kitchen sink is leaking again lol", { type: "Plumbing" })).toEqual({
+      title: "Leaking sink in kitchen",
+      description: "The kitchen sink is leaking.",
+    });
+  });
+
+  it("sends the report and its type to the model", async () => {
+    const create = reply('{"title": "t", "description": "d"}');
+    await svcWith(create).writeLandlordTicket("sink leaking", { type: "Plumbing" });
+    const userMsg = create.mock.calls[0][0].messages[1].content;
+    expect(userMsg).toContain("Issue type: Plumbing");
+    expect(userMsg).toContain("sink leaking");
+  });
+
+  it("digs the JSON out of a chatty reply", async () => {
+    const svc = svcWith(reply('Sure:\n{"title": "t", "description": "d"}\nDone.'));
+    expect(await svc.writeLandlordTicket("x")).toEqual({ title: "t", description: "d" });
+  });
+
+  it("returns null when a field is missing or empty", async () => {
+    expect(await svcWith(reply('{"title": "t"}')).writeLandlordTicket("x")).toBeNull();
+    expect(await svcWith(reply('{"title": " ", "description": "d"}')).writeLandlordTicket("x")).toBeNull();
+  });
+
+  it("returns null on malformed JSON or an API failure", async () => {
+    expect(await svcWith(reply("{nope")).writeLandlordTicket("x")).toBeNull();
+    expect(await svcWith(vi.fn().mockRejectedValue(new Error("down"))).writeLandlordTicket("x")).toBeNull();
+  });
+
+  it("does not call the model for empty text", async () => {
+    const create = vi.fn();
+    expect(await svcWith(create).writeLandlordTicket("  ")).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+  });
+});

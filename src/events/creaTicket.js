@@ -12,7 +12,23 @@ const DIMENSIONS = { Flow: "creaTicket" };
 // ticket emoji. The reaction can go on any message in the report's thread;
 // the report itself is read back from the sheet row keyed by the thread ts,
 // so whatever facilities edited in the sheet is what CREA receives.
-export function createCreaTicketHandler({ twaService, sheetsService, channelIds, allowedUserIds, slackBotToken, fetchImpl = fetch }) {
+//
+// `ticketWriter` (anything with writeLandlordTicket) rewrites that report into
+// something fit for the landlord to read. When it's missing or fails, the
+// report goes as written rather than not at all.
+export function createCreaTicketHandler({ twaService, sheetsService, ticketWriter, channelIds, allowedUserIds, slackBotToken, fetchImpl = fetch }) {
+  async function landlordWording(issue) {
+    if (ticketWriter?.writeLandlordTicket) {
+      try {
+        const written = await ticketWriter.writeLandlordTicket(issue.description, { type: issue.type });
+        if (written) return { ...written, rewritten: true };
+      } catch (err) {
+        console.error("CREA rewrite failed:", err.message);
+      }
+    }
+    return { title: issue.description, description: issue.description, rewritten: false };
+  }
+
   // Photos go to the portal as raw bytes, so they're downloaded from Slack
   // rather than taken from the Drive copies made when the report was logged.
   async function downloadPhotos(files) {
@@ -105,13 +121,16 @@ export function createCreaTicketHandler({ twaService, sheetsService, channelIds,
       console.error("CREA claim reaction failed:", err.message);
     }
 
+    const wording = await landlordWording(issue);
+    if (!wording.rewritten) log.info("CREA: sending the report as written", { threadTs });
+
     let result;
     try {
       result = await twaService.submitServiceIssue({
         type: issue.type || "Other",
-        title: buildCreaTitle(issue.description),
+        title: buildCreaTitle(wording.title),
         description: buildCreaDescription({
-          description: issue.description,
+          description: wording.description,
           severity: issue.priority,
           reporter: issue.submitter,
         }),

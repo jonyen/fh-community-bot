@@ -73,6 +73,55 @@ describe("CreaTicketHandler", () => {
     });
   });
 
+  it("sends the landlord-ready rewrite instead of the report as written", async () => {
+    const ticketWriter = {
+      writeLandlordTicket: vi.fn().mockResolvedValue({
+        title: "Leaking kitchen sink",
+        description: "The kitchen sink is leaking.",
+      }),
+    };
+    handler = createCreaTicketHandler({
+      twaService: twa,
+      sheetsService: sheets,
+      ticketWriter,
+      channelIds: new Set(["C123"]),
+      allowedUserIds: new Set(["U1"]),
+      slackBotToken: "xoxb",
+      fetchImpl,
+    });
+
+    await handler({ event: makeEvent(), client });
+
+    expect(ticketWriter.writeLandlordTicket).toHaveBeenCalledWith("sink leaking", { type: "Plumbing" });
+    expect(twa.submitServiceIssue).toHaveBeenCalledWith({
+      type: "Plumbing",
+      title: "Leaking kitchen sink",
+      description: "The kitchen sink is leaking.\n\nSeverity: Medium\nReported by: Test User",
+      photos: [],
+    });
+  });
+
+  it("falls back to the report as written when the rewrite fails", async () => {
+    for (const writeLandlordTicket of [vi.fn().mockResolvedValue(null), vi.fn().mockRejectedValue(new Error("down"))]) {
+      twa.submitServiceIssue.mockClear();
+      handler = createCreaTicketHandler({
+        twaService: twa,
+        sheetsService: sheets,
+        ticketWriter: { writeLandlordTicket },
+        channelIds: new Set(["C123"]),
+        allowedUserIds: new Set(["U1"]),
+        slackBotToken: "xoxb",
+        fetchImpl,
+      });
+
+      await handler({ event: makeEvent(), client });
+
+      expect(twa.submitServiceIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "sink leaking", description: "sink leaking\n\nSeverity: Medium\nReported by: Test User" })
+      );
+    }
+  });
+
   it("claims the report with a reaction on the thread root before filing", async () => {
     twa.submitServiceIssue.mockImplementation(async () => {
       expect(client.reactions.add).toHaveBeenCalledWith({ channel: "C123", timestamp: "100.1", name: "incoming_envelope" });
