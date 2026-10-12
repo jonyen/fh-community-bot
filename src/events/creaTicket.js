@@ -3,12 +3,12 @@ import {
   CREA_SEND_ACTION_ID,
   CREA_CANCEL_ACTION_ID,
   isCreaTicketReaction,
-  buildCreaDescription,
   buildCreaTitle,
   buildCreaDraftBlocks,
   extractCreaDraftValues,
 } from "../lib/crea-ticket.js";
 import { findFormBlock } from "../lib/maintenance-form.js";
+import { portalPhotoSource, toJpeg } from "../lib/portal-photo.js";
 import { log, metric } from "../lib/logger.js";
 
 const DIMENSIONS = { Flow: "creaTicket" };
@@ -49,19 +49,24 @@ export function createCreaTicketHandler({ twaService, sheetsService, ticketWrite
 
   // Photos go to the portal as raw bytes, so they're downloaded from Slack
   // rather than taken from the Drive copies made when the report was logged.
+  // Ones the portal won't take as-is (HEIC, oversized) go as JPEG previews.
   async function downloadPhotos(files) {
     const photos = [];
     for (const file of imageFiles(files)) {
       try {
-        const resp = await fetchImpl(file.url_private_download || file.url_private, {
+        const source = portalPhotoSource(file);
+        if (!source) throw new Error(`no portal-compatible version of ${file.mimetype}`);
+        const resp = await fetchImpl(source.url, {
           headers: { Authorization: `Bearer ${slackBotToken}` },
         });
         if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
-        photos.push({
-          buffer: Buffer.from(await resp.arrayBuffer()),
-          name: file.name || `${file.id}.img`,
-          mimeType: file.mimetype,
-        });
+        const bytes = Buffer.from(await resp.arrayBuffer());
+        if (source.convert) {
+          const fetchedType = (resp.headers.get("content-type") || "").split(";")[0].trim();
+          photos.push({ buffer: Buffer.from(toJpeg(bytes, fetchedType)), name: source.name, mimeType: "image/jpeg" });
+        } else {
+          photos.push({ buffer: bytes, name: source.name, mimeType: file.mimetype });
+        }
       } catch (err) {
         console.error("CREA photo download failed:", err.message);
       }
@@ -162,8 +167,6 @@ export function createCreaTicketHandler({ twaService, sheetsService, ticketWrite
     const blocks = buildCreaDraftBlocks({
       ...wording,
       type: issue.type,
-      severity: issue.priority,
-      reporter: issue.submitter,
       photoCount: imageFiles(root.files).length,
       requesterId: userId,
       draftKey: threadTs,
@@ -235,15 +238,11 @@ export function createCreaTicketHandler({ twaService, sheetsService, ticketWrite
       log.error("CREA: couldn't reload the report", { error: err });
     }
 
-    // Severity, type and reporter come from the sheet at send time; the
-    // wording comes from the draft as edited.
+    // The type comes from the sheet at send time; the wording comes from the
+    // draft as edited, and goes as-is.
     const type = issue?.type || "Other";
     const title = edited.title || buildCreaTitle(edited.description);
-    const description = buildCreaDescription({
-      description: edited.description,
-      severity: issue?.priority,
-      reporter: issue?.submitter,
-    });
+    const description = edited.description;
 
     let result;
     if (!issue) {
@@ -265,8 +264,6 @@ export function createCreaTicketHandler({ twaService, sheetsService, ticketWrite
         title: edited.title,
         description: edited.description,
         type: issue?.type,
-        severity: issue?.priority,
-        reporter: issue?.submitter,
         photoCount: imageFiles(root?.files).length,
         draftKey: `${threadTs}.${Date.now()}`,
       });

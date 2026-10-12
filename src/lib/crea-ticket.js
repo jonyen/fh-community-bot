@@ -15,17 +15,6 @@ export function isCreaTicketReaction(name) {
   return CREA_TICKET_REACTIONS.has((name || "").split("::")[0]);
 }
 
-// The portal has no severity field, so severity and the Slack reporter ride
-// along in the description.
-export function buildCreaDescription({ description, severity, reporter }) {
-  const lines = [description];
-  const meta = [];
-  if (severity) meta.push(`Severity: ${severity}`);
-  if (reporter) meta.push(`Reported by: ${reporter}`);
-  if (meta.length) lines.push("", ...meta);
-  return lines.join("\n");
-}
-
 // Only used when the type is "Other", where the portal wants a free-text title.
 export function buildCreaTitle(description) {
   const firstLine = description.split("\n")[0].trim();
@@ -49,13 +38,11 @@ const TITLE_INPUT_MAX = 225;
 // Block ids are scoped to the thread, for the reason given at formBlockId:
 // Slack keeps input state by block_id, and a shared id would carry one
 // draft's edits into the next.
-export function buildCreaDraftBlocks({ title, description, type, severity, reporter, photoCount = 0, requesterId, draftKey }) {
+export function buildCreaDraftBlocks({ title, description, type, photoCount = 0, requesterId, draftKey }) {
   const id = (name) => formBlockId(name, draftKey);
   const isOther = !type || type === "Other";
   const added = [
     `Filed as *${isOther ? "Other" : type}*`,
-    severity ? `Severity: ${severity}` : null,
-    reporter ? `Reported by: ${reporter}` : null,
     photoCount ? `${photoCount} photo(s) attached` : null,
   ].filter(Boolean);
 
