@@ -7,7 +7,7 @@ import { ISSUE_TYPES, SEVERITIES } from "./maintenance-form.js";
 // rather than seeding a wrong answer the reporter has to notice and undo.
 //
 // Keyword matching, not an LLM call: this runs on the path that posts the form
-// in the thread, where a second round-trip to Groq would show up as a visible
+// in the thread, where a second round-trip to the model would show up as a visible
 // delay, and where a wrong guess is worse than no guess.
 
 const TYPE_KEYWORDS = {

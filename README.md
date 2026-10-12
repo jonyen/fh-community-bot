@@ -19,7 +19,7 @@ Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
                   EventQueue (SQS) ──▶ WorkerFn (Lambda)
                                               │
                                               ▼
-                              Groq · Google Sheets · Slack Web API
+                       Bedrock (Claude) · Google Sheets · Slack Web API
 ```
 
 Two AWS Lambdas. SQS in between for the 3-second Slack ack budget. No VPC, no
@@ -45,8 +45,12 @@ idempotency key.
 - GitHub Actions + OIDC for deploys
 - [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
 - [Google Sheets API](https://developers.google.com/sheets/api)
-- [Groq](https://groq.com/) (Llama 3.3 70B) — duplicate detection and form
-  pre-fill. The pre-fill call goes through
+- Claude Haiku on [Amazon Bedrock](https://aws.amazon.com/bedrock/) — duplicate detection, form
+  pre-fill and the CREA rewrite. Calls are authorised by the worker's IAM role (no API key); the
+  model is the `LLM_MODEL_ID` repo variable (default `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
+  The AWS account must have accepted the model's Marketplace agreement and have Bedrock quota for it.
+  Every failed call emits `LlmCallFailed`, which the `fh-community-llm-failed` alarm posts to Slack.
+  The pre-fill call goes through
   `createIssueClassifierService`, which depends only on a
   `classifyIssueReport(text, { types, severities })` method: pointing it at
   another provider means writing that one method in a new service and swapping
@@ -77,7 +81,7 @@ npm test
 | `GOOGLE_CLIENT_ID` | Google OAuth2 client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token |
-| `GROQ_API_KEY` | Groq API key (`gsk_...`) |
+| `LLM_MODEL_ID` | (Optional) Bedrock inference profile for the LLM calls |
 | `GOOGLE_DRIVE_FOLDER_ID` | (Optional) Drive folder ID for uploaded issue photos |
 
 To generate a Google refresh token:
@@ -107,7 +111,7 @@ The Event Subscriptions already in place for the gender feature (`message.channe
 
 A facilities lead (listed in `CREA_TICKET_USER_IDS`) reacts to a logged report (the original message or anything in its thread) with :ticket: 🎫 or :admission_tickets: 🎟️ and the bot posts a draft service issue in the thread for CREA LLC's Rent Manager tenant portal (`creallc.twa.rentmanager.com`). Nothing is filed until someone on the list hits **Send to CREA** on the draft. Only reports CREA is responsible for should get a ticket.
 
-- The draft starts from the sheet row's description, rewritten by the model into a clear, factual request (`writeLandlordTicket` in `src/services/groq.js`). If the model fails, it starts from the description as written. The sheet keeps the original wording.
+- The draft starts from the sheet row's description, rewritten by the model into a clear, factual request (`writeLandlordTicket` in `src/services/llm.js`). If the model fails, it starts from the description as written. The sheet keeps the original wording.
 - The description is editable, and so is the title when the type is Other (the portal files every other type under the type's name). The text goes to CREA exactly as it stands in the draft; severity and the reporter's name are not sent. The type is re-read from the sheet when Send is pressed.
 - The photos on the original report are attached. The portal only takes GIF, JPEG and PNG up to 5 MB, so anything else (iPhone HEIC, oversized images) is sent as a JPEG made from Slack's largest preview (about 1024px).
 - Anyone on the list can send or cancel a draft, not only whoever reacted. Cancel deletes the draft so a later 🎫 starts over.
@@ -229,7 +233,7 @@ src/
   config.js                  # env loading
   events/mention.js          # @mention business logic (Slack-runtime-agnostic)
   services/sheets.js         # Google Sheets CRUD
-  services/groq.js           # LLM client
+  services/llm.js            # LLM client (Claude on Bedrock)
   services/dedup.js          # duplicate detection
   lambda/
     receiver.js              # entry: verify Slack sig, enqueue to SQS

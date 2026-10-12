@@ -5,7 +5,7 @@ import { classifyIssue as classifyByKeyword } from "../lib/issue-classify.js";
 // form comes up pre-filled.
 //
 // The model does the reading. `llmService` is anything exposing
-// classifyIssueReport(text, { types, severities }) — swapping Groq for another
+// classifyIssueReport(text, { types, severities }) — swapping Claude for another
 // provider means writing that one method, not touching this file or its
 // callers.
 //

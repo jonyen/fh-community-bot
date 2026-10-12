@@ -9,7 +9,7 @@ describe("loadConfig", () => {
     GOOGLE_CLIENT_ID: "test-client-id",
     GOOGLE_CLIENT_SECRET: "test-client-secret",
     GOOGLE_REFRESH_TOKEN: "test-refresh-token",
-    GROQ_API_KEY: "gsk_test-key",
+    LLM_MODEL_ID: "us.anthropic.claude-haiku-5-5",
   };
 
   let originalEnv;
@@ -32,7 +32,7 @@ describe("loadConfig", () => {
     expect(config.googleClientId).toBe("test-client-id");
     expect(config.googleClientSecret).toBe("test-client-secret");
     expect(config.googleRefreshToken).toBe("test-refresh-token");
-    expect(config.groqApiKey).toBe("gsk_test-key");
+    expect(config.llmModelId).toBe("us.anthropic.claude-haiku-5-5");
   });
 
   it("parses SLACK_CHANNEL_IDS as a comma-separated set, trimming whitespace", async () => {
@@ -108,10 +108,10 @@ describe("loadConfig — CREA tickets", () => {
   const CREA_KEYS = ["CREA_TICKETS_ENABLED", "CREA_TWA_USERNAME", "CREA_TWA_PASSWORD", "CREA_TWA_PHONE", "CREA_TICKET_USER_IDS"];
   const saved = {};
   beforeEach(() => {
-    for (const k of [...CREA_KEYS, "SLACK_BOT_TOKEN", "SLACK_CHANNEL_IDS", "GOOGLE_SHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN", "GROQ_API_KEY"]) saved[k] = process.env[k];
+    for (const k of [...CREA_KEYS, "SLACK_BOT_TOKEN", "SLACK_CHANNEL_IDS", "GOOGLE_SHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"]) saved[k] = process.env[k];
     Object.assign(process.env, {
       SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C1", GOOGLE_SHEET_ID: "s", GOOGLE_CLIENT_ID: "c",
-      GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r", GROQ_API_KEY: "g",
+      GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r",
       CREA_TWA_USERNAME: "u", CREA_TWA_PASSWORD: "p", CREA_TWA_PHONE: "555", CREA_TICKET_USER_IDS: "U1, U2",
     });
   });

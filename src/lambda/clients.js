@@ -1,11 +1,11 @@
 import { WebClient } from "@slack/web-api";
 import { google } from "googleapis";
-import OpenAI from "openai";
+import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import { loadConfig } from "../config.js";
 import { createSheetsService } from "../services/sheets.js";
 import { createDriveService } from "../services/drive.js";
 import { createPhotoService } from "../lib/photos.js";
-import { createGroqService } from "../services/groq.js";
+import { createLlmService } from "../services/llm.js";
 import { createDedupService } from "../services/dedup.js";
 import { createIssueClassifierService } from "../services/issueClassifier.js";
 import { createMentionHandler } from "../events/mention.js";
@@ -39,15 +39,13 @@ export function getDeps() {
     slackBotToken: config.slackBotToken,
   });
 
-  const groqClient = new OpenAI({
-    baseURL: "https://api.groq.com/openai/v1",
-    apiKey: config.groqApiKey,
-  });
-  const groqService = createGroqService(groqClient);
-  const dedupService = createDedupService(groqService);
+  // Credentials come from the Lambda's IAM role via the AWS default chain.
+  const bedrock = new AnthropicBedrock({ awsRegion: process.env.AWS_REGION || "us-east-1" });
+  const llmService = createLlmService(bedrock, config.llmModelId ? { model: config.llmModelId } : {});
+  const dedupService = createDedupService(llmService);
   // Swapping the model provider means handing this a different service that
   // implements classifyIssueReport — nothing downstream of it changes.
-  const issueClassifier = createIssueClassifierService(groqService);
+  const issueClassifier = createIssueClassifierService(llmService);
 
   const handler = createMentionHandler({
     sheetsService,
@@ -70,7 +68,7 @@ export function getDeps() {
     creaTicketHandler = createCreaTicketHandler({
       twaService: createRentManagerTwaService(config.creaTwa),
       sheetsService,
-      ticketWriter: groqService,
+      ticketWriter: llmService,
       channelIds: config.slackChannelIds,
       allowedUserIds: config.creaTwa.allowedUserIds,
       slackBotToken: config.slackBotToken,

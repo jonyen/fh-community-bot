@@ -67,6 +67,7 @@ jobs:
           GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
           ESCALATION_USER_ID: ${{ vars.ESCALATION_USER_ID }}
           ALARM_CHANNEL: ${{ vars.ALARM_CHANNEL }}
+          LLM_MODEL_ID: ${{ vars.LLM_MODEL_ID }}
           CREA_TICKETS_ENABLED: ${{ vars.CREA_TICKETS_ENABLED }}
           CREA_TWA_USERNAME: ${{ secrets.CREA_TWA_USERNAME }}
           CREA_TWA_PASSWORD: ${{ secrets.CREA_TWA_PASSWORD }}
@@ -85,6 +86,9 @@ jobs:
           fi
           if [ -n "$ALARM_CHANNEL" ]; then
             OPTIONAL_PARAMS+=("AlarmChannel=$ALARM_CHANNEL")
+          fi
+          if [ -n "$LLM_MODEL_ID" ]; then
+            OPTIONAL_PARAMS+=("LlmModelId=$LLM_MODEL_ID")
           fi
           if [ -n "$CREA_TICKETS_ENABLED" ]; then
             OPTIONAL_PARAMS+=("CreaTicketsEnabled=$CREA_TICKETS_ENABLED")
@@ -110,5 +114,4 @@ jobs:
               GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
-              GroqApiKey="${{ secrets.GROQ_API_KEY }}" \
               "${OPTIONAL_PARAMS[@]}"
