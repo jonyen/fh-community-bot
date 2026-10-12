@@ -14,7 +14,9 @@ Parameters:
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
   GoogleDriveFolderId:  { Type: String, Default: "" }
-  GroqApiKey:           { Type: String, NoEcho: true }
+  # Bedrock inference profile for the LLM calls. The account has to have
+  # accepted the model's Marketplace agreement and have quota for it.
+  LlmModelId:           { Type: String, Default: "us.anthropic.claude-haiku-4-5-20251001-v1:0" }
   # CREA (landlord) Rent Manager tenant portal. Filing tickets by :ticket:
   # reaction is off unless CreaTicketsEnabled is "true" and a username is set.
   CreaTicketsEnabled:    { Type: String, Default: "false", AllowedValues: ["true", "false"] }
@@ -85,7 +87,7 @@ Resources:
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
           GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
-          GROQ_API_KEY:           !Ref GroqApiKey
+          LLM_MODEL_ID:           !Ref LlmModelId
           ESCALATION_USER_ID:    !Ref EscalationUserId
           CREA_TICKETS_ENABLED:  !Ref CreaTicketsEnabled
           CREA_TWA_USERNAME:     !Ref CreaTwaUsername
@@ -93,6 +95,16 @@ Resources:
           CREA_TWA_PHONE:        !Ref CreaTwaPhone
           CREA_TWA_ALLOW_ENTRY:  !Ref CreaTwaAllowEntry
           CREA_TICKET_USER_IDS:  !Ref CreaTicketUserIds
+      Policies:
+        # A "us." inference profile routes each call to a foundation model in
+        # one of several US regions, so both need allowing. Scoped to Claude
+        # Haiku so moving between Haiku versions needs no policy change.
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-*
+                - arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-*
       Events:
         FromQueue:
           Type: SQS
@@ -196,6 +208,28 @@ Resources:
       Dimensions:
         - Name: Flow
           Value: maintenanceForm
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  LlmCallFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-llm-failed
+      AlarmDescription: >-
+        A Claude call on Bedrock failed (model retired, access or quota
+        revoked, throttling). Duplicate warnings, form pre-fill and the CREA
+        rewrite quietly fall back while this is firing.
+      Namespace: FhCommunityBot
+      MetricName: LlmCallFailed
+      Dimensions:
+        - Name: Flow
+          Value: llm
       Statistic: Sum
       Period: 900
       EvaluationPeriods: 1

@@ -1,26 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createGroqService } from "../../src/services/groq.js";
+import { createLlmService } from "../../src/services/llm.js";
 
-describe("GroqService", () => {
+describe("LlmService", () => {
   let mockClient;
   let service;
 
   beforeEach(() => {
     mockClient = {
-      chat: {
-        completions: {
-          create: vi.fn(),
-        },
+      messages: {
+        create: vi.fn(),
       },
     };
-    service = createGroqService(mockClient);
+    service = createLlmService(mockClient);
   });
 
   describe("checkDuplicate", () => {
     it("returns matching issue ID when duplicate found", async () => {
-      mockClient.chat.completions.create.mockResolvedValue({
-        choices: [{ message: { content: "3" } }],
-      });
+      mockClient.messages.create.mockResolvedValue({ content: [{ type: "text", text: "3" }] });
 
       const result = await service.checkDuplicate("printer broken", [
         { id: "3", description: "Lobby printer jammed" },
@@ -31,9 +27,7 @@ describe("GroqService", () => {
     });
 
     it("returns null when no duplicate found", async () => {
-      mockClient.chat.completions.create.mockResolvedValue({
-        choices: [{ message: { content: "none" } }],
-      });
+      mockClient.messages.create.mockResolvedValue({ content: [{ type: "text", text: "none" }] });
 
       const result = await service.checkDuplicate("new issue", [
         { id: "1", description: "Printer jammed" },
@@ -43,7 +37,7 @@ describe("GroqService", () => {
     });
 
     it("returns null when API fails", async () => {
-      mockClient.chat.completions.create.mockRejectedValue(new Error("API down"));
+      mockClient.messages.create.mockRejectedValue(new Error("API down"));
 
       const result = await service.checkDuplicate("test", []);
       expect(result).toBeNull();
@@ -59,11 +53,9 @@ describe("classifyIssueReport", () => {
   };
 
   function svcWith(content) {
-    return createGroqService({
-      chat: {
-        completions: {
-          create: vi.fn().mockResolvedValue({ choices: [{ message: { content } }] }),
-        },
+    return createLlmService({
+      messages: {
+        create: vi.fn().mockResolvedValue({ content: [{ type: "text", text: content }] }),
       },
     });
   }
@@ -119,15 +111,15 @@ describe("classifyIssueReport", () => {
   });
 
   it("returns null when the API fails, so the caller can fall back", async () => {
-    const svc = createGroqService({
-      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("API down")) } },
+    const svc = createLlmService({
+      messages: { create: vi.fn().mockRejectedValue(new Error("API down")) },
     });
     expect(await svc.classifyIssueReport("sink leaking", LISTS)).toBeNull();
   });
 
   it("does not call the model for empty text", async () => {
     const create = vi.fn();
-    const svc = createGroqService({ chat: { completions: { create } } });
+    const svc = createLlmService({ messages: { create } });
     expect(await svc.classifyIssueReport("   ", LISTS)).toEqual({ type: null, severity: null });
     expect(create).not.toHaveBeenCalled();
   });
@@ -136,7 +128,7 @@ describe("classifyIssueReport", () => {
     const create = vi
       .fn()
       .mockResolvedValue({ choices: [{ message: { content: '{"type":null,"severity":null}' } }] });
-    const svc = createGroqService({ chat: { completions: { create } } });
+    const svc = createLlmService({ messages: { create } });
     await svc.classifyIssueReport("the elevator is grinding", LISTS);
 
     const userMessage = create.mock.calls[0][0].messages.at(-1).content;
@@ -146,11 +138,45 @@ describe("classifyIssueReport", () => {
   });
 });
 
+describe("Bedrock request", () => {
+  it("sends the configured model, system prompt and user message", async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "none" }] });
+    await createLlmService({ messages: { create } }, { model: "us.anthropic.claude-haiku-5-5" }).checkDuplicate("x", []);
+    const req = create.mock.calls[0][0];
+    expect(req.model).toBe("us.anthropic.claude-haiku-5-5");
+    expect(req.system).toContain("duplicate issue detector");
+    expect(req.messages).toEqual([{ role: "user", content: expect.stringContaining('New report: "x"') }]);
+  });
+
+  it("defaults to Claude Haiku 4.5", async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "none" }] });
+    await createLlmService({ messages: { create } }).checkDuplicate("x", []);
+    expect(create.mock.calls[0][0].model).toBe("us.anthropic.claude-haiku-4-5-20251001-v1:0");
+  });
+
+  it("emits LlmCallFailed when a call fails, so the alarm fires", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await createLlmService({ messages: { create: vi.fn().mockRejectedValue(new Error("model retired")) } }).checkDuplicate("x", []);
+    const metricLine = log.mock.calls.map(([l]) => String(l)).find((l) => l.includes("LlmCallFailed"));
+    expect(metricLine).toBeDefined();
+    vi.restoreAllMocks();
+  });
+
+  it("treats a reply with no text as a failure", async () => {
+    const create = vi.fn().mockResolvedValue({ content: [], stop_reason: "max_tokens" });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await createLlmService({ messages: { create } }).writeLandlordTicket("x")).toBeNull();
+    vi.restoreAllMocks();
+  });
+});
+
 describe("writeLandlordTicket", () => {
   function svcWith(create) {
-    return createGroqService({ chat: { completions: { create } } });
+    return createLlmService({ messages: { create } });
   }
-  const reply = (content) => vi.fn().mockResolvedValue({ choices: [{ message: { content } }] });
+  const reply = (text) => vi.fn().mockResolvedValue({ content: [{ type: "text", text }] });
 
   it("returns the model's title and description", async () => {
     const svc = svcWith(reply('{"title": "Leaking sink in kitchen", "description": "The kitchen sink is leaking."}'));
@@ -163,7 +189,7 @@ describe("writeLandlordTicket", () => {
   it("sends the report and its type to the model", async () => {
     const create = reply('{"title": "t", "description": "d"}');
     await svcWith(create).writeLandlordTicket("sink leaking", { type: "Plumbing" });
-    const userMsg = create.mock.calls[0][0].messages[1].content;
+    const userMsg = create.mock.calls[0][0].messages[0].content;
     expect(userMsg).toContain("Issue type: Plumbing");
     expect(userMsg).toContain("sink leaking");
   });

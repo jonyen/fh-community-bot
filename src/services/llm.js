@@ -1,9 +1,14 @@
-// Groq retired llama-3.3-70b-versatile (404 "does not exist"), and every
-// call here fails soft, so a dead model looks like a model with no opinion.
-// gpt-oss is a reasoning model: its reasoning counts against max_tokens, so
-// the limits below leave room for it on top of the short answers.
-const MODEL = "openai/gpt-oss-120b";
-const REASONING = { reasoning_effort: "low" };
+import { log, metric } from "../lib/logger.js";
+
+// Claude on Amazon Bedrock. The Lambda's own IAM role authorises the calls,
+// so there is no API key to store or let go stale. The model id is an
+// inference profile set by the LLM_MODEL_ID environment variable, so moving
+// to a newer model is a config change.
+//
+// Every call here fails soft (null), so a dead model looks exactly like a
+// model with no opinion: that is how Groq retiring Llama 3.3 went unnoticed.
+// Each failure therefore emits LlmCallFailed, which alarms in Slack.
+export const DEFAULT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
 
 const SYSTEM_PROMPT_DEDUP = `You are a duplicate issue detector. Given a new issue report and a list of existing open issues, determine if the new report is about the same problem as any existing issue. If it matches an existing issue, respond with ONLY the ID number. If it does not match any, respond with ONLY the word "none". Do not explain.`;
 
@@ -34,27 +39,45 @@ Rules:
 
 Output only the JSON object, no prose.`;
 
-export function createGroqService(client) {
+export function createLlmService(client, { model = DEFAULT_MODEL } = {}) {
+  // One request, text back. Throws on API errors and on a reply with no
+  // text, after counting it as a failure.
+  async function complete(call, system, userContent, maxTokens) {
+    try {
+      const res = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: userContent }],
+      });
+      const text = (res.content || [])
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("")
+        .trim();
+      if (!text) throw new Error(`empty reply (stop_reason ${res.stop_reason})`);
+      return text;
+    } catch (err) {
+      metric("LlmCallFailed", 1, { dimensions: { Flow: "llm" }, fields: { call, model } });
+      log.error("LLM call failed", { call, error: err });
+      throw err;
+    }
+  }
+
   async function checkDuplicate(newDescription, openIssues) {
     try {
       const issueList = openIssues
         .map((i) => `ID ${i.id}: ${i.description}`)
         .join("\n");
 
-      const res = await client.chat.completions.create({
-        model: MODEL,
-        ...REASONING,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT_DEDUP },
-          {
-            role: "user",
-            content: `New report: "${newDescription}"\n\nExisting open issues:\n${issueList}`,
-          },
-        ],
-        max_tokens: 512,
-      });
-
-      const answer = res.choices[0].message.content.trim().toLowerCase();
+      const answer = (
+        await complete(
+          "checkDuplicate",
+          SYSTEM_PROMPT_DEDUP,
+          `New report: "${newDescription}"\n\nExisting open issues:\n${issueList}`,
+          64
+        )
+      ).toLowerCase();
       if (answer === "none") return null;
       const matchedId = answer.match(/\d+/)?.[0];
       return matchedId && openIssues.some((i) => i.id === matchedId)
@@ -74,19 +97,12 @@ export function createGroqService(client) {
   async function classifyIssueReport(text, { types, severities }) {
     if (!String(text || "").trim()) return { type: null, severity: null };
     try {
-      const res = await client.chat.completions.create({
-        model: MODEL,
-        ...REASONING,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT_TRIAGE },
-          {
-            role: "user",
-            content: `Types: ${types.join(", ")}\nSeverities: ${severities.join(", ")}\n\nReport: ${text}`,
-          },
-        ],
-        max_tokens: 512,
-      });
-      const raw = res.choices[0].message.content.trim();
+      const raw = await complete(
+        "classifyIssueReport",
+        SYSTEM_PROMPT_TRIAGE,
+        `Types: ${types.join(", ")}\nSeverities: ${severities.join(", ")}\n\nReport: ${text}`,
+        128
+      );
       const jsonStart = raw.indexOf("{");
       const jsonEnd = raw.lastIndexOf("}");
       if (jsonStart === -1 || jsonEnd === -1) return null;
@@ -108,19 +124,12 @@ export function createGroqService(client) {
   async function writeLandlordTicket(text, { type } = {}) {
     if (!String(text || "").trim()) return null;
     try {
-      const res = await client.chat.completions.create({
-        model: MODEL,
-        ...REASONING,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT_LANDLORD },
-          {
-            role: "user",
-            content: `${type ? `Issue type: ${type}\n\n` : ""}Report: ${text}`,
-          },
-        ],
-        max_tokens: 1500,
-      });
-      const raw = res.choices[0].message.content.trim();
+      const raw = await complete(
+        "writeLandlordTicket",
+        SYSTEM_PROMPT_LANDLORD,
+        `${type ? `Issue type: ${type}\n\n` : ""}Report: ${text}`,
+        1024
+      );
       const jsonStart = raw.indexOf("{");
       const jsonEnd = raw.lastIndexOf("}");
       if (jsonStart === -1 || jsonEnd === -1) return null;
