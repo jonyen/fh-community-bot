@@ -9,6 +9,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
+- **#reservations** — book, check and list rooms, the kitchen and RMS equipment in plain English; first come, first served, with a weekly digest (see below)
 
 ## Architecture
 
@@ -196,6 +197,38 @@ Before the gender feature works in production, update the Slack app config:
 - **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
 - Invite the bot to each channel where these triggers should work.
 
+## #reservations
+
+The #reservations channel is the front door for FH's four reservation
+systems. Members write requests in plain English, without mentioning the bot:
+
+- "book Tech Set 2 Sat 2-4pm for youth night"
+- "is the MPR free Wednesday 7-9?"
+- "who has the pickleball set this weekend?"
+
+The bot parses each request with Claude Haiku, checks for a conflict, and writes
+the booking straight into the system that owns the item. Bookings are first
+come, first served, with no approver. If the slot is taken, nothing is written
+and the bot names who holds it. When details are missing, it asks in the
+thread. Confirmations are broadcast to the channel, which is the feed.
+
+| Category | Owner | Backend |
+| --- | --- | --- |
+| Rooms | Management | Management Workspace, tab *Upcoming Room Requests* (Status left blank for Management) |
+| Kitchen | Arie Chen | FH Kitchen Management, tab *FH-Kitchen-RSVP* (max 3 groups at once) |
+| Tech | Alan Chow | RMS resource calendars, Tech Set 1–4 |
+| Sports, outreach, accessories | Joe Pagan (accessories: none) | RMS resource calendars |
+
+Every Monday at 8:00 AM New York time, `DigestFn` posts the week's reservations
+from all sources, including bookings made directly in the docs and calendars.
+If a source can't be read, the post says so and `ESCALATION_USER_ID` gets a DM.
+
+Repo variables: `RESERVATIONS_CHANNEL_ID`, `ROOM_REQUESTS_SHEET_ID`,
+`KITCHEN_SHEET_ID`, `RESOURCE_CALENDARS` (bundled as
+`runtime-config/resource-calendars.json` at deploy because it is over the 4 KB
+env limit), and optionally `RMS_BOOKING_ENABLED=false`. The bot must be a member
+of #reservations, and the bot's Google account needs edit access to both sheets.
+
 ## Observability
 
 **SLO: 99.5% of submitted issue reports reach the Google Sheet, monthly.**
@@ -222,6 +255,7 @@ because somebody filed an issue and nobody will see it.
 | `queue-backlog` | Oldest event waiting over 5 minutes |
 | `issue-write-failed` | An issue could not be written to the Sheet |
 | `receiver-slow` | Receiver p99 above 2s against Slack's 3s deadline |
+| `digest-failed` | The weekly reservations digest errored and posted nothing |
 
 See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for diagnosis steps and the DLQ
 redrive procedure.

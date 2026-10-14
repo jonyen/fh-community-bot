@@ -87,6 +87,32 @@ aws iam put-role-policy --role-name <DEPLOY_ROLE> \
 `DescribeAlarms`, `ListDashboards`, and `GetDashboard` do not support
 resource-level permissions, which is why that statement is `*`.
 
+The weekly reservations digest runs on an EventBridge Scheduler schedule
+(`DigestFn`, `ScheduleV2` in `template.yaml`). The Lambda and IAM policies above
+don't cover Scheduler, so without this the deploy fails with an
+`scheduler:CreateSchedule` AccessDenied and rolls back:
+
+```bash
+aws iam put-role-policy --role-name <DEPLOY_ROLE> \
+  --policy-name scheduler --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "DigestSchedule",
+    "Effect": "Allow",
+    "Action": [
+      "scheduler:CreateSchedule", "scheduler:UpdateSchedule",
+      "scheduler:DeleteSchedule", "scheduler:GetSchedule",
+      "scheduler:TagResource", "scheduler:UntagResource",
+      "scheduler:ListTagsForResource"
+    ],
+    "Resource": "arn:aws:scheduler:<REGION>:<ACCOUNT_ID>:schedule/default/*"
+  }]
+}'
+```
+
+SAM also creates the role the schedule assumes to invoke the Lambda;
+`IAMFullAccess` already covers creating it and passing it.
+
 Record the role ARN.
 
 ## 4. GitHub repository secrets

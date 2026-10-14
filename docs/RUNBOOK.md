@@ -122,3 +122,40 @@ Lambda and SQS ones. See the `observability` inline policy in
 [`aws-bootstrap.md`](aws-bootstrap.md). CloudFormation rolls the stack back on
 this failure, so the running bot is unaffected — reapply the policy and re-run
 the deploy.
+
+## Deploy fails with a scheduler AccessDenied
+
+The deploy role is missing the `scheduler` inline policy for the weekly digest
+schedule. Apply it from [`aws-bootstrap.md`](aws-bootstrap.md) and re-run the
+deploy. CloudFormation rolls back, so the running bot is unaffected.
+
+## `fh-community-digest-failed`
+
+The Monday reservations digest Lambda (`DigestFn`) errored and posted nothing.
+Check its log group, `/aws/lambda/<DigestFn>`. The usual causes are a revoked
+Google refresh token (`invalid_grant`) or a Slack token problem
+(`not_in_channel`, `invalid_auth`). After fixing, post the digest by hand:
+
+```bash
+aws lambda invoke --function-name <DigestFn physical name> /dev/stdout
+```
+
+## Digest DM: "couldn't read some sources"
+
+The digest posted, but one backend could not be read, so the post says it may
+be incomplete. The DM names the source and the error:
+
+- **Rooms / Kitchen**, `The caller does not have permission`: the sheet was
+  unshared from the bot's Google account. Ask the owner (Management for rooms,
+  Arie Chen for the kitchen) to share it again with edit access.
+- **Equipment calendars**, one item failing: that resource calendar was removed
+  or renamed in Google Workspace. Update the `RESOURCE_CALENDARS` repo variable
+  and redeploy.
+
+## `reservation write failed` in the worker logs
+
+A #reservations booking passed the conflict check but the write to the sheet or
+calendar failed. The member was told to book directly, with the link. The log
+line carries `backend` (`rooms`, `kitchen`, `rms`) and the error; the causes are
+the same sharing issues as above. The `ReservationFailed` metric counts these.
+
