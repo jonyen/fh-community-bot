@@ -70,7 +70,7 @@ access on the resource calendars.
   column by hand.
 - **Write:** append a row. Status is left **blank** so Management's own review
   process is untouched. Submitted By is the requester's Slack display name. Notes
-  carries the purpose plus a tag `[slack:<thread_ts>]`.
+  says `Booked via #reservations`.
 - **Conflict:** another row on the same date, overlapping the time, and sharing
   at least one room, unless its Status is `Declined` or `Denied`. The holder is
   that row's Submitted By and Event Name.
