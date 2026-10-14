@@ -74,10 +74,12 @@ access on the resource calendars.
 - **Conflict:** another row on the same date, overlapping the time, and sharing
   at least one room, unless its Status is `Declined` or `Denied`. The holder is
   that row's Submitted By and Event Name.
-- Room names and aliases (`MPR` → `FH MPR`, `L120`, `Makerspace`, `Staff Suite`,
-  `Glass Room`, `Youth Room`, `A2K Room`, `Dining Room`, `FH Parking Lot`, …)
-  come from the existing `RESERVATION_ROOMS` repo variable, which may need
-  updating to match the names used in this sheet.
+- Room cells are free text: `MPR`, `FH MPR`, `Maker Space`, `MakerSpace`,
+  `MPR, parking lot`, `FH Glass Room, L120, Youth Room`, `All FH`. A small room
+  catalog in code (`src/lib/rooms-catalog.js`) maps aliases to canonical names
+  and splits on newlines and commas. `All FH` conflicts with every room. Unknown
+  names are kept as written and conflict only on an exact match. The old
+  `RESERVATION_ROOMS` variable does not match these names and is not used.
 
 ### Kitchen: FH-Kitchen-RSVP
 
@@ -91,8 +93,8 @@ access on the resource calendars.
   forward by hand, so future dates may not exist yet.
 - **Write:** fill the first empty row (blank Name) for the date: Name, Phone,
   Start, End, and the appliance cells the request mentions (checkboxes `TRUE`,
-  counts as numbers). Phone comes from the DMV Team Directory if the requester
-  is found there; otherwise it is left blank.
+  counts as numbers). Phone comes from the requester's Slack profile; if it is
+  empty, the cell is left blank. (The DMV Team Directory holds only emails.)
 - **Conflict:** 3 or more existing rows on that date whose times overlap the
   request. The holders are those rows' Name and Phone.
 - **No row available** (all 3 rows for the date are filled but under the
@@ -178,13 +180,13 @@ New repo variables:
 
 - `ROOM_REQUESTS_SHEET_ID`, `ROOM_REQUESTS_TAB` (`Upcoming Room Requests`)
 - `KITCHEN_SHEET_ID`, `KITCHEN_TAB` (`FH-Kitchen-RSVP`)
-- `TEAM_DIRECTORY_SHEET_ID` (`13nNARlOqKXmzNBOw4hc0chu_RiO7pilmFwUqmZwAT98`)
+- `RMS_BOOKING_ENABLED` (default `true`; `false` makes RMS bookings reply with
+  the calendar link instead of writing)
 
-Reused: `RESERVATIONS_CHANNEL_ID`, `RESOURCE_CALENDARS`, `RESERVATION_ROOMS`,
-`ESCALATION_USER_ID`.
+Reused: `RESERVATIONS_CHANNEL_ID`, `RESOURCE_CALENDARS`, `ESCALATION_USER_ID`.
 
-Obsolete: `RESERVATIONS_SHEET_ID` (old OneStop sheet `163Qo6…`) and
-`VENUE_CALENDARS`. Delete them after launch.
+Obsolete: `RESERVATIONS_SHEET_ID` (old OneStop sheet `163Qo6…`),
+`RESERVATION_ROOMS` and `VENUE_CALENDARS`. Delete them after launch.
 
 ## Units
 
