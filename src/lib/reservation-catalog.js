@@ -1,0 +1,29 @@
+// src/lib/reservation-catalog.js
+// Every bookable thing across the three backends, so the parser can be told
+// exactly what exists and every answer can be checked back against it.
+import { ROOMS } from "./rooms-catalog.js";
+
+export const CATEGORY_NAMES = {
+  rooms: "Rooms", kitchen: "Kitchen", tech: "Tech", sports: "Sports", outreach: "Outreach", accessories: "Accessories",
+};
+
+export function buildCatalog({ rooms, kitchen, rms }) {
+  return [
+    ...(rooms ? ROOMS.map((r) => ({ label: r.name, category: "rooms", backend: "rooms" })) : []),
+    ...(kitchen ? [{ label: "Kitchen", category: "kitchen", backend: "kitchen" }] : []),
+    ...(rms || []),
+  ];
+}
+
+export function findItem(catalog, label) {
+  const key = String(label || "").trim().toLowerCase();
+  return catalog.find((e) => e.label.toLowerCase() === key) || null;
+}
+
+export function catalogPromptText(catalog) {
+  return Object.entries(CATEGORY_NAMES)
+    .map(([id, name]) => [name, catalog.filter((e) => e.category === id).map((e) => e.label)])
+    .filter(([, labels]) => labels.length > 0)
+    .map(([name, labels]) => `${name}: ${labels.join(", ")}`)
+    .join("\n");
+}
