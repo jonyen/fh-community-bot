@@ -136,3 +136,52 @@ describe("loadConfig — CREA tickets", () => {
     expect([...creaTwa.allowedUserIds]).toEqual(["U1", "U2"]);
   });
 });
+
+describe("reservations config", () => {
+  const BASE = {
+    SLACK_BOT_TOKEN: "xoxb-test",
+    SLACK_CHANNEL_IDS: "C123",
+    GOOGLE_SHEET_ID: "sheet-id",
+    GOOGLE_CLIENT_ID: "id",
+    GOOGLE_CLIENT_SECRET: "secret",
+    GOOGLE_REFRESH_TOKEN: "token",
+  };
+  const KEYS = ["RESERVATIONS_CHANNEL_ID", "ROOM_REQUESTS_SHEET_ID", "KITCHEN_SHEET_ID", "RESOURCE_CALENDARS", "RMS_BOOKING_ENABLED", "ESCALATION_USER_ID"];
+  let originalEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    for (const k of KEYS) delete process.env[k];
+    Object.assign(process.env, BASE);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("is null without a channel", () => {
+    expect(loadConfig().reservations).toBeNull();
+  });
+
+  it("reads ids, defaults the tabs, and parses the calendar map from env", () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "CRES";
+    process.env.ROOM_REQUESTS_SHEET_ID = "R1";
+    process.env.KITCHEN_SHEET_ID = "K1";
+    process.env.RESOURCE_CALENDARS = JSON.stringify({ "DMV Tech Equipment-G-Tech Set 1": "t1" });
+    process.env.ESCALATION_USER_ID = "UOPS";
+    expect(loadConfig().reservations).toEqual({
+      channelId: "CRES", roomsSheetId: "R1", roomsTab: "Upcoming Room Requests", roomsGid: "1580896517",
+      kitchenSheetId: "K1", kitchenTab: "FH-Kitchen-RSVP", kitchenGid: "2109987656",
+      resourceCalendars: { "DMV Tech Equipment-G-Tech Set 1": "t1" }, rmsBookingEnabled: true, escalationUserId: "UOPS",
+    });
+  });
+
+  it("never throws on a bad calendar map and honours RMS_BOOKING_ENABLED=false", () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "CRES";
+    process.env.RESOURCE_CALENDARS = "{not json";
+    process.env.RMS_BOOKING_ENABLED = "false";
+    const r = loadConfig().reservations;
+    expect(r.resourceCalendars).toEqual({});
+    expect(r.rmsBookingEnabled).toBe(false);
+  });
+});
