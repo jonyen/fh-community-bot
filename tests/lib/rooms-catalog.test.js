@@ -42,3 +42,19 @@ describe("roomsConflict", () => {
     expect(ROOMS.some((r) => r.name === "Kitchen")).toBe(false);
   });
 });
+
+describe("splitRooms — other separators and spellings (review fix)", () => {
+  it("splits on & / + ; and the word 'and'", () => {
+    expect(splitRooms("MPR & Parking Lot")).toEqual(["MPR", "Parking Lot"]);
+    expect(splitRooms("MPR/Youth Room")).toEqual(["MPR", "Youth Room"]);
+    expect(splitRooms("FH MPR + Kitchen")).toEqual(["MPR", "Kitchen"]);
+    expect(splitRooms("MPR and Youth Room")).toEqual(["MPR", "Youth Room"]);
+    expect(splitRooms("MPR;Youth Room")).toEqual(["MPR", "Youth Room"]);
+  });
+  it("ignores FH- prefixes, parentheticals and trailing room numbers", () => {
+    expect(normalizeRoom("FH-MPR")).toBe("MPR");
+    expect(normalizeRoom("Multipurpose Room (MPR)")).toBe("MPR");
+    expect(normalizeRoom("MPR (back half)")).toBe("MPR");
+    expect(normalizeRoom("Youth Room 240")).toBe("Youth Room");
+  });
+});

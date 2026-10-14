@@ -85,7 +85,8 @@ describe("reservations handler", () => {
     const [p] = posts();
     expect(p.text).toBe("❌ Tech Set 2 is taken Sat 10/17:\n• 2:00–3:30 PM · Tech Set 2 · Fall rally (<@UALAN>)\nPlease check with them.");
     expect(p.reply_broadcast).toBeUndefined();
-    expect(p.metadata).toEqual(CLOSED_METADATA);
+    // Left open so "how about 5-7?" in the thread is answered.
+    expect(p.metadata).toBeUndefined();
   });
 
   it("asks for missing details without closing the thread", async () => {
@@ -172,8 +173,31 @@ describe("reservations handler", () => {
         { user: "U9", text: "also the MPR", ts: "100.5" },
       ] });
       await h.handleMessage({ event: { ...reply, text: "also the MPR" }, client });
-      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      expect(llm.parseReservationRequest.mock.calls[0][0]).toBe("Member: also the MPR");
+      for (const a of Object.values(adapters)) expect(a.book).not.toHaveBeenCalled();
+      expect(posts().map((p) => p.text)).toEqual(["That booking is done. Please start a new message for a new request."]);
+    });
+
+    it("stays silent on chatter in a closed thread", async () => {
+      client.conversations.replies.mockResolvedValue({ messages: [
+        { user: "U9", text: "book tech set 2", ts: "100.1" },
+        { bot_id: "B1", text: "✅ Tech Set 2 …", ts: "100.2", metadata: CLOSED_METADATA },
+        { user: "U9", text: "thanks!", ts: "100.5" },
+      ] });
+      llm.parseReservationRequest.mockResolvedValue({ intent: "other" });
+      await h.handleMessage({ event: { ...reply, text: "thanks!" }, client });
       expect(posts()).toEqual([]);
+    });
+
+    it("answers a follow-up after a conflict in the same thread", async () => {
+      client.conversations.replies.mockResolvedValue({ messages: [
+        { user: "U9", text: "book tech set 2 sat 2-4 youth night", ts: "100.1" },
+        { bot_id: "B1", text: "❌ Tech Set 2 is taken Sat 10/17", ts: "100.2" },
+        { user: "U9", text: "how about 5-7?", ts: "100.5" },
+      ] });
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "17:00", end: "19:00" });
+      await h.handleMessage({ event: { ...reply, text: "how about 5-7?" }, client });
+      expect(adapters.rms.book.mock.calls[0][0]).toMatchObject({ start: 1020, end: 1140 });
     });
 
     it("parses the whole conversation when the bot asked a question", async () => {
@@ -188,6 +212,49 @@ describe("reservations handler", () => {
         "Member: book tech set 2\nBot: Happy to book Tech Set 2. I still need: date…\nMember: Saturday 2-4, youth night"
       );
       expect(posts()[0].thread_ts).toBe("100.1");
+    });
+  });
+
+  describe("review fixes", () => {
+    it("a check naming items in two systems reads both", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check", items: ["MPR", "Tech Set 2"] });
+      adapters.rms.findConflicts.mockResolvedValue([{ category: "tech", item: "Tech Set 2", date: "2026-10-17", start: 840, end: 900, title: "Rally", holder: "Alan", holderUserId: null, holderEmail: null }]);
+      await h.handleMessage({ event: msg(), client });
+      expect(adapters.rooms.findConflicts).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ label: "MPR" })] }));
+      expect(adapters.rms.findConflicts).toHaveBeenCalledWith(expect.objectContaining({ items: [SET2] }));
+      expect(posts()[0].text).toMatch(/^MPR, Tech Set 2 is taken Sat 10\/17:\n• 2:00–3:00 PM · Tech Set 2 · Rally \(Alan\)/);
+    });
+
+    it("asks instead of booking a small-hours time nobody said am for", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "02:00", end: "04:00" });
+      await h.handleMessage({ event: msg({ text: "book tech set 2 sat 2-4 for youth night" }), client });
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(posts()[0].text).toBe("Happy to book Tech Set 2. I still need: start and end time.");
+    });
+
+    it("keeps a small-hours time the member wrote as am", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "05:00", end: "07:00" });
+      await h.handleMessage({ event: msg({ text: "book tech set 2 sat 5-7am for sunrise hike" }), client });
+      expect(adapters.rms.book.mock.calls[0][0]).toMatchObject({ start: 300, end: 420 });
+    });
+
+    it("reads '7am' written right after the number", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "05:00", end: "07:00", title: "Breakfast prep" });
+      await h.handleMessage({ event: msg({ text: "book tech set 2 sat 5-7am breakfast prep" }), client });
+      expect(adapters.rms.book.mock.calls[0][0]).toMatchObject({ start: 300, end: 420 });
+    });
+
+    it("refuses a date that has passed", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, date: "2026-10-01" });
+      await h.handleMessage({ event: msg(), client });
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(posts()[0].text).toBe("Thu 10/1 has already passed. Which date did you mean?");
+    });
+
+    it("never fails the event after a booking is written, so SQS can't book it twice", async () => {
+      client.chat.postMessage.mockRejectedValue(new Error("ratelimited"));
+      await expect(h.handleMessage({ event: msg(), client })).resolves.toBeUndefined();
+      expect(adapters.rms.book).toHaveBeenCalledTimes(1);
     });
   });
 });

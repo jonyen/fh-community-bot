@@ -4,6 +4,7 @@
 // frame". Arie rolls the dates forward by hand, so a future date may have no
 // rows yet; then the bot sends people to the sheet instead of inventing rows.
 import { parseSheetDate, parseSheetTime, fmtTime, overlaps, nyToday } from "../../lib/reservation-time.js";
+import { sheetText } from "../../lib/sheet-text.js";
 
 export const APPLIANCES = [
   { key: "island", col: "F", label: "Kitchen Island", kind: "bool" },
@@ -68,7 +69,7 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
       return { status: "unavailable", reason: `All ${sameDay.length} kitchen rows for that day are taken.`, link };
     }
     const data = [
-      { range: `'${tab}'!B${free.row}:E${free.row}`, values: [[requesterName, phone || "", fmtTime(start), fmtTime(end)]] },
+      { range: `'${tab}'!B${free.row}:E${free.row}`, values: [[sheetText(requesterName), sheetText(phone || ""), fmtTime(start), fmtTime(end)]] },
     ];
     for (const a of APPLIANCES) {
       const v = appliances[a.key];

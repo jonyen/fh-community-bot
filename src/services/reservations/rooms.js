@@ -4,6 +4,7 @@
 // rows as not holding the room.
 import { parseSheetDate, formatSheetDate, parseSheetTime, fmtTime, overlaps, nyToday } from "../../lib/reservation-time.js";
 import { splitRooms, roomsConflict } from "../../lib/rooms-catalog.js";
+import { sheetText } from "../../lib/sheet-text.js";
 
 const INACTIVE = new Set(["denied", "declined"]);
 
@@ -52,8 +53,8 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
       insertDataOption: "INSERT_ROWS",
       requestBody: {
         values: [[
-          title, formatSheetDate(date), fmtTime(start), fmtTime(end), ministry || "",
-          requesterName, items.map((i) => i.label).join("\n"), "", "Booked via #reservations",
+          sheetText(title), formatSheetDate(date), fmtTime(start), fmtTime(end), sheetText(ministry || ""),
+          sheetText(requesterName), items.map((i) => i.label).join("\n"), "", "Booked via #reservations",
         ]],
       },
     });

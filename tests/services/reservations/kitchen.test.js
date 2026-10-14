@@ -98,4 +98,10 @@ describe("kitchen adapter", () => {
       "airFryer", "microwave", "largeRiceCooker", "smallRiceCooker", "instapot",
     ]);
   });
+
+  it("keeps a +1 phone and odd names as text (review fix)", async () => {
+    await adapter.book({ date: "2026-10-17", start: 1020, end: 1080, requesterName: "@jina", phone: "+1 703-555-1234", appliances: {} });
+    const data = sheets.spreadsheets.values.batchUpdate.mock.calls[0][0].requestBody.data;
+    expect(data[0].values[0].slice(0, 2)).toEqual(["'@jina", "'+1 703-555-1234"]);
+  });
 });

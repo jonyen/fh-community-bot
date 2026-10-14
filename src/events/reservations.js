@@ -15,12 +15,16 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   const catalogText = catalogPromptText(catalog);
 
   async function transcriptFor(event, client) {
-    if (!event.thread_ts || event.thread_ts === event.ts) return `Member: ${event.text}`;
+    if (!event.thread_ts || event.thread_ts === event.ts) return { text: `Member: ${event.text}`, closed: false };
     const res = await client.conversations.replies({ channel: event.channel, ts: event.thread_ts, limit: 50, include_all_metadata: true });
     const messages = res.messages || [];
     if (!messages.some((m) => m.bot_id)) return null;
-    if (messages.some((m) => m.bot_id && m.metadata?.event_type === CLOSED_METADATA.event_type)) return null;
-    return messages.map((m) => `${m.bot_id ? "Bot" : "Member"}: ${m.text || ""}`).join("\n");
+    // A finished booking thread: only the newest message is read, and only to
+    // point a new request at a new message. It is never booked from.
+    if (messages.some((m) => m.bot_id && m.metadata?.event_type === CLOSED_METADATA.event_type)) {
+      return { text: `Member: ${event.text}`, closed: true };
+    }
+    return { text: messages.map((m) => `${m.bot_id ? "Bot" : "Member"}: ${m.text || ""}`).join("\n"), closed: false };
   }
 
   async function withMentions(client, reservations) {
@@ -38,14 +42,17 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   async function handleQuery(req, reply, client) {
     const groups = req.items.length ? [...new Set(req.items.map((i) => i.backend))] : Object.keys(adapters);
     if (req.intent === "check" && req.items.length && req.date && req.start != null) {
-      const backend = groups[0];
-      const hits = await withMentions(client, await adapters[backend].findConflicts({
-        date: req.date, start: req.start, end: req.end, items: req.items.filter((i) => i.backend === backend),
-      }));
+      const found = [];
+      for (const backend of groups) {
+        found.push(...await adapters[backend].findConflicts({
+          date: req.date, start: req.start, end: req.end, items: req.items.filter((i) => i.backend === backend),
+        }));
+      }
+      const hits = await withMentions(client, found);
       const names = req.items.map((i) => i.label).join(", ");
       return reply(hits.length
         ? `${names} is taken ${fmtDay(req.date)}:\n${hits.map(reservationLine).join("\n")}`
-        : `${names} is free ${fmtDay(req.date)}, ${fmtRange(req.start, req.end)}.`, { closed: true });
+        : `${names} is free ${fmtDay(req.date)}, ${fmtRange(req.start, req.end)}.`);
     }
     const from = req.date || nyToday(now());
     const to = req.toDate || from;
@@ -55,11 +62,11 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       const { reservations } = await adapters[backend].listReservations({ from, to, items: req.items.filter((i) => i.backend === backend) });
       found.push(...reservations);
     }
-    if (found.length === 0) return reply(`Nothing booked ${from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`}.`, { closed: true });
+    if (found.length === 0) return reply(`Nothing booked ${from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`}.`);
     const people = await withMentions(client, found);
     const days = [...new Set(people.map((r) => r.date))].sort();
     const text = days.map((d) => [`*${fmtDay(d)}*`, ...people.filter((r) => r.date === d).sort((a, b) => (a.start ?? -1) - (b.start ?? -1)).map(reservationLine)].join("\n")).join("\n\n");
-    return reply(text, { closed: true });
+    return reply(text);
   }
 
   async function handleMessage({ event, client }) {
@@ -72,14 +79,26 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
         ...(closed ? { metadata: CLOSED_METADATA } : {}),
       });
 
-    const transcript = await transcriptFor(event, client);
-    if (!transcript) return;
+    const thread = await transcriptFor(event, client);
+    if (!thread) return;
 
     const today = nyToday(now());
-    const raw = await llm.parseReservationRequest(transcript, { catalogText, today, weekday: weekdayName(today) });
+    const raw = await llm.parseReservationRequest(thread.text, { catalogText, today, weekday: weekdayName(today) });
+    if (thread.closed) {
+      if (raw && ["book", "check", "list"].includes(raw.intent)) {
+        return reply("That booking is done. Please start a new message for a new request.");
+      }
+      return;
+    }
     if (!raw) return reply("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
     if (req.intent === "other") return;
+    // "Sat 2-4" is afternoon. The model is told so, but a small-hours time
+    // nobody wrote "am" for is asked about rather than booked at 2 AM.
+    if (req.start != null && req.start < 7 * 60 && !/\d\s*(am|a\.m\.)|morning|sunrise/i.test(thread.text)) {
+      req.start = null;
+      req.end = null;
+    }
 
     if (req.ambiguous.length) {
       const a = req.ambiguous[0];
@@ -90,6 +109,9 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
     if (req.intent === "check" || req.intent === "list") return handleQuery(req, reply, client);
 
+    if (req.date && req.date < today) {
+      return reply(`${fmtDay(req.date)} has already passed. Which date did you mean?`);
+    }
     const missing = missingFields(req);
     if (missing.length) {
       const what = req.items.length ? req.items.map((i) => i.label).join(", ") : "that";
@@ -97,14 +119,14 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
     const backends = [...new Set(req.items.map((i) => i.backend))];
     if (backends.length > 1) {
-      return reply("Please send one request per kind of booking (rooms, kitchen, or equipment).", { closed: true });
+      return reply("Please send one request per kind of booking (rooms, kitchen, or equipment).");
     }
     const adapter = adapters[backends[0]];
     const names = req.items.map((i) => i.label).join(", ");
 
     const conflicts = await withMentions(client, await adapter.findConflicts({ date: req.date, start: req.start, end: req.end, items: req.items }));
     if (conflicts.length) {
-      return reply(`❌ ${names} is taken ${fmtDay(req.date)}:\n${conflicts.map(reservationLine).join("\n")}\nPlease check with them.`, { closed: true });
+      return reply(`❌ ${names} is taken ${fmtDay(req.date)}:\n${conflicts.map(reservationLine).join("\n")}\nPlease check with them.`);
     }
 
     const info = await client.users.info({ user: event.user });
@@ -121,17 +143,23 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     } catch (error) {
       metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
       log.error("reservation write failed", { backend: adapter.backend, error });
-      return reply(`⚠️ I couldn't save that booking (${error.message}). Please book it directly: ${adapter.link}`, { closed: true });
+      return reply(`⚠️ I couldn't save that booking (${error.message}). Please book it directly: ${adapter.link}`);
     }
     if (result.status !== "booked") {
-      return reply(`${result.reason} You can book it here: ${result.link}`, { closed: true });
+      return reply(`${result.reason} You can book it here: ${result.link}`);
     }
     metric("ReservationBooked", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
     const note = req.items.some((i) => i.category === "tech") ? `\n${TECH_NOTE}` : "";
-    return reply(
-      `✅ ${names} · ${fmtDay(req.date)} · ${fmtRange(req.start, req.end)} · ${req.title} · <@${event.user}>\n<${result.link}|Open the booking>${note}`,
-      { closed: true, broadcast: true }
-    );
+    // The booking is written. Failing the event now would make SQS retry it
+    // and book again, so a failed confirmation is logged, never rethrown.
+    try {
+      await reply(
+        `✅ ${names} · ${fmtDay(req.date)} · ${fmtRange(req.start, req.end)} · ${req.title} · <@${event.user}>\n<${result.link}|Open the booking>${note}`,
+        { closed: true, broadcast: true }
+      );
+    } catch (error) {
+      log.error("reservation confirmation failed", { backend: adapter.backend, error });
+    }
   }
 
   return { channelId, handleMessage };

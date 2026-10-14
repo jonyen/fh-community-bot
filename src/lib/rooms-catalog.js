@@ -21,16 +21,34 @@ export const ROOMS = [
 
 const BY_ALIAS = new Map(ROOMS.flatMap((r) => [[r.name.toLowerCase(), r.name], ...r.aliases.map((a) => [a, r.name])]));
 
+// Longest aliases first, so "glass conference room" wins over "300".
+const ALIASES_BY_LENGTH = [...BY_ALIAS.keys()].sort((a, b) => b.length - a.length);
+
+function cleanKey(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/^fh[\s-]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function normalizeRoom(text) {
   const raw = String(text || "").trim();
-  const key = raw.toLowerCase().replace(/^fh\s+/, "").replace(/\s+/g, " ");
+  const key = cleanKey(raw);
   if (key === "all fh" || key === "all") return ALL_FH;
-  return BY_ALIAS.get(key) || raw;
+  if (BY_ALIAS.has(key)) return BY_ALIAS.get(key);
+  // "Multipurpose Room (MPR)" -> try the parenthetical too.
+  const inner = raw.match(/\(([^)]*)\)/)?.[1];
+  if (inner && BY_ALIAS.has(cleanKey(inner))) return BY_ALIAS.get(cleanKey(inner));
+  // "Youth Room 240": a known name inside extra words.
+  const hit = ALIASES_BY_LENGTH.find((a) => new RegExp(`(^|\\s)${a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(key));
+  return hit ? BY_ALIAS.get(hit) : raw;
 }
 
 export function splitRooms(cell) {
   return String(cell || "")
-    .split(/[\n,]/)
+    .split(/[\n,;/&+]|\band\b/i)
     .map((s) => s.trim())
     .filter(Boolean)
     .map(normalizeRoom);

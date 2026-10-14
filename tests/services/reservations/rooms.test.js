@@ -87,4 +87,15 @@ describe("rooms adapter", () => {
       },
     });
   });
+
+  it("writes user text so Sheets can't read it as a formula (review fix)", async () => {
+    await adapter.book({
+      date: "2026-10-28", start: 1140, end: 1260, items: [{ label: "MPR" }],
+      title: "=IMAGE(\"http://x\")", ministry: "+AYM", requesterName: "-Bob",
+    });
+    const row = sheets.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0];
+    expect(row[0]).toBe("'=IMAGE(\"http://x\")");
+    expect(row[4]).toBe("'+AYM");
+    expect(row[5]).toBe("'-Bob");
+  });
 });
