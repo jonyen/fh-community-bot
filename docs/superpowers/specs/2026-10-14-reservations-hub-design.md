@@ -13,8 +13,9 @@ the Slack channel **#reservations** the single front door:
    youth night" in #reservations. The bot parses it, checks for a conflict, and
    writes the booking straight into the correct backend.
 2. **Feed.** Every booking made through Slack is announced in the channel.
-3. **Daily digest.** Each evening the bot posts tomorrow's reservations across
-   all sources, including bookings made directly in the docs and calendars.
+3. **Weekly digest.** Every Monday at 8:00 AM the bot posts the week's
+   reservations (Mon–Sun) across all sources, including bookings made directly
+   in the docs and calendars.
 
 The four backends stay the system of record. Owners change nothing about how
 they work.
@@ -30,7 +31,7 @@ reference only; its code is not restored.
   can work it out with that person.
 - Check and list in natural language: "is the MPR free Wed 7pm?", "who has the
   pickleball set this weekend?"
-- Daily digest of tomorrow's reservations across all sources.
+- Weekly digest (Monday 8:00 AM) of the week's reservations across all sources.
 - If the digest cannot read a source, DM the operator.
 
 ## Non-goals
@@ -38,7 +39,7 @@ reference only; its code is not restored.
 - Owner approval flows.
 - Editing or cancelling bookings from Slack (v1 is create + read).
 - Announcing bookings made directly in a doc or calendar in real time (no
-  polling or diffing; the daily digest covers them).
+  polling or diffing; the weekly digest covers them).
 - Venues and vehicles RMS calendars (`DMV Venues-*`, `DMV-Vehicles-*`). Rooms are
   booked through the room request sheet, not venue calendars.
 - The OneStop event schedule (`1byXFO7A…`). It is a schedule, not a booking
@@ -142,16 +143,19 @@ Uses the existing receiver → SQS → worker pipeline.
      2:00–3:30 PM by @holder (Fall rally). Please check with them.`
 6. **Check / list.** Read only, reply in the thread.
 
-## Daily digest
+## Weekly digest
 
-- EventBridge schedule → new `digestFunction` (same code base). It runs at
-  8:00 PM America/New_York for tomorrow.
+- EventBridge Scheduler → new `digestFunction` (same code base). Schedule
+  `cron(0 8 ? * MON *)` with time zone `America/New_York`, so it stays at 8:00 AM
+  across DST. It covers Monday through Sunday of the current week.
 - It reads all sources in parallel: Rooms, Kitchen, RMS calendars (one
   `events.list` per resource, or `freebusy` plus `events.list` for busy ones
   only, to stay under quota).
-- It posts one message to #reservations, grouped by category, one line per
-  reservation: time, item, who. It skips categories with nothing booked. If
-  nothing is booked at all, it posts "No reservations tomorrow."
+- It posts one message to #reservations, grouped by day, then by category, one
+  line per reservation: time, item, who. It skips days and categories with
+  nothing booked. If nothing is booked at all, it posts "No reservations this
+  week." A long week is split across thread replies to stay under Slack's
+  message size limit.
 - **Source failure:** the digest still posts what it could read. For each
   source that failed, it DMs `ESCALATION_USER_ID` (`U05SWHWFTEH`) with the
   source name and the error. It also logs an error metric so the existing
@@ -209,12 +213,6 @@ book({ date, start, end, items, purpose, requester, ... }) -> { link }
 - Parser tests with a mocked LLM: fixture messages → expected JSON, missing
   fields → clarify question, chatter → `other`.
 - Flow tests: book ok, conflict, clarify, ambiguous item, backend error.
-- Digest tests: grouping, empty day, one source failing → post + DM.
+- Digest tests: grouping by day and category, empty week, one source failing →
+  post + DM.
 - Manual smoke test on real backends with a far-future test date, then clean up.
-
-## Open items
-
-- Should the bot set Status on room rows it writes (for example `In Review`)?
-  Default: blank.
-- Confirm `U05SWHWFTEH` is the right DM target for digest failures.
-- Confirm the 8:00 PM digest time.
