@@ -95,9 +95,11 @@ async function getCallback() {
     cached = null;
     return cached;
   }
-  const [{ google }, { DynamoDBClient }, { DynamoDBDocumentClient }, { KMSClient }, { SQSClient, SendMessageCommand }, { createAuthStore }] =
+  // google-auth-library, not googleapis: the callback only needs OAuth2, and
+  // loading all of googleapis made a cold start take ~15 s at 256 MB.
+  const [{ OAuth2Client }, { DynamoDBClient }, { DynamoDBDocumentClient }, { KMSClient }, { SQSClient, SendMessageCommand }, { createAuthStore }] =
     await Promise.all([
-      import("googleapis"), import("@aws-sdk/client-dynamodb"), import("@aws-sdk/lib-dynamodb"),
+      import("google-auth-library"), import("@aws-sdk/client-dynamodb"), import("@aws-sdk/lib-dynamodb"),
       import("@aws-sdk/client-kms"), import("@aws-sdk/client-sqs"), import("../services/authStore.js"),
     ]);
   const sqs = new SQSClient({});
@@ -108,7 +110,7 @@ async function getCallback() {
       tableName: AUTH_TABLE,
       keyId: AUTH_KMS_KEY_ID,
     }),
-    oauth2Client: new google.auth.OAuth2(GOOGLE_WEB_CLIENT_ID, GOOGLE_WEB_CLIENT_SECRET),
+    oauth2Client: new OAuth2Client(GOOGLE_WEB_CLIENT_ID, GOOGLE_WEB_CLIENT_SECRET),
     clientId: GOOGLE_WEB_CLIENT_ID,
     enqueue: (body) => sqs.send(new SendMessageCommand({ QueueUrl: EVENT_QUEUE_URL, MessageBody: JSON.stringify(body) })),
   });
