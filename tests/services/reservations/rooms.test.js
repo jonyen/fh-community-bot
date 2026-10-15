@@ -98,4 +98,14 @@ describe("rooms adapter", () => {
     expect(row[4]).toBe("'+AYM");
     expect(row[5]).toBe("'-Bob");
   });
+
+  it("appends with the member's Sheets client when given, still reading with the bot's", async () => {
+    const member = { spreadsheets: { values: { append: vi.fn().mockResolvedValue({}) } } };
+    await adapter.book(
+      { date: "2026-10-28", start: 1140, end: 1260, items: [{ label: "MPR" }], title: "T", ministry: "", requesterName: "D" },
+      { clients: { sheetsClient: member } }
+    );
+    expect(member.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+    expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+  });
 });

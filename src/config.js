@@ -96,6 +96,14 @@ function loadReservations() {
   };
 }
 
+// Members connecting their own Google accounts. Off unless the Web OAuth
+// client, the callback URL, the table and the KMS key are all configured.
+function loadGoogleConnect() {
+  const { GOOGLE_WEB_CLIENT_ID, GOOGLE_WEB_CLIENT_SECRET, OAUTH_REDIRECT_URI, AUTH_TABLE, AUTH_KMS_KEY_ID } = process.env;
+  if (!GOOGLE_WEB_CLIENT_ID || !GOOGLE_WEB_CLIENT_SECRET || !OAUTH_REDIRECT_URI || !AUTH_TABLE || !AUTH_KMS_KEY_ID) return null;
+  return { clientId: GOOGLE_WEB_CLIENT_ID, clientSecret: GOOGLE_WEB_CLIENT_SECRET, redirectUri: OAUTH_REDIRECT_URI, tableName: AUTH_TABLE, keyId: AUTH_KMS_KEY_ID };
+}
+
 export function loadConfig() {
   for (const key of REQUIRED) {
     if (!process.env[key]) {
@@ -122,5 +130,6 @@ export function loadConfig() {
     genderCacheTtlDays,
     creaTwa: loadCreaTwa(),
     reservations: loadReservations(),
+    googleConnect: loadGoogleConnect(),
   };
 }

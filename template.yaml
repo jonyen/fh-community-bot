@@ -31,6 +31,10 @@ Parameters:
   RoomRequestsSheetId:   { Type: String, Default: "" }
   KitchenSheetId:        { Type: String, Default: "" }
   RmsBookingEnabled:     { Type: String, Default: "true", AllowedValues: ["true", "false"] }
+  # Members connecting their own Google accounts (Web OAuth client in the
+  # acts2.network GCP project, Internal consent screen). Off while empty.
+  GoogleWebClientId:     { Type: String, Default: "", NoEcho: true }
+  GoogleWebClientSecret: { Type: String, Default: "", NoEcho: true }
 
 Globals:
   Function:
@@ -106,6 +110,11 @@ Resources:
           ROOM_REQUESTS_SHEET_ID: !Ref RoomRequestsSheetId
           KITCHEN_SHEET_ID:       !Ref KitchenSheetId
           RMS_BOOKING_ENABLED:    !Ref RmsBookingEnabled
+          GOOGLE_WEB_CLIENT_ID:     !Ref GoogleWebClientId
+          GOOGLE_WEB_CLIENT_SECRET: !Ref GoogleWebClientSecret
+          OAUTH_REDIRECT_URI:       !Sub "${OAuthCallbackFnUrl.FunctionUrl}oauth/google/callback"
+          AUTH_TABLE:               !Ref AuthTable
+          AUTH_KMS_KEY_ID:          !Ref AuthKey
       Policies:
         # A "us." inference profile routes each call to a foundation model in
         # one of several US regions, so both need allowing. Scoped to Claude
@@ -116,6 +125,8 @@ Resources:
               Resource:
                 - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-*
                 - arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-*
+        - DynamoDBCrudPolicy: { TableName: !Ref AuthTable }
+        - KMSDecryptPolicy: { KeyId: !Ref AuthKey }
       Events:
         FromQueue:
           Type: SQS
@@ -182,6 +193,66 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
+
+  # Connected members, pending bookings and sign-in nonces. Refresh tokens are
+  # KMS ciphertext; pending rows and nonces expire through TTL.
+  AuthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: fh-community-reservations-auth
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+      TimeToLiveSpecification: { AttributeName: expiresAt, Enabled: true }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      SSESpecification: { SSEEnabled: true }
+
+  AuthKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts members' Google refresh tokens for #reservations
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # Lets IAM policies grant use of the key; the functions below get
+          # Encrypt or Decrypt, never both.
+          - Sid: AccountRoot
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: "kms:*"
+            Resource: "*"
+
+  # Google redirects members here after consent. Its own function and URL, so
+  # googleapis never weighs on the Slack receiver's 3 s budget.
+  OAuthCallbackFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/oauthCallback.handler
+      Description: Google sign-in callback for #reservations connected accounts
+      MemorySize: 256
+      Timeout: 15
+      Environment:
+        Variables:
+          GOOGLE_WEB_CLIENT_ID:     !Ref GoogleWebClientId
+          GOOGLE_WEB_CLIENT_SECRET: !Ref GoogleWebClientSecret
+          AUTH_TABLE:               !Ref AuthTable
+          AUTH_KMS_KEY_ID:          !Ref AuthKey
+          EVENT_QUEUE_URL:          !Ref EventQueue
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref AuthTable }
+        - KMSEncryptPolicy: { KeyId: !Ref AuthKey }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt EventQueue.QueueName }
+
+  OAuthCallbackLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${OAuthCallbackFn}
+      RetentionInDays: 14
 
   # ---------------------------------------------------------------------------
   # Observability
@@ -387,6 +458,9 @@ Resources:
         }
 
 Outputs:
+  OAuthRedirectUri:
+    Description: Add this as an authorized redirect URI on the Google Web OAuth client
+    Value: !Sub "${OAuthCallbackFnUrl.FunctionUrl}oauth/google/callback"
   FunctionUrl:
     Description: Paste this into the Slack app Event Subscriptions → Request URL
     Value: !GetAtt ReceiverFnUrl.FunctionUrl

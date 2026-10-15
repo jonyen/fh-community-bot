@@ -155,3 +155,18 @@ describe('metrics (CloudWatch EMF)', () => {
     expect(lastLine(out)._aws.CloudWatchMetrics[0].Dimensions).toEqual([[]]);
   });
 });
+
+describe('redaction', () => {
+  let out;
+  beforeEach(() => { out = vi.spyOn(console, 'log').mockImplementation(() => {}); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  test('never writes token fields, at any depth', () => {
+    log.info("tokens", { refresh_token: "R", nested: { access_token: "A", id_token: "I", refreshToken: "R2", client_secret: "S" }, keep: "ok" });
+    const line = JSON.parse(out.mock.calls.at(-1)[0]);
+    expect(line.refresh_token).toBe("[redacted]");
+    expect(line.nested).toEqual({ access_token: "[redacted]", id_token: "[redacted]", refreshToken: "[redacted]", client_secret: "[redacted]" });
+    expect(line.keep).toBe("ok");
+    expect(out.mock.calls.at(-1)[0]).not.toMatch(/"R"|"A"|"I"|"R2"|"S"/);
+  });
+});

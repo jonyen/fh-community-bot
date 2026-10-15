@@ -82,15 +82,18 @@ export function createRmsAdapter({
     return lists.flat().filter((r) => r.date === date && overlaps(start, end, r.start, r.end));
   }
 
-  async function book({ date, start, end, items, title, requesterName, requesterUserId, permalink }) {
+  async function book({ date, start, end, items, title, requesterName, requesterUserId, permalink }, { clients } = {}) {
     const itemLink = calendarLink(items[0].calendarId);
-    if (!bookingEnabled) {
+    // A connected member books on their own calendar; the flag only governs
+    // booking on the bot's.
+    if (!bookingEnabled && !clients) {
       return { status: "unavailable", reason: "Please book this one in Google Calendar (RMS) for now.", link: itemLink };
     }
+    const cal = clients?.calendarClient || calendarClient;
     // The resource only processes the invite when it is sent; with "none" it
     // stays needsAction forever. The resource is the only attendee, so no
     // person gets an email.
-    const res = await calendarClient.events.insert({
+    const res = await cal.events.insert({
       calendarId: botCalendarId,
       sendUpdates: "all",
       requestBody: {
@@ -106,11 +109,11 @@ export function createRmsAdapter({
     // in a live test), so allow up to 12 s.
     for (let attempt = 0; attempt < 8; attempt++) {
       await sleep(1500);
-      const got = await calendarClient.events.get({ calendarId: botCalendarId, eventId });
+      const got = await cal.events.get({ calendarId: botCalendarId, eventId });
       const resources = (got.data.attendees || []).filter((a) => a.resource);
       const declined = resources.filter((a) => a.responseStatus === "declined");
       if (declined.length > 0) {
-        await calendarClient.events.delete({ calendarId: botCalendarId, eventId, sendUpdates: "none" });
+        await cal.events.delete({ calendarId: botCalendarId, eventId, sendUpdates: "none" });
         return { status: "unavailable", reason: "The calendar declined the booking (it may already be taken).", link: itemLink };
       }
       if (resources.every((a) => a.responseStatus === "accepted")) break;

@@ -90,6 +90,8 @@ jobs:
           ROOM_REQUESTS_SHEET_ID: ${{ vars.ROOM_REQUESTS_SHEET_ID }}
           KITCHEN_SHEET_ID: ${{ vars.KITCHEN_SHEET_ID }}
           RMS_BOOKING_ENABLED: ${{ vars.RMS_BOOKING_ENABLED }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.GOOGLE_WEB_CLIENT_SECRET }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
@@ -129,6 +131,9 @@ jobs:
           fi
           if [ -n "$RMS_BOOKING_ENABLED" ]; then
             OPTIONAL_PARAMS+=("RmsBookingEnabled=$RMS_BOOKING_ENABLED")
+          fi
+          if [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
+            OPTIONAL_PARAMS+=("GoogleWebClientId=$GOOGLE_WEB_CLIENT_ID" "GoogleWebClientSecret=$GOOGLE_WEB_CLIENT_SECRET")
           fi
           sam deploy \
             --no-confirm-changeset \

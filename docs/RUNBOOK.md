@@ -159,3 +159,26 @@ calendar failed. The member was told to book directly, with the link. The log
 line carries `backend` (`rooms`, `kitchen`, `rms`) and the error; the causes are
 the same sharing issues as above. The `ReservationFailed` metric counts these.
 
+## Connected accounts: "Couldn't connect" pages or `ConnectFailed`
+
+The `ConnectFailed` metric carries a `stage` field:
+
+- `exchange`: Google refused the sign-in code. Usually the redirect URI on the
+  Web OAuth client doesn't match the stack output `OAuthRedirectUri` exactly,
+  or the client secret changed. Fix the client or the GitHub secrets and
+  redeploy.
+- `no_refresh_token`: Google returned no offline access. Check the consent
+  screen is Internal and the scopes are approved.
+- `store`: DynamoDB or KMS failed. Check the OAuthCallbackFn logs.
+
+`ConnectRejected` with `reason: mismatch` means a member signed in with a
+Google account that doesn't match their Slack email. This is working as
+intended; the page told them which account to use.
+
+## A member says bookings keep asking them to connect
+
+Their stored token is revoked (they removed access in their Google account, or
+it went unused for six months). The bot marks them `revoked` and prompts again;
+connecting again fixes it. If it keeps happening for everyone, check the OAuth
+consent screen is still **Internal**: in External testing mode Google expires
+refresh tokens after 7 days.
