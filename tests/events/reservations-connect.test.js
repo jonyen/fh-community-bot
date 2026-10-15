@@ -5,7 +5,8 @@ import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
-const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: [SET2] });
+const TRANSIT = { label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "tr" };
+const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: [SET2, TRANSIT] });
 const BOOK = { intent: "book", items: ["Tech Set 2"], date: "2026-10-17", start: "14:00", end: "16:00", title: "Youth night" };
 const MEMBER_CLIENTS = { sheetsClient: { kind: "member-sheets" }, calendarClient: { kind: "member-cal" } };
 
@@ -118,6 +119,14 @@ describe("reservations with connected accounts", () => {
     adapters.rms.book.mockRejectedValue(Object.assign(new Error("Forbidden"), { code: 403 }));
     await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(replies()[0].text).toBe("Google Calendar won't let your account book Tech Set 2. Ask Alan Chow.");
+  });
+
+  it("names the vehicle's own owner when Calendar refuses the member", async () => {
+    const connect = makeConnect("active");
+    llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["CP Transit"] });
+    adapters.rms.book.mockRejectedValue(Object.assign(new Error("Forbidden"), { code: 403 }));
+    await handler(connect).handleCommand({ envelope: cmd(), client });
+    expect(replies()[0].text).toBe("Google Calendar won't let your account book CP Transit. Ask Mark Yeh.");
   });
 
   it("can't connect a member with no email on their Slack profile", async () => {

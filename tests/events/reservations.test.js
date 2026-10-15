@@ -110,6 +110,7 @@ describe("reservations handler", () => {
     llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Hologram"] });
     await h.handleCommand({ envelope: cmd(), client });
     expect(posts()[0].text).toMatch(/^I don't know "Hologram"\./);
+    expect(posts()[0].text).toMatch(/vehicles/);
   });
 
   it("refuses to mix backends in one booking", async () => {

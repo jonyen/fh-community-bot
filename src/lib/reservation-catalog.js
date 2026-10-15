@@ -4,7 +4,7 @@
 import { ROOMS } from "./rooms-catalog.js";
 
 export const CATEGORY_NAMES = {
-  rooms: "Rooms", kitchen: "Kitchen", tech: "Tech", sports: "Sports", outreach: "Outreach", accessories: "Accessories",
+  rooms: "Rooms", kitchen: "Kitchen", tech: "Tech", sports: "Sports", outreach: "Outreach", accessories: "Accessories", vehicles: "Vehicles",
 };
 
 // Who a member should ask when Google refuses their account (no edit access
@@ -13,6 +13,13 @@ export const CATEGORY_OWNERS = {
   rooms: "Management", kitchen: "Arie Chen", tech: "Alan Chow",
   sports: "Joe Pagan", outreach: "Joe Pagan", accessories: "the equipment team",
 };
+
+// Vehicles each have their own coordinator (OneStop Links tab).
+const ITEM_OWNERS = { Airstream: "Brandon Lenz", "CP Transit": "Mark Yeh" };
+
+export function ownerFor(item) {
+  return ITEM_OWNERS[item.label] || CATEGORY_OWNERS[item.category] || "the equipment team";
+}
 
 export function buildCatalog({ rooms, kitchen, rms }) {
   return [

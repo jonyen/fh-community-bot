@@ -6,7 +6,7 @@
 // CLOSED_METADATA on the bot's last reply so it is never acted on twice.
 import { log, metric } from "../lib/logger.js";
 import { nyToday, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
-import { catalogPromptText, CATEGORY_OWNERS } from "../lib/reservation-catalog.js";
+import { catalogPromptText, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
 import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE } from "../lib/reservation-format.js";
@@ -63,7 +63,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (adapter.backend === "rooms") return `You don't have edit access to the room request sheet. Ask ${CATEGORY_OWNERS.rooms} to share it with you: ${adapter.link}`;
     if (adapter.backend === "kitchen") return `You don't have edit access to the kitchen sheet. Ask ${CATEGORY_OWNERS.kitchen} to share it with you: ${adapter.link}`;
     const names = req.items.map((i) => i.label).join(", ");
-    return `Google Calendar won't let your account book ${names}. Ask ${CATEGORY_OWNERS[req.items[0].category] || "the equipment team"}.`;
+    return `Google Calendar won't let your account book ${names}. Ask ${ownerFor(req.items[0])}.`;
   }
 
   async function promptConnect({ req, adapter, requester, reply, client, channel, rootTs, revoked }) {
@@ -264,7 +264,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       return reply(`Which one did you mean by "${a.phrase}": ${a.options.map((o) => o.label).join(", ")}?`);
     }
     if (req.unmatched.length && req.items.length === 0) {
-      return reply(`I don't know "${req.unmatched.join('", "')}". I can book rooms, the kitchen, tech sets, and sports, outreach and accessories equipment.`);
+      return reply(`I don't know "${req.unmatched.join('", "')}". I can book rooms, the kitchen, tech sets, vehicles, and sports, outreach and accessories equipment.`);
     }
     if (req.intent === "check" || req.intent === "list") return handleQuery(req, reply, client);
 

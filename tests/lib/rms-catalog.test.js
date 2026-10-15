@@ -12,15 +12,18 @@ const RC = {
   "DMV Accessories-Cube Cooler 1": "cube1@resource.calendar.google.com",
   "DMV Venues-3-FH MPR (100)": "mpr@resource.calendar.google.com",
   "DMV-Vehicles-Airstream": "air@resource.calendar.google.com",
+  "DMV-Vehicles-CP Transit": "transit@resource.calendar.google.com",
 };
 
 describe("buildRmsCatalog", () => {
-  it("labels and categorises bookable groups and drops venues and vehicles", () => {
+  it("labels and categorises bookable groups, including vehicles, and drops venues", () => {
     const cat = buildRmsCatalog(RC);
     expect(cat).toContainEqual({ label: "Tech Set 1", category: "tech", backend: "rms", calendarId: "tech1@resource.calendar.google.com" });
     expect(cat).toContainEqual({ label: "Kickball", category: "sports", backend: "rms", calendarId: "kick@resource.calendar.google.com" });
     expect(cat).toContainEqual({ label: "Large chest cooler", category: "accessories", backend: "rms", calendarId: "chest@resource.calendar.google.com" });
-    expect(cat.some((e) => /MPR|Airstream/.test(e.label))).toBe(false);
+    expect(cat).toContainEqual({ label: "Airstream", category: "vehicles", backend: "rms", calendarId: "air@resource.calendar.google.com" });
+    expect(cat).toContainEqual({ label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "transit@resource.calendar.google.com" });
+    expect(cat.some((e) => /MPR/.test(e.label))).toBe(false);
   });
   it("disambiguates duplicate labels with the group name", () => {
     const labels = buildRmsCatalog(RC).map((e) => e.label);
