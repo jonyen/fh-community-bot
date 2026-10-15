@@ -59,7 +59,7 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     return hits.length >= maxGroups ? hits.map(toReservation) : [];
   }
 
-  async function book({ date, start, end, requesterName, phone, appliances = {} }) {
+  async function book({ date, start, end, requesterName, phone, appliances = {} }, { clients } = {}) {
     const sameDay = (await readRows()).filter((r) => r.date === date);
     if (sameDay.length === 0) {
       return { status: "unavailable", reason: "The kitchen sheet is not open yet for that date.", link };
@@ -76,7 +76,8 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
       if (v == null || v === false) continue;
       data.push({ range: `'${tab}'!${a.col}${free.row}`, values: [[a.kind === "bool" ? "TRUE" : Number(v)]] });
     }
-    await sheetsClient.spreadsheets.values.batchUpdate({
+    const writer = clients?.sheetsClient || sheetsClient;
+    await writer.spreadsheets.values.batchUpdate({
       spreadsheetId,
       requestBody: { valueInputOption: "USER_ENTERED", data },
     });

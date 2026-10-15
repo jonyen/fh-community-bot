@@ -45,8 +45,11 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
       .map(toReservation);
   }
 
-  async function book({ date, start, end, items, title, ministry, requesterName }) {
-    await sheetsClient.spreadsheets.values.append({
+  async function book({ date, start, end, items, title, ministry, requesterName }, { clients } = {}) {
+    // Written as the member when they are connected, so the sheet's edit
+    // history shows them.
+    const writer = clients?.sheetsClient || sheetsClient;
+    await writer.spreadsheets.values.append({
       spreadsheetId,
       range: `'${tab}'!A:I`,
       valueInputOption: "USER_ENTERED",
