@@ -224,6 +224,7 @@ thread. Confirmations are broadcast to the channel, which is the feed.
 | Kitchen | Arie Chen | FH Kitchen Management, tab *FH-Kitchen-RSVP* (max 3 groups at once) |
 | Tech | Alan Chow | RMS resource calendars, Tech Set 1–4 |
 | Sports, outreach, accessories | Joe Pagan (accessories: none) | RMS resource calendars |
+| Vehicles | Brandon Lenz (Airstream), Mark Yeh (CP Transit) | RMS resource calendars |
 
 Every Monday at 8:00 AM New York time, `DigestFn` posts the week's reservations
 from all sources, including bookings made directly in the docs and calendars.

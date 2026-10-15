@@ -1,12 +1,13 @@
 // src/lib/rms-catalog.js
 // RESOURCE_CALENDARS maps the Workspace resource name to its calendar id, e.g.
-// "DMV Tech Equipment-G-Tech Set 1". Venues and vehicles are out of scope:
-// rooms are booked on the room request sheet instead.
+// "DMV Tech Equipment-G-Tech Set 1". Venues are out of scope: rooms are
+// booked on the room request sheet instead.
 const GROUPS = [
   ["DMV Tech Equipment-", "tech", "Tech"],
   ["DMV Sports Equipment-", "sports", "Sports"],
   ["DMV Outreach Supplies-", "outreach", "Outreach"],
   ["DMV Accessories-", "accessories", "Accessories"],
+  ["DMV-Vehicles-", "vehicles", "Vehicles"],
 ];
 
 export function buildRmsCatalog(resourceCalendars) {

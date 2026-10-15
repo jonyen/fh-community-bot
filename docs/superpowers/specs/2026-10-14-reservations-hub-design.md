@@ -40,8 +40,9 @@ reference only; its code is not restored.
 - Editing or cancelling bookings from Slack (v1 is create + read).
 - Announcing bookings made directly in a doc or calendar in real time (no
   polling or diffing; the weekly digest covers them).
-- Venues and vehicles RMS calendars (`DMV Venues-*`, `DMV-Vehicles-*`). Rooms are
-  booked through the room request sheet, not venue calendars.
+- Venues RMS calendars (`DMV Venues-*`). Rooms are booked through the room
+  request sheet, not venue calendars. (Vehicles were added on 2026-10-15: see
+  the Sources table.)
 - The OneStop event schedule (`1byXFO7A…`). It is a schedule, not a booking
   system.
 - Suggesting alternative free slots.
@@ -55,6 +56,7 @@ reference only; its code is not restored.
 | Tech | Alan Chow | RMS resource calendars `DMV Tech Equipment-G-Tech Set 1..4` | Calendar event with the resource as attendee |
 | Sports & Outreach | Joe Pagan | RMS `DMV Sports Equipment-*` (56), `DMV Outreach Supplies-*` (20) | Same as Tech |
 | Accessories | none | RMS `DMV Accessories-*` (27) | Same as Tech |
+| Vehicles | Brandon Lenz (Airstream), Mark Yeh (CP Transit) | RMS `DMV-Vehicles-*` (2) | Same as Tech |
 
 Token scopes: `calendar`, `spreadsheets`, `drive.file`. The bot has `reader`
 access on the resource calendars.
