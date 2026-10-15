@@ -232,8 +232,8 @@ Resources:
     Properties:
       Handler: src/lambda/oauthCallback.handler
       Description: Google sign-in callback for #reservations connected accounts
-      MemorySize: 256
-      Timeout: 15
+      MemorySize: 512
+      Timeout: 30
       Environment:
         Variables:
           GOOGLE_WEB_CLIENT_ID:     !Ref GoogleWebClientId
