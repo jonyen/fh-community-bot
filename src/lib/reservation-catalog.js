@@ -7,6 +7,13 @@ export const CATEGORY_NAMES = {
   rooms: "Rooms", kitchen: "Kitchen", tech: "Tech", sports: "Sports", outreach: "Outreach", accessories: "Accessories",
 };
 
+// Who a member should ask when Google refuses their account (no edit access
+// to a sheet, or not allowed to book a resource). From the OneStop Links tab.
+export const CATEGORY_OWNERS = {
+  rooms: "Management", kitchen: "Arie Chen", tech: "Alan Chow",
+  sports: "Joe Pagan", outreach: "Joe Pagan", accessories: "the equipment team",
+};
+
 export function buildCatalog({ rooms, kitchen, rms }) {
   return [
     ...(rooms ? ROOMS.map((r) => ({ label: r.name, category: "rooms", backend: "rooms" })) : []),
