@@ -113,6 +113,43 @@ aws iam put-role-policy --role-name <DEPLOY_ROLE> \
 SAM also creates the role the schedule assumes to invoke the Lambda;
 `IAMFullAccess` already covers creating it and passing it.
 
+Connected Google accounts add a DynamoDB table and a KMS key. Add this inline
+policy too, or the deploy fails with a `dynamodb:CreateTable` or
+`kms:CreateKey` AccessDenied and rolls back:
+
+```bash
+aws iam put-role-policy --role-name <DEPLOY_ROLE> \
+  --policy-name connected-accounts --policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AuthTable",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:DescribeTable",
+        "dynamodb:UpdateTable", "dynamodb:UpdateTimeToLive", "dynamodb:DescribeTimeToLive",
+        "dynamodb:UpdateContinuousBackups", "dynamodb:DescribeContinuousBackups",
+        "dynamodb:TagResource", "dynamodb:UntagResource", "dynamodb:ListTagsOfResource"
+      ],
+      "Resource": "arn:aws:dynamodb:<REGION>:<ACCOUNT_ID>:table/fh-community-reservations-auth"
+    },
+    {
+      "Sid": "AuthKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey", "kms:DescribeKey", "kms:GetKeyPolicy", "kms:PutKeyPolicy",
+        "kms:EnableKeyRotation", "kms:GetKeyRotationStatus", "kms:ScheduleKeyDeletion",
+        "kms:TagResource", "kms:UntagResource", "kms:ListResourceTags", "kms:UpdateKeyDescription"
+      ],
+      "Resource": "*"
+    }
+  ]
+}'
+```
+
+`kms:CreateKey` has no resource ARN before the key exists, which is why that
+statement is `*`.
+
 Record the role ARN.
 
 ## 4. GitHub repository secrets

@@ -223,6 +223,29 @@ Every Monday at 8:00 AM New York time, `DigestFn` posts the week's reservations
 from all sources, including bookings made directly in the docs and calendars.
 If a source can't be read, the post says so and `ESCALATION_USER_ID` gets a DM.
 
+### Booking as yourself (connected Google accounts)
+
+Bookings are written as the member who asked, so calendars show the real
+organizer and the sheets' edit history shows the real person. The first time a
+member books, the bot sends them a private "Connect Google" button. They sign
+in with their acts2.network account (it must match their Slack email) and
+approve Calendar and Sheets access, and the booking finishes on its own. To
+disconnect, use `/reservations-disconnect` or write "disconnect my Google" in
+#reservations.
+
+Reads (check, list, the digest) still use the bot's Google token.
+
+One-time setup:
+
+1. In a GCP project owned by the acts2.network organization, set the OAuth
+   consent screen to **Internal** and enable the Calendar and Sheets APIs.
+2. Create a **Web application** OAuth client. Add the stack output
+   `OAuthRedirectUri` as an authorized redirect URI.
+3. Save its id and secret as GitHub secrets `GOOGLE_WEB_CLIENT_ID` and
+   `GOOGLE_WEB_CLIENT_SECRET`, and redeploy.
+4. In the Slack app, add the slash command `/reservations-disconnect` with the
+   receiver's Function URL as its request URL.
+
 Repo variables: `RESERVATIONS_CHANNEL_ID`, `ROOM_REQUESTS_SHEET_ID`,
 `KITCHEN_SHEET_ID`, `RESOURCE_CALENDARS` (bundled as
 `runtime-config/resource-calendars.json` at deploy because it is over the 4 KB
