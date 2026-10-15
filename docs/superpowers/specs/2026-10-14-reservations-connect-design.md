@@ -57,11 +57,11 @@ list, conflict checks, the weekly digest) keep using the bot token.
    "To book as you, connect your Google account once." The message has a URL
    button, "Connect Google", that opens Google's consent page with:
    - `client_id` = the Web OAuth client
-   - `redirect_uri` = `<FunctionUrl>oauth/google/callback`
+   - `redirect_uri` = `<OAuthCallbackFn URL>oauth/google/callback`
    - `scope` = `openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/spreadsheets`
    - `access_type=offline`, `prompt=consent`, `hd=acts2.network`
    - `login_hint` = the Slack email, `state` = the nonce
-5. **Callback** (receiver Lambda, `GET /oauth/google/callback`):
+5. **Callback** (its own Lambda, `OAuthCallbackFn`, with its own Function URL, `GET /oauth/google/callback`):
    1. Consume `state#<nonce>` with a conditional delete. If it is missing or
       already used, show "This link has expired. Ask again in #reservations."
    2. If Google returned `error=access_denied`, show "Not connected. Nothing
@@ -143,7 +143,7 @@ itself.
 
 ## Security
 
-- **Encryption.** A dedicated customer-managed KMS key. The receiver role gets
+- **Encryption.** A dedicated customer-managed KMS key. The callback role gets
   `kms:Encrypt` only, and the worker role gets `kms:Decrypt` only. The
   encryption context `{ slackUserId }` binds each ciphertext to its owner.
 - **State.** The nonce is a random 32-byte value (`crypto.randomBytes`), stored
@@ -165,11 +165,15 @@ itself.
 ## Infra
 
 - `template.yaml`: the table, the KMS key with its policy, IAM statements for
-  the receiver (DynamoDB read/write, `kms:Encrypt`, `sqs:SendMessage`) and the
-  worker (DynamoDB read/write, `kms:Decrypt`). New parameters
+  `OAuthCallbackFn` (DynamoDB read/write, `kms:Encrypt`, `sqs:SendMessage`) and
+  the worker (DynamoDB read/write, `kms:Decrypt`). New parameters
   `GoogleWebClientId` and `GoogleWebClientSecret` (NoEcho).
-- The receiver keeps its Slack signature check for every path except
-  `/oauth/google/callback`.
+- The callback runs in its own Lambda, `OAuthCallbackFn`, with its own Function
+  URL. It is kept out of the receiver because `googleapis` and the token
+  exchange would slow the receiver's cold start against Slack's 3 s deadline
+  and trip the receiver latency alarm. The callback derives its redirect URI
+  from the request host, so the template has no self-reference. The worker
+  gets `OAUTH_REDIRECT_URI` from the template output.
 - The slash command `/reservations-disconnect` is registered in the Slack app.
 - Cost: about $1/month for the KMS key. DynamoDB on-demand cost is negligible.
 
@@ -180,7 +184,7 @@ itself.
    expires refresh tokens after 7 days and caps at 100 users.)
 2. Calendar API and Sheets API enabled on that project.
 3. A **Web application** OAuth client with redirect URI
-   `<FunctionUrl>oauth/google/callback`. Its id and secret go in GitHub
+   `<OAuthCallbackUrl>oauth/google/callback` (a stack output). Its id and secret go in GitHub
    secrets `GOOGLE_WEB_CLIENT_ID` and `GOOGLE_WEB_CLIENT_SECRET`.
 4. The deploy role can create DynamoDB tables and KMS keys (add to
    `docs/aws-bootstrap.md`).
@@ -194,8 +198,7 @@ itself.
 - `src/services/memberGoogle.js`: member refresh token to Sheets and Calendar
   clients, with a per-container access-token cache and `invalid_grant`
   detection.
-- `src/lambda/oauthCallback.js`: the callback handler, called by the receiver
-  for the callback path.
+- `src/lambda/oauthCallback.js`: the callback Lambda.
 - `src/events/reservations.js`: connect check, prompt, resume on
   `oauth_connected`, disconnect.
 - The adapters: the `book(request, { clients })` change.
