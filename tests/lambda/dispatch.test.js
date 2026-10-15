@@ -403,3 +403,13 @@ describe("dispatch for connected accounts", () => {
     expect(reservationsHandler.disconnect).toHaveBeenCalledWith({ userId: "U9", channel: "D1", client, responseUrl: "https://r" });
   });
 });
+
+describe("dispatch /reserve", () => {
+  it("routes /reserve to the reservations handler", async () => {
+    const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn(), handleCommand: vi.fn().mockResolvedValue(), resume: vi.fn(), disconnect: vi.fn() };
+    const client = makeClient();
+    const envelope = { type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "C1", text: "the MPR sat", response_url: "https://r" };
+    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), reservationsHandler, client });
+    expect(reservationsHandler.handleCommand).toHaveBeenCalledWith({ envelope, client });
+  });
+});

@@ -8,6 +8,10 @@ export const BOT_PERSONA = { username: "FH Reservations", icon_emoji: ":calendar
 // into a second booking.
 export const CLOSED_METADATA = { event_type: "reservation_closed", event_payload: {} };
 
+// Marks the bot's post of a member's /reserve request, so the thread logic
+// reads it as the member's words rather than the bot's.
+export const REQUEST_EVENT_TYPE = "reservation_request";
+
 export function holderText(r) {
   return r.holderUserId ? `<@${r.holderUserId}>` : r.holder || "someone";
 }

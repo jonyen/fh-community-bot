@@ -1,17 +1,18 @@
 // src/events/reservations.js
-// #reservations: members ask in plain English, the bot books first come
-// first served. The conversation is stateless: a thread reply re-reads the
-// thread and re-parses it whole, and a finished thread carries
+// #reservations: members ask with /reserve in plain English, and the bot
+// books first come first served. /reserve posts the request in the channel
+// and the conversation continues in that post's thread. It is stateless: a
+// thread reply re-reads the thread and re-parses it whole, and a finished thread carries
 // CLOSED_METADATA on the bot's last reply so it is never acted on twice.
 import { log, metric } from "../lib/logger.js";
 import { nyToday, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, CATEGORY_OWNERS } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
-import { reservationLine, BOT_PERSONA, CLOSED_METADATA } from "../lib/reservation-format.js";
+import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE } from "../lib/reservation-format.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
-const DISCONNECT = /\bdisconnect\b.*\bgoogle\b/i;
+const USAGE = "Try `/reserve the MPR Sat 2–4pm for youth night`, `/reserve is Tech Set 2 free Friday 7pm?` or `/reserve what's booked this weekend?`";
 
 export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null }) {
   const catalogText = catalogPromptText(catalog);
@@ -26,7 +27,10 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (messages.some((m) => m.bot_id && m.metadata?.event_type === CLOSED_METADATA.event_type)) {
       return { text: `Member: ${event.text}`, closed: true };
     }
-    return { text: messages.map((m) => `${m.bot_id ? "Bot" : "Member"}: ${m.text || ""}`).join("\n"), closed: false };
+    const line = (m) => (m.metadata?.event_type === REQUEST_EVENT_TYPE
+      ? `Member: ${m.metadata.event_payload?.text || ""}`
+      : `${m.bot_id ? "Bot" : "Member"}: ${m.text || ""}`);
+    return { text: messages.map(line).join("\n"), closed: false };
   }
 
   async function withMentions(client, reservations) {
@@ -157,10 +161,9 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
   }
 
-  async function disconnect({ userId, channel, client, responseUrl }) {
-    if (!connect) return;
-    const had = await connect.memberGoogle.revoke(userId);
-    const text = had ? "Disconnected your Google account. Bookings will ask you to connect again." : "Your Google account wasn't connected.";
+  // Private reply to a slash command; falls back to response_url when the
+  // command came from a channel or DM the bot can't post in.
+  async function tellPrivately({ userId, channel, client, responseUrl, text }) {
     try {
       await client.chat.postEphemeral({ channel, user: userId, text, ...BOT_PERSONA });
     } catch (error) {
@@ -171,6 +174,28 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
         body: JSON.stringify({ response_type: "ephemeral", text }),
       });
     }
+  }
+
+  async function disconnect({ userId, channel, client, responseUrl }) {
+    if (!connect) return;
+    const had = await connect.memberGoogle.revoke(userId);
+    const text = had ? "Disconnected your Google account. Bookings will ask you to connect again." : "Your Google account wasn't connected.";
+    return tellPrivately({ userId, channel, client, responseUrl, text });
+  }
+
+  // /reserve <text>: post the request in #reservations so everyone sees it,
+  // then handle it in that post's thread exactly like a thread message.
+  async function handleCommand({ envelope, client }) {
+    const userId = envelope.user_id;
+    const text = String(envelope.text || "").trim();
+    const where = { userId, channel: envelope.channel_id, client, responseUrl: envelope.response_url };
+    if (!text) return tellPrivately({ ...where, text: USAGE });
+    const posted = await client.chat.postMessage({
+      channel: channelId, text: `📅 <@${userId}>: ${text}`, ...BOT_PERSONA,
+      metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: userId, text } },
+    });
+    if (envelope.channel_id !== channelId) await tellPrivately({ ...where, text: `Posted your request in <#${channelId}>.` });
+    return processRequest({ event: { channel: channelId, user: userId, text, ts: posted.ts }, thread: { text: `Member: ${text}`, closed: false }, client });
   }
 
   async function handleQuery(req, reply, client) {
@@ -205,12 +230,16 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
 
   async function handleMessage({ event, client }) {
     if (event.channel !== channelId || event.bot_id || event.subtype || !String(event.text || "").trim()) return;
-    const rootTs = event.thread_ts || event.ts;
-    const reply = makeReply(client, event.channel, rootTs);
-    if (connect && DISCONNECT.test(event.text)) return disconnect({ userId: event.user, channel: event.channel, client });
-
+    // Top-level chat in the channel is ignored: requests start with /reserve.
+    if (!event.thread_ts || event.thread_ts === event.ts) return;
     const thread = await transcriptFor(event, client);
     if (!thread) return;
+    return processRequest({ event, thread, client });
+  }
+
+  async function processRequest({ event, thread, client }) {
+    const rootTs = event.thread_ts || event.ts;
+    const reply = makeReply(client, event.channel, rootTs);
 
     const today = nyToday(now());
     const raw = await llm.parseReservationRequest(thread.text, { catalogText, today, weekday: weekdayName(today) });
@@ -270,5 +299,5 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return finishBooking({ req, adapter, requester, reply, client, channel: event.channel, rootTs });
   }
 
-  return { channelId, handleMessage, resume, disconnect };
+  return { channelId, handleMessage, handleCommand, resume, disconnect };
 }

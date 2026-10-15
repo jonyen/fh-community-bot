@@ -37,7 +37,7 @@ function readBody(event) {
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
 }
 
-export function shouldEnqueueEvent(parsed, { reservationsChannelId = process.env.RESERVATIONS_CHANNEL_ID } = {}) {
+export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
   // Every reaction in every channel the bot is in arrives here; only the
@@ -45,8 +45,6 @@ export function shouldEnqueueEvent(parsed, { reservationsChannelId = process.env
   if (event.type === "reaction_added") return isCreaTicketReaction(event.reaction);
   if (event.type !== "message") return true;
   if (event.bot_id) return false; // never enqueue our own / other bots' messages
-  // #reservations is ambient: members ask without mentioning the bot.
-  if (reservationsChannelId && event.channel === reservationsChannelId) return !event.subtype;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
   if (/<@[A-Z0-9_]+>/.test(text)) return true;

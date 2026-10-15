@@ -9,7 +9,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
-- **#reservations** — book, check and list rooms, the kitchen and RMS equipment in plain English; first come, first served, with a weekly digest (see below)
+- **#reservations** — `/reserve` books, checks and lists rooms, the kitchen and RMS equipment in plain English; first come, first served, with a weekly digest (see below)
 
 ## Architecture
 
@@ -200,11 +200,17 @@ Before the gender feature works in production, update the Slack app config:
 ## #reservations
 
 The #reservations channel is the front door for FH's four reservation
-systems. Members write requests in plain English, without mentioning the bot:
+systems. Members ask with the `/reserve` slash command, in plain English, from
+any channel or DM:
 
-- "book Tech Set 2 Sat 2-4pm for youth night"
-- "is the MPR free Wednesday 7-9?"
-- "who has the pickleball set this weekend?"
+- `/reserve Tech Set 2 Sat 2-4pm for youth night`
+- `/reserve is the MPR free Wednesday 7-9?`
+- `/reserve who has the pickleball set this weekend?`
+
+The bot posts each request in #reservations ("📅 @member: …") and answers in
+that post's thread, so everyone sees what was asked and booked. Follow-up
+answers ("Saturday", "5-7 instead") go in the same thread. Ordinary chat in
+the channel is ignored.
 
 The bot parses each request with Claude Haiku, checks for a conflict, and writes
 the booking straight into the system that owns the item. Bookings are first
@@ -230,8 +236,7 @@ organizer and the sheets' edit history shows the real person. The first time a
 member books, the bot sends them a private "Connect Google" button. They sign
 in with their acts2.network account (it must match their Slack email) and
 approve Calendar and Sheets access, and the booking finishes on its own. To
-disconnect, use `/reservations-disconnect` or write "disconnect my Google" in
-#reservations.
+disconnect, use `/reservations-disconnect`.
 
 Reads (check, list, the digest) still use the bot's Google token.
 

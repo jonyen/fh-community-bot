@@ -353,15 +353,14 @@ describe("shouldEnqueueEvent — reactions", () => {
 });
 
 describe("shouldEnqueueEvent for #reservations", () => {
-  const opts = { reservationsChannelId: "CRES" };
-  it("enqueues top-level member messages in the reservations channel", async () => {
+  it("drops top-level channel chatter: requests come through /reserve", async () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "CRES";
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
-    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "book the MPR" } }, opts)).toBe(true);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "book the MPR" } })).toBe(false);
+    delete process.env.RESERVATIONS_CHANNEL_ID;
   });
-  it("still drops bots, edits and other channels' top-level messages", async () => {
+  it("still enqueues thread replies there", async () => {
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
-    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "x", bot_id: "B" } }, opts)).toBe(false);
-    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "x", subtype: "message_changed" } }, opts)).toBe(false);
-    expect(shouldEnqueueEvent({ event: { type: "message", channel: "COTHER", text: "x" } }, opts)).toBe(false);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "Saturday", thread_ts: "1.1", ts: "1.2" } })).toBe(true);
   });
 });
