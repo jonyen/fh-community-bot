@@ -1,6 +1,6 @@
 // tests/services/memberGoogle.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMemberGoogle, isInvalidGrant, isForbidden } from "../../src/services/memberGoogle.js";
+import { createMemberGoogle, isInvalidGrant, isForbidden, isScopeMissing } from "../../src/services/memberGoogle.js";
 
 function fakeGoogle() {
   const made = [];
@@ -93,3 +93,13 @@ describe("error classifiers", () => {
     expect(isForbidden({ code: 500 })).toBe(false);
   });
 });
+
+describe("isScopeMissing (review fix)", () => {
+  it("recognises a token without the needed scope", () => {
+    expect(isScopeMissing({ code: 403, response: { data: { error: { errors: [{ reason: "insufficientPermissions" }] } } } })).toBe(true);
+    expect(isScopeMissing({ code: 403, response: { data: { error: { details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } } } })).toBe(true);
+    expect(isScopeMissing(Object.assign(new Error("Request had insufficient authentication scopes."), { code: 403 }))).toBe(true);
+    expect(isScopeMissing(Object.assign(new Error("The caller does not have permission"), { code: 403 }))).toBe(false);
+  });
+});
+

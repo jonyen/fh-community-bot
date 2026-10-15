@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOAuthCallback } from "../../src/lambda/oauthCallback.js";
 
 const PAYLOAD = { email: "deandra.shim@acts2.network", email_verified: true, hd: "acts2.network" };
+const FULL_SCOPE = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/spreadsheets";
 const REDIRECT = "https://cb.lambda-url.us-east-1.on.aws/oauth/google/callback";
 
 function setup({ state = { pendingId: "P1", slackUserId: "U9", slackEmail: "deandra.shim@acts2.network" }, pending = { slackUserId: "U9" }, payload = PAYLOAD } = {}) {
@@ -13,7 +14,7 @@ function setup({ state = { pendingId: "P1", slackUserId: "U9", slackEmail: "dean
     saveUser: vi.fn().mockResolvedValue(),
   };
   const oauth2Client = {
-    getToken: vi.fn().mockResolvedValue({ tokens: { refresh_token: "1//R", access_token: "A", id_token: "ID", scope: "s" } }),
+    getToken: vi.fn().mockResolvedValue({ tokens: { refresh_token: "1//R", access_token: "A", id_token: "ID", scope: FULL_SCOPE } }),
     verifyIdToken: vi.fn().mockResolvedValue({ getPayload: () => payload }),
     revokeToken: vi.fn().mockResolvedValue({}),
   };
@@ -29,7 +30,7 @@ describe("OAuth callback", () => {
     expect(authStore.consumeState).toHaveBeenCalledWith("N");
     expect(oauth2Client.getToken).toHaveBeenCalledWith({ code: "CODE", redirect_uri: REDIRECT });
     expect(oauth2Client.verifyIdToken).toHaveBeenCalledWith({ idToken: "ID", audience: "CID" });
-    expect(authStore.saveUser).toHaveBeenCalledWith({ slackUserId: "U9", googleEmail: "deandra.shim@acts2.network", refreshToken: "1//R", scopes: "s" });
+    expect(authStore.saveUser).toHaveBeenCalledWith({ slackUserId: "U9", googleEmail: "deandra.shim@acts2.network", refreshToken: "1//R", scopes: FULL_SCOPE });
     expect(enqueue).toHaveBeenCalledWith({ type: "oauth_connected", pendingId: "P1" });
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain("Connected");
@@ -64,6 +65,25 @@ describe("OAuth callback", () => {
     const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
     expect(page.statusCode).toBe(403);
     expect(page.body).toContain("You signed in as alan.chow@acts2.network, but your Slack account is deandra.shim@acts2.network.");
+    expect(oauth2Client.revokeToken).toHaveBeenCalledWith("1//R");
+    expect(authStore.saveUser).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("tells a wrong-account sign-in how to try again (review fix)", async () => {
+    const { cb } = setup({ payload: { ...PAYLOAD, email: "alan.chow@acts2.network" } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.body).toContain("Then send your request again in #reservations.");
+  });
+
+  it("refuses a partial grant, revokes it and stores nothing (review fix)", async () => {
+    const { cb, oauth2Client, authStore, enqueue } = setup();
+    oauth2Client.getToken.mockResolvedValue({ tokens: { refresh_token: "1//R", access_token: "A", id_token: "ID",
+      scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events" } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.statusCode).toBe(403);
+    expect(page.body).toContain("both Google Calendar and Google Sheets");
+    expect(page.body).toContain("Then send your request again in #reservations.");
     expect(oauth2Client.revokeToken).toHaveBeenCalledWith("1//R");
     expect(authStore.saveUser).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();

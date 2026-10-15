@@ -192,4 +192,30 @@ describe("reservations with connected accounts", () => {
       expect(client.chat.postMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe("review fixes", () => {
+    it("re-prompts instead of blaming the sheet owner when the token lacks a scope", async () => {
+      const connect = makeConnect("active");
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["MPR"] });
+      adapters.rooms.book.mockRejectedValue(Object.assign(new Error("Request had insufficient authentication scopes."), { code: 403 }));
+      await handler(connect).handleMessage({ event: msg(), client });
+      expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
+      expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired|connect/i);
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("tells the member when a resume fails instead of going silent", async () => {
+      const connect = makeConnect("active");
+      connect.authStore.getPending.mockResolvedValue({
+        slackUserId: "U9", slackEmail: "e", channel: "CRES", threadTs: "100.1",
+        request: { backend: "rms", req: { items: [SET2], date: "2026-10-17", start: 840, end: 960, title: "T", ministry: null, appliances: {} },
+          requester: { requesterName: "D", requesterUserId: "U9", phone: "", permalink: "p", slackEmail: "e" } },
+      });
+      adapters.rms.findConflicts.mockRejectedValue(new Error("backendError"));
+      await expect(handler(connect).resume({ pendingId: "P1", client })).resolves.toBeUndefined();
+      expect(client.chat.postMessage.mock.calls[0][0]).toMatchObject({ channel: "CRES", thread_ts: "100.1" });
+      expect(client.chat.postMessage.mock.calls[0][0].text).toBe("⚠️ I couldn't finish this booking after you connected (backendError). Please send it again, or book directly: https://rms");
+    });
+  });
 });
+
