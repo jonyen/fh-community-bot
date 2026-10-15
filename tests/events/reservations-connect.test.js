@@ -21,7 +21,7 @@ function makeAdapter(backend) {
 function makeClient() {
   return {
     chat: {
-      postMessage: vi.fn().mockResolvedValue({ ok: true }),
+      postMessage: vi.fn().mockResolvedValue({ ok: true, ts: "100.1" }),
       postEphemeral: vi.fn().mockResolvedValue({ ok: true }),
       getPermalink: vi.fn().mockResolvedValue({ permalink: "https://slack/p1" }),
     },
@@ -50,6 +50,7 @@ function makeConnect(status = "none") {
   };
 }
 
+const cmd = (o = {}) => ({ type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "CRES", text: "book tech set 2 sat 2-4pm for youth night", response_url: "https://hooks.slack/r", ...o });
 const msg = (o = {}) => ({ type: "message", channel: "CRES", user: "U9", text: "book tech set 2 sat 2-4pm for youth night", ts: "100.1", ...o });
 
 describe("reservations with connected accounts", () => {
@@ -59,11 +60,12 @@ describe("reservations with connected accounts", () => {
     adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
     client = makeClient();
   });
+  const replies = () => client.chat.postMessage.mock.calls.map((c) => c[0]).filter((p) => p.thread_ts);
   const handler = (connect) => createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => new Date("2026-10-14T16:00:00Z"), connect });
 
   it("prompts a member who isn't connected, keeps the booking pending, writes nothing", async () => {
     const connect = makeConnect("none");
-    await handler(connect).handleMessage({ event: msg(), client });
+    await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(adapters.rms.book).not.toHaveBeenCalled();
     const pending = connect.authStore.createPending.mock.calls[0][0];
     expect(pending).toMatchObject({ slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: "100.1" });
@@ -75,21 +77,21 @@ describe("reservations with connected accounts", () => {
     expect(eph).toMatchObject({ channel: "CRES", user: "U9", thread_ts: "100.1", username: "FH Reservations" });
     expect(eph.text).toMatch(/connect your Google account once/);
     expect(eph.blocks[1].elements[0]).toMatchObject({ type: "button", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE", action_id: "reservations_connect_google" });
-    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(replies()).toEqual([]);
   });
 
   it("books as a connected member", async () => {
     const connect = makeConnect("active");
-    await handler(connect).handleMessage({ event: msg(), client });
+    await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(adapters.rms.book.mock.calls[0][1]).toEqual({ clients: MEMBER_CLIENTS });
     expect(adapters.rms.book.mock.calls[0][0]).not.toHaveProperty("slackEmail");
-    expect(client.chat.postMessage.mock.calls[0][0].text).toMatch(/^✅ Tech Set 2/);
+    expect(replies()[0].text).toMatch(/^✅ Tech Set 2/);
   });
 
   it("re-prompts when the member's token was revoked in Google", async () => {
     const connect = makeConnect("active");
     adapters.rms.book.mockRejectedValue(Object.assign(new Error("invalid_grant"), { response: { data: { error: "invalid_grant" } } }));
-    await handler(connect).handleMessage({ event: msg(), client });
+    await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
     expect(connect.memberGoogle.forget).toHaveBeenCalledWith("U9");
     expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired/);
@@ -98,7 +100,7 @@ describe("reservations with connected accounts", () => {
 
   it("re-prompts a member whose status is already revoked", async () => {
     const connect = makeConnect("revoked");
-    await handler(connect).handleMessage({ event: msg(), client });
+    await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired/);
     expect(adapters.rms.book).not.toHaveBeenCalled();
   });
@@ -107,31 +109,23 @@ describe("reservations with connected accounts", () => {
     const connect = makeConnect("active");
     llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["MPR"] });
     adapters.rooms.book.mockRejectedValue(Object.assign(new Error("The caller does not have permission"), { code: 403 }));
-    await handler(connect).handleMessage({ event: msg(), client });
-    expect(client.chat.postMessage.mock.calls[0][0].text).toBe("You don't have edit access to the room request sheet. Ask Management to share it with you: https://rooms");
+    await handler(connect).handleCommand({ envelope: cmd(), client });
+    expect(replies()[0].text).toBe("You don't have edit access to the room request sheet. Ask Management to share it with you: https://rooms");
   });
 
   it("names the equipment owner when Calendar refuses the member", async () => {
     const connect = makeConnect("active");
     adapters.rms.book.mockRejectedValue(Object.assign(new Error("Forbidden"), { code: 403 }));
-    await handler(connect).handleMessage({ event: msg(), client });
-    expect(client.chat.postMessage.mock.calls[0][0].text).toBe("Google Calendar won't let your account book Tech Set 2. Ask Alan Chow.");
+    await handler(connect).handleCommand({ envelope: cmd(), client });
+    expect(replies()[0].text).toBe("Google Calendar won't let your account book Tech Set 2. Ask Alan Chow.");
   });
 
   it("can't connect a member with no email on their Slack profile", async () => {
     const connect = makeConnect("none");
     client.users.info.mockResolvedValue({ user: { real_name: "X", profile: { display_name: "X" } } });
-    await handler(connect).handleMessage({ event: msg(), client });
+    await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(connect.authStore.createPending).not.toHaveBeenCalled();
-    expect(client.chat.postMessage.mock.calls[0][0].text).toMatch(/can't see an email on your Slack profile/);
-  });
-
-  it("disconnects on request", async () => {
-    const connect = makeConnect("active");
-    await handler(connect).handleMessage({ event: msg({ text: "please disconnect my google account" }), client });
-    expect(connect.memberGoogle.revoke).toHaveBeenCalledWith("U9");
-    expect(llm.parseReservationRequest).not.toHaveBeenCalled();
-    expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U9", text: "Disconnected your Google account. Bookings will ask you to connect again." });
+    expect(replies()[0].text).toMatch(/can't see an email on your Slack profile/);
   });
 
   it("disconnect via slash command falls back to response_url", async () => {
@@ -146,7 +140,7 @@ describe("reservations with connected accounts", () => {
   });
 
   it("without connect, books on the bot account as before", async () => {
-    await handler(null).handleMessage({ event: msg(), client });
+    await handler(null).handleCommand({ envelope: cmd(), client });
     expect(adapters.rms.book.mock.calls[0]).toHaveLength(1);
   });
 
@@ -171,7 +165,7 @@ describe("reservations with connected accounts", () => {
         { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night", ministry: null, requesterName: "Deandra", requesterUserId: "U9", phone: "555", permalink: "https://slack/p1", appliances: {} },
         { clients: MEMBER_CLIENTS },
       ]);
-      const p = client.chat.postMessage.mock.calls[0][0];
+      const p = replies()[0];
       expect(p).toMatchObject({ channel: "CRES", thread_ts: "100.1", reply_broadcast: true, metadata: CLOSED_METADATA });
     });
 
@@ -181,7 +175,7 @@ describe("reservations with connected accounts", () => {
       adapters.rms.findConflicts.mockResolvedValue([{ category: "tech", item: "Tech Set 2", date: "2026-10-17", start: 840, end: 900, title: "Rally", holder: "Alan", holderUserId: null, holderEmail: null }]);
       await handler(connect).resume({ pendingId: "P1", client });
       expect(adapters.rms.book).not.toHaveBeenCalled();
-      expect(client.chat.postMessage.mock.calls[0][0].text).toMatch(/^❌ Tech Set 2 is taken/);
+      expect(replies()[0].text).toMatch(/^❌ Tech Set 2 is taken/);
     });
 
     it("does nothing for an unknown or already-used pending id", async () => {
@@ -189,7 +183,7 @@ describe("reservations with connected accounts", () => {
       connect.authStore.getPending.mockResolvedValue(null);
       await handler(connect).resume({ pendingId: "P1", client });
       expect(adapters.rms.book).not.toHaveBeenCalled();
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(replies()).toEqual([]);
     });
   });
 
@@ -198,10 +192,10 @@ describe("reservations with connected accounts", () => {
       const connect = makeConnect("active");
       llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["MPR"] });
       adapters.rooms.book.mockRejectedValue(Object.assign(new Error("Request had insufficient authentication scopes."), { code: 403 }));
-      await handler(connect).handleMessage({ event: msg(), client });
+      await handler(connect).handleCommand({ envelope: cmd(), client });
       expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
       expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired|connect/i);
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(replies()).toEqual([]);
     });
 
     it("tells the member when a resume fails instead of going silent", async () => {
@@ -213,8 +207,8 @@ describe("reservations with connected accounts", () => {
       });
       adapters.rms.findConflicts.mockRejectedValue(new Error("backendError"));
       await expect(handler(connect).resume({ pendingId: "P1", client })).resolves.toBeUndefined();
-      expect(client.chat.postMessage.mock.calls[0][0]).toMatchObject({ channel: "CRES", thread_ts: "100.1" });
-      expect(client.chat.postMessage.mock.calls[0][0].text).toBe("⚠️ I couldn't finish this booking after you connected (backendError). Please send it again, or book directly: https://rms");
+      expect(replies()[0]).toMatchObject({ channel: "CRES", thread_ts: "100.1" });
+      expect(replies()[0].text).toBe("⚠️ I couldn't finish this booking after you connected (backendError). Please send it again, or book directly: https://rms");
     });
   });
 });

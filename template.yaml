@@ -67,7 +67,6 @@ Resources:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
           EVENT_QUEUE_URL:      !Ref EventQueue
-          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
