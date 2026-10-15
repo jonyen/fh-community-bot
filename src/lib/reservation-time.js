@@ -72,7 +72,8 @@ export function hhmmToMin(hhmm) {
 }
 
 function hm(min) {
-  const h24 = Math.floor(min / 60);
+  // 1440 is midnight at the end of the day (events that run until midnight).
+  const h24 = Math.floor(min / 60) % 24;
   const h = h24 % 12 === 0 ? 12 : h24 % 12;
   return { text: `${h}:${pad(min % 60)}`, ampm: h24 < 12 ? "AM" : "PM" };
 }

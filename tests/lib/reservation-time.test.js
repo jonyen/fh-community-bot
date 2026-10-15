@@ -62,6 +62,9 @@ describe("formatting", () => {
     expect(fmtRange(840, 960)).toBe("2:00–4:00 PM");
     expect(fmtRange(600, 840)).toBe("10:00 AM–2:00 PM");
     expect(fmtRange(null, null)).toBe("All day");
+    // An end at midnight (1440) is the end of the day, not noon.
+    expect(fmtRange(1020, 1440)).toBe("5:00 PM–12:00 AM");
+    expect(fmtTime(1440)).toBe("12:00 AM");
   });
   it("fmtDay and weekdayName", () => {
     expect(fmtDay("2026-10-17")).toBe("Sat 10/17");

@@ -243,3 +243,14 @@ describe("parseReservationRequest", () => {
     expect(await svc.parseReservationRequest("Member: hi", ctx)).toBeNull();
   });
 });
+
+describe("reservation prompt periods", () => {
+  it("tells the model to resolve 'this month' style periods into date and toDate", async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "{}" }] });
+    await createLlmService({ messages: { create } }).parseReservationRequest("Member: x", { catalogText: "", today: "2026-10-15", weekday: "Thursday" });
+    const system = create.mock.calls[0][0].system;
+    expect(system).toContain('"this month"');
+    expect(system).toMatch(/always set "date" and "toDate"/);
+  });
+});
+

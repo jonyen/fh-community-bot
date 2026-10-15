@@ -300,5 +300,69 @@ describe("reservations handler", () => {
       );
     });
   });
+
+  describe("list periods (bug: 'this month' listed only today)", () => {
+    // now = 2026-10-14 12:00 NY
+    const R = (o) => ({ category: "tech", item: "Tech Set 2", start: 600, end: 660, title: "T", holder: "Alan", holderUserId: null, holderEmail: null, ...o });
+
+    it("with items and no period, shows each item's next upcoming reservation", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"], date: null, toDate: null });
+      adapters.rms.listReservations.mockResolvedValue({ reservations: [
+        R({ date: "2026-10-14", start: 540, end: 600, title: "Over already" }),
+        R({ date: "2026-11-02", start: 1080, end: 1200, title: "Later" }),
+        R({ date: "2026-10-20", start: 1140, end: 1260, title: "Youth night" }),
+      ], errors: [] });
+      await h.handleCommand({ envelope: cmd({ text: "who has tech set 2" }), client });
+      expect(adapters.rms.listReservations).toHaveBeenCalledWith({ from: "2026-10-14", to: "2027-04-12", items: [SET2] });
+      expect(posts()[0].text).toBe("Next up for Tech Set 2, Tue 10/20:\n• 7:00–9:00 PM · Tech Set 2 · Youth night (Alan)");
+    });
+
+    it("counts a reservation still running today as upcoming", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"] });
+      adapters.rms.listReservations.mockResolvedValue({ reservations: [R({ date: "2026-10-14", start: 660, end: 780, title: "Now" })], errors: [] });
+      await h.handleCommand({ envelope: cmd({ text: "who has tech set 2" }), client });
+      expect(posts()[0].text).toMatch(/^Next up for Tech Set 2, Wed 10\/14:/);
+    });
+
+    it("says when an item has no upcoming reservations", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"] });
+      adapters.rms.listReservations.mockResolvedValue({ reservations: [R({ date: "2026-10-14", start: 540, end: 600 })], errors: [] });
+      await h.handleCommand({ envelope: cmd({ text: "who has tech set 2" }), client });
+      expect(posts()[0].text).toBe("No upcoming reservations for Tech Set 2.");
+    });
+
+    it("answers each named item on its own line group", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2", "MPR"] });
+      adapters.rooms.listReservations.mockResolvedValue({ reservations: [R({ category: "rooms", item: "MPR", date: "2026-10-16", start: 1140, end: 1260, title: "Ignite", holder: "Virginia" })], errors: [] });
+      await h.handleCommand({ envelope: cmd({ text: "who has tech set 2 and the mpr" }), client });
+      expect(adapters.rooms.listReservations).toHaveBeenCalledWith({ from: "2026-10-14", to: "2027-04-12", items: [expect.objectContaining({ label: "MPR" })] });
+      expect(posts()[0].text).toBe("No upcoming reservations for Tech Set 2.\n\nNext up for MPR, Fri 10/16:\n• 7:00–9:00 PM · MPR · Ignite (Virginia)");
+    });
+
+    it("with no items and no period, lists the next 14 days", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list" });
+      await h.handleCommand({ envelope: cmd({ text: "what's booked" }), client });
+      expect(adapters.rooms.listReservations).toHaveBeenCalledWith({ from: "2026-10-14", to: "2026-10-27", items: [] });
+      expect(posts()[0].text).toBe("Nothing booked Wed 10/14 – Tue 10/27.");
+    });
+
+    it("names the items when a period has nothing booked", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"], date: "2026-10-17", toDate: "2026-10-18" });
+      await h.handleCommand({ envelope: cmd({ text: "who has tech set 2 this weekend" }), client });
+      expect(posts()[0].text).toBe("Nothing booked for Tech Set 2, Sat 10/17 – Sun 10/18.");
+    });
+
+    it("keeps a period the model resolved", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"], date: "2026-10-14", toDate: "2026-10-31" });
+      await h.handleCommand({ envelope: cmd({ text: "who has tech set 2 this month" }), client });
+      expect(adapters.rms.listReservations).toHaveBeenCalledWith({ from: "2026-10-14", to: "2026-10-31", items: [SET2] });
+    });
+
+    it("an empty list for everything says so without naming items", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "list", date: "2026-10-17", toDate: "2026-10-17" });
+      await h.handleCommand({ envelope: cmd({ text: "what's booked saturday" }), client });
+      expect(posts()[0].text).toBe("Nothing booked Sat 10/17.");
+    });
+  });
 });
 

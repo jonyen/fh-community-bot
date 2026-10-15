@@ -5,7 +5,7 @@
 // thread reply re-reads the thread and re-parses it whole, and a finished thread carries
 // CLOSED_METADATA on the bot's last reply so it is never acted on twice.
 import { log, metric } from "../lib/logger.js";
-import { nyToday, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
+import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
@@ -198,6 +198,29 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return processRequest({ event: { channel: channelId, user: userId, text, ts: posted.ts }, thread: { text: `Member: ${text}`, closed: false }, client });
   }
 
+  // "Who has the Transit?" with no period: each item's next booking that
+  // hasn't finished yet, up to six months out.
+  async function nextUpcoming(req, reply, client, today) {
+    const nowMin = nyParts(now().toISOString()).min;
+    const horizon = addDaysIso(today, 180);
+    const blocks = [];
+    for (const item of req.items) {
+      const adapter = adapters[item.backend];
+      if (!adapter) continue;
+      const { reservations } = await adapter.listReservations({ from: today, to: horizon, items: [item] });
+      const upcoming = reservations
+        .filter((r) => r.date > today || (r.end ?? 1440) > nowMin)
+        .sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? -1) - (b.start ?? -1));
+      if (upcoming.length === 0) {
+        blocks.push(`No upcoming reservations for ${item.label}.`);
+        continue;
+      }
+      const [next] = await withMentions(client, [upcoming[0]]);
+      blocks.push(`Next up for ${item.label}, ${fmtDay(next.date)}:\n${reservationLine(next)}`);
+    }
+    return reply(blocks.join("\n\n"));
+  }
+
   async function handleQuery(req, reply, client) {
     const groups = req.items.length ? [...new Set(req.items.map((i) => i.backend))] : Object.keys(adapters);
     if (req.intent === "check" && req.items.length && req.date && req.start != null) {
@@ -213,15 +236,22 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
         ? `${names} is taken ${fmtDay(req.date)}:\n${hits.map(reservationLine).join("\n")}`
         : `${names} is free ${fmtDay(req.date)}, ${fmtRange(req.start, req.end)}.`);
     }
-    const from = req.date || nyToday(now());
-    const to = req.toDate || from;
+    const today = nyToday(now());
+    if (!req.date && !req.toDate && req.items.length) return nextUpcoming(req, reply, client, today);
+    // A named day means that day; nothing named and no items means the next two weeks.
+    const from = req.date || today;
+    const to = req.toDate || (req.date ? from : addDaysIso(today, 13));
     const found = [];
     for (const backend of groups) {
       if (!adapters[backend]) continue;
       const { reservations } = await adapters[backend].listReservations({ from, to, items: req.items.filter((i) => i.backend === backend) });
       found.push(...reservations);
     }
-    if (found.length === 0) return reply(`Nothing booked ${from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`}.`);
+    if (found.length === 0) {
+      const span = from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`;
+      const what = req.items.length ? ` for ${req.items.map((i) => i.label).join(", ")},` : "";
+      return reply(`Nothing booked${what} ${span}.`);
+    }
     const people = await withMentions(client, found);
     const days = [...new Set(people.map((r) => r.date))].sort();
     const text = days.map((d) => [`*${fmtDay(d)}*`, ...people.filter((r) => r.date === d).sort((a, b) => (a.start ?? -1) - (b.start ?? -1)).map(reservationLine)].join("\n")).join("\n\n");
