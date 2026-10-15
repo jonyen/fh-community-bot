@@ -21,6 +21,12 @@ import { createRmsAdapter } from "../services/reservations/rms.js";
 import { buildRmsCatalog } from "../lib/rms-catalog.js";
 import { buildCatalog } from "../lib/reservation-catalog.js";
 import { createReservationsHandler } from "../events/reservations.js";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { KMSClient } from "@aws-sdk/client-kms";
+import { createAuthStore } from "../services/authStore.js";
+import { createMemberGoogle } from "../services/memberGoogle.js";
+import { buildConsentUrl } from "../lib/google-oauth.js";
 
 let cached;
 
@@ -114,11 +120,24 @@ export function getDeps() {
       const calendarClient = google.calendar({ version: "v3", auth: oauth2Client });
       reservationAdapters.rms = createRmsAdapter({ calendarClient, catalog: rmsCatalog, bookingEnabled: res.rmsBookingEnabled });
     }
+    let connect = null;
+    const gc = config.googleConnect;
+    if (gc) {
+      const authStore = createAuthStore({
+        ddb: DynamoDBDocumentClient.from(new DynamoDBClient({})), kms: new KMSClient({}), tableName: gc.tableName, keyId: gc.keyId,
+      });
+      connect = {
+        authStore,
+        memberGoogle: createMemberGoogle({ authStore, clientId: gc.clientId, clientSecret: gc.clientSecret }),
+        consentUrl: ({ state, loginHint }) => buildConsentUrl({ clientId: gc.clientId, redirectUri: gc.redirectUri, state, loginHint }),
+      };
+    }
     reservationsHandler = createReservationsHandler({
       llm: llmService,
       adapters: reservationAdapters,
       catalog: buildCatalog({ rooms: !!reservationAdapters.rooms, kitchen: !!reservationAdapters.kitchen, rms: rmsCatalog }),
       channelId: res.channelId,
+      connect,
     });
   }
 

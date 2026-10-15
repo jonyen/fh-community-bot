@@ -185,3 +185,21 @@ describe("reservations config", () => {
     expect(r.rmsBookingEnabled).toBe(false);
   });
 });
+
+describe("googleConnect config", () => {
+  const BASE = { SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C", GOOGLE_SHEET_ID: "s", GOOGLE_CLIENT_ID: "i", GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r" };
+  const KEYS = ["GOOGLE_WEB_CLIENT_ID", "GOOGLE_WEB_CLIENT_SECRET", "OAUTH_REDIRECT_URI", "AUTH_TABLE", "AUTH_KMS_KEY_ID"];
+  let originalEnv;
+  beforeEach(() => { originalEnv = { ...process.env }; for (const k of KEYS) delete process.env[k]; Object.assign(process.env, BASE); });
+  afterEach(() => { process.env = originalEnv; });
+
+  it("is null unless every value is set", () => {
+    process.env.GOOGLE_WEB_CLIENT_ID = "W";
+    expect(loadConfig().googleConnect).toBeNull();
+  });
+
+  it("reads all five values", () => {
+    Object.assign(process.env, { GOOGLE_WEB_CLIENT_ID: "W", GOOGLE_WEB_CLIENT_SECRET: "WS", OAUTH_REDIRECT_URI: "https://cb/oauth/google/callback", AUTH_TABLE: "T", AUTH_KMS_KEY_ID: "K" });
+    expect(loadConfig().googleConnect).toEqual({ clientId: "W", clientSecret: "WS", redirectUri: "https://cb/oauth/google/callback", tableName: "T", keyId: "K" });
+  });
+});
