@@ -384,3 +384,22 @@ describe("dispatch to #reservations", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
+
+describe("dispatch for connected accounts", () => {
+  it("resumes a booking after sign-in", async () => {
+    const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn(), resume: vi.fn().mockResolvedValue(), disconnect: vi.fn() };
+    const client = makeClient();
+    await dispatchSlackEvent({ slackEnvelope: { type: "oauth_connected", pendingId: "P1" }, handler: vi.fn(), reservationsHandler, client });
+    expect(reservationsHandler.resume).toHaveBeenCalledWith({ pendingId: "P1", client });
+  });
+
+  it("routes /reservations-disconnect", async () => {
+    const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn(), resume: vi.fn(), disconnect: vi.fn().mockResolvedValue() };
+    const client = makeClient();
+    await dispatchSlackEvent({
+      slackEnvelope: { type: "slash_command", command: "/reservations-disconnect", user_id: "U9", channel_id: "D1", response_url: "https://r" },
+      handler: vi.fn(), reservationsHandler, client,
+    });
+    expect(reservationsHandler.disconnect).toHaveBeenCalledWith({ userId: "U9", channel: "D1", client, responseUrl: "https://r" });
+  });
+});

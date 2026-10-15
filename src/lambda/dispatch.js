@@ -20,6 +20,17 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
     }
+    if (reservationsHandler?.disconnect && slackEnvelope.command === "/reservations-disconnect") {
+      await reservationsHandler.disconnect({
+        userId: slackEnvelope.user_id, channel: slackEnvelope.channel_id, client, responseUrl: slackEnvelope.response_url,
+      });
+    }
+    return;
+  }
+
+  // Queued by the OAuth callback once a member has connected Google.
+  if (slackEnvelope.type === "oauth_connected") {
+    if (reservationsHandler?.resume) await reservationsHandler.resume({ pendingId: slackEnvelope.pendingId, client });
     return;
   }
 
