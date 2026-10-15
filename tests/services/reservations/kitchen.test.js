@@ -104,4 +104,15 @@ describe("kitchen adapter", () => {
     const data = sheets.spreadsheets.values.batchUpdate.mock.calls[0][0].requestBody.data;
     expect(data[0].values[0].slice(0, 2)).toEqual(["'@jina", "'+1 703-555-1234"]);
   });
+
+  it("writes with the member's Sheets client but finds the row with the bot's", async () => {
+    const member = { spreadsheets: { values: { batchUpdate: vi.fn().mockResolvedValue({}) } } };
+    await adapter.book(
+      { date: "2026-10-17", start: 1020, end: 1080, requesterName: "J", phone: "", appliances: {} },
+      { clients: { sheetsClient: member } }
+    );
+    expect(sheets.spreadsheets.values.get).toHaveBeenCalled();
+    expect(member.spreadsheets.values.batchUpdate).toHaveBeenCalledTimes(1);
+    expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
+  });
 });

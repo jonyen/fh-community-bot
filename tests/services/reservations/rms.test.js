@@ -136,4 +136,17 @@ describe("rms adapter", () => {
     expect(res.reason).toMatch(/Google Calendar/);
     expect(cal.events.insert).not.toHaveBeenCalled();
   });
+
+  it("books on the member's calendar when given, even with bot booking disabled", async () => {
+    const memberCal = makeCalendar();
+    const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
+    const res = await off.book(
+      { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" },
+      { clients: { calendarClient: memberCal } }
+    );
+    expect(res.status).toBe("booked");
+    expect(memberCal.events.insert).toHaveBeenCalledTimes(1);
+    expect(memberCal.events.get).toHaveBeenCalled();
+    expect(cal.events.insert).not.toHaveBeenCalled();
+  });
 });
