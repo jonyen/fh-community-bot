@@ -6,7 +6,7 @@
 import { log, metric } from "../lib/logger.js";
 import { nyToday, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, CATEGORY_OWNERS } from "../lib/reservation-catalog.js";
-import { isInvalidGrant, isForbidden } from "../services/memberGoogle.js";
+import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
 import { reservationLine, BOT_PERSONA, CLOSED_METADATA } from "../lib/reservation-format.js";
 
@@ -101,7 +101,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     try {
       result = clients ? await adapter.book(booking, { clients }) : await adapter.book(booking);
     } catch (error) {
-      if (clients && isInvalidGrant(error)) {
+      if (clients && (isInvalidGrant(error) || isScopeMissing(error))) {
         await connect.authStore.markRevoked(requester.requesterUserId);
         connect.memberGoogle.forget(requester.requesterUserId);
         return promptConnect({ req, adapter, requester, reply, client, channel, rootTs, revoked: true });
@@ -140,9 +140,21 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const adapter = adapters[backend];
     if (!adapter) return;
     const reply = makeReply(client, pending.channel, pending.threadTs);
-    const conflicts = await withMentions(client, await adapter.findConflicts({ date: req.date, start: req.start, end: req.end, items: req.items }));
-    if (conflicts.length) return reply(conflictText(req, conflicts));
-    return finishBooking({ req, adapter, requester, reply, client, channel: pending.channel, rootTs: pending.threadTs });
+    // The pending row is gone, so a thrown error here would be retried into
+    // nothing. The member was told "booking is being made", so say so instead.
+    try {
+      const conflicts = await withMentions(client, await adapter.findConflicts({ date: req.date, start: req.start, end: req.end, items: req.items }));
+      if (conflicts.length) return reply(conflictText(req, conflicts));
+      return await finishBooking({ req, adapter, requester, reply, client, channel: pending.channel, rootTs: pending.threadTs });
+    } catch (error) {
+      metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend, stage: "resume" } });
+      log.error("resuming a booking failed", { backend: adapter.backend, error });
+      try {
+        await reply(`⚠️ I couldn't finish this booking after you connected (${error.message}). Please send it again, or book directly: ${adapter.link}`);
+      } catch (replyError) {
+        log.error("resume failure reply failed", { error: replyError });
+      }
+    }
   }
 
   async function disconnect({ userId, channel, client, responseUrl }) {

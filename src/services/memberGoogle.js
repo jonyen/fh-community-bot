@@ -8,6 +8,16 @@ export function isInvalidGrant(err) {
   return err?.response?.data?.error === "invalid_grant" || /invalid_grant/.test(err?.message || "");
 }
 
+// The member unticked Calendar or Sheets on Google's consent screen, so the
+// token works but can't do this. Connecting again with both fixes it; the
+// sheet owner can't.
+export function isScopeMissing(err) {
+  const data = err?.response?.data?.error;
+  const reasons = [...(data?.errors || []), ...(data?.details || [])].map((e) => e?.reason);
+  return reasons.includes("insufficientPermissions") || reasons.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+    || /insufficient authentication scopes/i.test(err?.message || "");
+}
+
 export function isForbidden(err) {
   return Number(err?.code ?? err?.status ?? err?.response?.status) === 403;
 }

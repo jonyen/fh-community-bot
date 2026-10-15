@@ -8,6 +8,10 @@ import { checkIdentity, htmlPage, OAUTH_CALLBACK_PATH, HOSTED_DOMAIN } from "../
 import { log, metric } from "../lib/logger.js";
 
 const DIMENSIONS = { Flow: "connect" };
+const RETRY = "Then send your request again in #reservations.";
+// Google's consent screen lets a member untick either one. Without both, every
+// booking of that kind would fail, so the grant is refused up front.
+const REQUIRED_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/spreadsheets"];
 
 export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue }) {
   return async function handle({ query = {}, redirectUri }) {
@@ -44,14 +48,25 @@ export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue
       }
       metric("ConnectRejected", 1, { dimensions: DIMENSIONS, fields: { reason: identity.reason } });
       const message = identity.reason === "mismatch"
-        ? `You signed in as ${identity.email}, but your Slack account is ${consumed.slackEmail}. Please sign in as ${consumed.slackEmail}.`
-        : `Please sign in with your ${HOSTED_DOMAIN} account (${consumed.slackEmail}).`;
+        ? `You signed in as ${identity.email}, but your Slack account is ${consumed.slackEmail}. Please sign in as ${consumed.slackEmail}. ${RETRY}`
+        : `Please sign in with your ${HOSTED_DOMAIN} account (${consumed.slackEmail}). ${RETRY}`;
       return htmlPage(403, "Wrong Google account", message);
     }
 
     if (!tokens.refresh_token) {
       metric("ConnectFailed", 1, { dimensions: DIMENSIONS, fields: { stage: "no_refresh_token" } });
       return htmlPage(502, "Couldn't connect", "Google didn't return offline access. Please try again from Slack.");
+    }
+
+    const granted = String(tokens.scope || "").split(/\s+/);
+    if (!REQUIRED_SCOPES.every((s) => granted.includes(s))) {
+      try {
+        await oauth2Client.revokeToken(tokens.refresh_token);
+      } catch (err) {
+        log.warn("revoking a partial grant failed", { error: err });
+      }
+      metric("ConnectRejected", 1, { dimensions: DIMENSIONS, fields: { reason: "scopes" } });
+      return htmlPage(403, "Both permissions are needed", `Please allow both Google Calendar and Google Sheets so bookings can be made as you. ${RETRY}`);
     }
 
     try {
