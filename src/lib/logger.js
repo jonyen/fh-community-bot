@@ -35,9 +35,13 @@ function serializeError(err) {
   return { name: err.name, message: err.message, stack: err.stack };
 }
 
+// Google OAuth material must never reach CloudWatch, whoever logs it.
+const REDACTED_KEYS = new Set(["refresh_token", "access_token", "id_token", "refreshToken", "client_secret"]);
+
 function replacer() {
   const seen = new WeakSet();
   return (_key, value) => {
+    if (REDACTED_KEYS.has(_key)) return "[redacted]";
     if (value instanceof Error) return serializeError(value);
     if (typeof value === "object" && value !== null) {
       if (seen.has(value)) return "[Circular]";
