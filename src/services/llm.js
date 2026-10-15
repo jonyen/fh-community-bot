@@ -55,7 +55,8 @@ JSON fields:
 - "unmatched": phrases naming things to book that match nothing in the list.
 - "ambiguous": [{"phrase": <what they wrote>, "options": [exact item names]}] when a phrase could mean several items, e.g. "a tech set".
 - "date": "YYYY-MM-DD" for the day (the first day for a range). Resolve "Saturday", "tomorrow", "next Friday" from today.
-- "toDate": "YYYY-MM-DD" last day of a range ("this weekend", "next week"), else null.
+- "toDate": "YYYY-MM-DD" last day of a range, else null. "this weekend", "this week", "next week", "this month" (today to the month's last day), "next month" are ranges.
+- For a list or check that names a period, always set "date" and "toDate". If no period or day is named, leave both null.
 - "start", "end": 24-hour "HH:MM". "2-4" for an evening or youth event means 14:00-16:00 unless the context says morning.
 - "title": what the booking is for, short. "ministry": the group, if named.
 - "appliances": only for the kitchen, keys from the list above.
