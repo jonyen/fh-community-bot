@@ -126,9 +126,9 @@ aws iam put-role-policy --role-name <DEPLOY_ROLE> \
       "Sid": "AuthTable",
       "Effect": "Allow",
       "Action": [
-        "dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:DescribeTable",
-        "dynamodb:UpdateTable", "dynamodb:UpdateTimeToLive", "dynamodb:DescribeTimeToLive",
-        "dynamodb:UpdateContinuousBackups", "dynamodb:DescribeContinuousBackups",
+        "dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:Describe*",
+        "dynamodb:UpdateTable", "dynamodb:UpdateTimeToLive", "dynamodb:UpdateContinuousBackups",
+        "dynamodb:GetResourcePolicy",
         "dynamodb:TagResource", "dynamodb:UntagResource", "dynamodb:ListTagsOfResource"
       ],
       "Resource": "arn:aws:dynamodb:<REGION>:<ACCOUNT_ID>:table/fh-community-reservations-auth"
@@ -149,6 +149,8 @@ aws iam put-role-policy --role-name <DEPLOY_ROLE> \
 
 `kms:CreateKey` has no resource ARN before the key exists, which is why that
 statement is `*`.
+`Describe*` and `GetResourcePolicy` cover the extra reads CloudFormation's table
+handler makes (contributor insights, Kinesis destinations, resource policy).
 
 Record the role ARN.
 
