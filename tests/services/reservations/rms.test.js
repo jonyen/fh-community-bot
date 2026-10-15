@@ -88,7 +88,9 @@ describe("rms adapter", () => {
     expect(res).toEqual({ status: "booked", link: "https://calendar.google.com/calendar/u/0/r?cid=set2%40resource.calendar.google.com" });
     expect(cal.events.insert).toHaveBeenCalledWith({
       calendarId: "primary",
-      sendUpdates: "none",
+      // A resource only processes the invite when it is actually sent
+      // (live test 2026-10-14: "none" stayed needsAction, "all" accepted in ~6 s).
+      sendUpdates: "all",
       requestBody: {
         summary: "Youth night — Deandra Shim",
         description: "Requested by: Deandra Shim\nSlack: <@U9>\nhttps://slack/p",
@@ -97,6 +99,26 @@ describe("rms adapter", () => {
         attendees: [{ email: SET2.calendarId, resource: true }],
       },
     });
+  });
+
+  it("keeps waiting for a slow resource to accept", async () => {
+    const pending = { data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "needsAction" }] } };
+    const accepted = { data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "accepted" }] } };
+    cal.events.get
+      .mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(accepted);
+    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" });
+    expect(res.status).toBe("booked");
+    expect(cal.events.get).toHaveBeenCalledTimes(5);
+  });
+
+  it("reports a decline that arrives after several seconds", async () => {
+    const pending = { data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "needsAction" }] } };
+    cal.events.get
+      .mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce({ data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "declined" }] } });
+    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" });
+    expect(res.status).toBe("unavailable");
   });
 
   it("deletes the event and reports unavailable when a resource declines", async () => {

@@ -87,9 +87,12 @@ export function createRmsAdapter({
     if (!bookingEnabled) {
       return { status: "unavailable", reason: "Please book this one in Google Calendar (RMS) for now.", link: itemLink };
     }
+    // The resource only processes the invite when it is sent; with "none" it
+    // stays needsAction forever. The resource is the only attendee, so no
+    // person gets an email.
     const res = await calendarClient.events.insert({
       calendarId: botCalendarId,
-      sendUpdates: "none",
+      sendUpdates: "all",
       requestBody: {
         summary: `${title} — ${requesterName}`,
         description: `Requested by: ${requesterName}\nSlack: <@${requesterUserId}>\n${permalink}`,
@@ -99,9 +102,10 @@ export function createRmsAdapter({
       },
     });
     const eventId = res.data.id;
-    // Resources answer the invite a moment after it is created.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await sleep(1000);
+    // Resources answer the invite a few seconds after it is sent (about 6 s
+    // in a live test), so allow up to 12 s.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await sleep(1500);
       const got = await calendarClient.events.get({ calendarId: botCalendarId, eventId });
       const resources = (got.data.attendees || []).filter((a) => a.resource);
       const declined = resources.filter((a) => a.responseStatus === "declined");
