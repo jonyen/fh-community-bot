@@ -1,6 +1,6 @@
 // tests/lib/reservation-catalog.test.js
 import { describe, it, expect } from "vitest";
-import { buildCatalog, findItem, catalogPromptText } from "../../src/lib/reservation-catalog.js";
+import { buildCatalog, findItem, catalogPromptText, CATEGORY_OWNERS } from "../../src/lib/reservation-catalog.js";
 
 const RMS = [
   { label: "Tech Set 1", category: "tech", backend: "rms", calendarId: "t1" },
@@ -26,5 +26,14 @@ describe("reservation catalog", () => {
     expect(text).toContain("Kitchen: Kitchen");
     expect(text).toContain("Tech: Tech Set 1");
     expect(text).toContain("Sports: Kickball");
+  });
+});
+
+describe("CATEGORY_OWNERS", () => {
+  it("names who to ask for each category", () => {
+    expect(CATEGORY_OWNERS).toEqual({
+      rooms: "Management", kitchen: "Arie Chen", tech: "Alan Chow",
+      sports: "Joe Pagan", outreach: "Joe Pagan", accessories: "the equipment team",
+    });
   });
 });
