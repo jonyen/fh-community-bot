@@ -25,6 +25,12 @@ Parameters:
   CreaTwaPhone:          { Type: String, Default: "" }
   CreaTwaAllowEntry:     { Type: String, Default: "false", AllowedValues: ["true", "false"] }
   CreaTicketUserIds:     { Type: String, Default: "" }
+  # #reservations front door. Off unless ReservationsChannelId is set; each
+  # backend is off unless its sheet id (or the bundled calendar map) is set.
+  ReservationsChannelId: { Type: String, Default: "" }
+  RoomRequestsSheetId:   { Type: String, Default: "" }
+  KitchenSheetId:        { Type: String, Default: "" }
+  RmsBookingEnabled:     { Type: String, Default: "true", AllowedValues: ["true", "false"] }
 
 Globals:
   Function:
@@ -57,6 +63,7 @@ Resources:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
           EVENT_QUEUE_URL:      !Ref EventQueue
+          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
@@ -95,6 +102,10 @@ Resources:
           CREA_TWA_PHONE:        !Ref CreaTwaPhone
           CREA_TWA_ALLOW_ENTRY:  !Ref CreaTwaAllowEntry
           CREA_TICKET_USER_IDS:  !Ref CreaTicketUserIds
+          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
+          ROOM_REQUESTS_SHEET_ID: !Ref RoomRequestsSheetId
+          KITCHEN_SHEET_ID:       !Ref KitchenSheetId
+          RMS_BOOKING_ENABLED:    !Ref RmsBookingEnabled
       Policies:
         # A "us." inference profile routes each call to a foundation model in
         # one of several US regions, so both need allowing. Scoped to Claude
@@ -117,6 +128,60 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${WorkerFn}
       RetentionInDays: 14
+
+  # Monday 8 AM New York time, whatever the DST state: EventBridge Scheduler
+  # evaluates the cron in the given zone.
+  DigestFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/digest.handler
+      Description: Posts the week's reservations to #reservations
+      MemorySize: 256
+      Timeout: 120
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN:         !Ref SlackBotToken
+          SLACK_CHANNEL_IDS:       !Join [",", !Ref SlackChannelIds]
+          GOOGLE_SHEET_ID:         !Ref GoogleSheetId
+          GOOGLE_CLIENT_ID:        !Ref GoogleClientId
+          GOOGLE_CLIENT_SECRET:    !Ref GoogleClientSecret
+          GOOGLE_REFRESH_TOKEN:    !Ref GoogleRefreshToken
+          ESCALATION_USER_ID:      !Ref EscalationUserId
+          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
+          ROOM_REQUESTS_SHEET_ID:  !Ref RoomRequestsSheetId
+          KITCHEN_SHEET_ID:        !Ref KitchenSheetId
+      Events:
+        Weekly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 8 ? * MON *)
+            ScheduleExpressionTimezone: America/New_York
+
+  DigestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${DigestFn}
+      RetentionInDays: 14
+
+  # The digest crashing outright (bad token, Slack down) means no post at all.
+  DigestFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-digest-failed
+      AlarmDescription: The weekly reservations digest Lambda errored and nothing was posted.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref DigestFn
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
 
   # ---------------------------------------------------------------------------
   # Observability

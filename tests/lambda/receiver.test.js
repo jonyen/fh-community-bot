@@ -351,3 +351,17 @@ describe("shouldEnqueueEvent — reactions", () => {
     expect(shouldEnqueueEvent({ event: { type: "reaction_added", reaction: "thumbsup" } })).toBe(false);
   });
 });
+
+describe("shouldEnqueueEvent for #reservations", () => {
+  const opts = { reservationsChannelId: "CRES" };
+  it("enqueues top-level member messages in the reservations channel", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "book the MPR" } }, opts)).toBe(true);
+  });
+  it("still drops bots, edits and other channels' top-level messages", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "x", bot_id: "B" } }, opts)).toBe(false);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "x", subtype: "message_changed" } }, opts)).toBe(false);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "COTHER", text: "x" } }, opts)).toBe(false);
+  });
+});

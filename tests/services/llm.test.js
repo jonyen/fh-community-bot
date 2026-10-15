@@ -215,3 +215,31 @@ describe("writeLandlordTicket", () => {
     expect(create).not.toHaveBeenCalled();
   });
 });
+
+describe("parseReservationRequest", () => {
+  function svcWith(content) {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: content }] });
+    return { svc: createLlmService({ messages: { create } }), create };
+  }
+  const ctx = { catalogText: "Tech: Tech Set 2", today: "2026-10-14", weekday: "Wednesday" };
+
+  it("returns the parsed JSON object", async () => {
+    const { svc, create } = svcWith('Sure: {"intent":"book","items":["Tech Set 2"],"date":"2026-10-17","start":"14:00","end":"16:00","title":"Youth night"}');
+    const out = await svc.parseReservationRequest("Member: book tech set 2 sat 2-4 for youth night", ctx);
+    expect(out).toEqual({ intent: "book", items: ["Tech Set 2"], date: "2026-10-17", start: "14:00", end: "16:00", title: "Youth night" });
+    const call = create.mock.calls[0][0];
+    expect(call.system).toContain("Tech: Tech Set 2");
+    expect(call.system).toContain("2026-10-14 (Wednesday)");
+    expect(call.messages[0].content).toContain("book tech set 2");
+  });
+
+  it("returns null on a non-JSON reply", async () => {
+    const { svc } = svcWith("I can't help with that");
+    expect(await svc.parseReservationRequest("Member: hi", ctx)).toBeNull();
+  });
+
+  it("returns null when the call fails", async () => {
+    const svc = createLlmService({ messages: { create: vi.fn().mockRejectedValue(new Error("throttled")) } });
+    expect(await svc.parseReservationRequest("Member: hi", ctx)).toBeNull();
+  });
+});

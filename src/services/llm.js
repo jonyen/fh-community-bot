@@ -39,6 +39,32 @@ Rules:
 
 Output only the JSON object, no prose.`;
 
+function reservationPrompt({ catalogText, today, weekday }) {
+  return `You read messages in a community building's #reservations Slack channel. Output ONLY a JSON object describing the newest request in the conversation.
+
+Today is ${today} (${weekday}). Time zone: America/New_York.
+
+Bookable items, by category:
+${catalogText}
+
+Kitchen appliance keys: island, whiteCounter, brownCounter, toasterOven, airFryer, microwave (true when wanted); freezer, fridge (number of shelves); largeRiceCooker, smallRiceCooker, instapot (how many).
+
+JSON fields:
+- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), or "other" (anything else, including thanks and chatter).
+- "items": exact item names from the list above.
+- "unmatched": phrases naming things to book that match nothing in the list.
+- "ambiguous": [{"phrase": <what they wrote>, "options": [exact item names]}] when a phrase could mean several items, e.g. "a tech set".
+- "date": "YYYY-MM-DD" for the day (the first day for a range). Resolve "Saturday", "tomorrow", "next Friday" from today.
+- "toDate": "YYYY-MM-DD" last day of a range ("this weekend", "next week"), else null.
+- "start", "end": 24-hour "HH:MM". "2-4" for an evening or youth event means 14:00-16:00 unless the context says morning.
+- "title": what the booking is for, short. "ministry": the group, if named.
+- "appliances": only for the kitchen, keys from the list above.
+
+The conversation may include the bot's own questions; combine the member's answers with their original request. Use null or [] for anything not stated. Never invent items, dates or times.
+
+Output only the JSON object, no prose.`;
+}
+
 export function createLlmService(client, { model = DEFAULT_MODEL } = {}) {
   // One request, text back. Throws on API errors and on a reply with no
   // text, after counting it as a failure.
@@ -143,9 +169,26 @@ export function createLlmService(client, { model = DEFAULT_MODEL } = {}) {
     }
   }
 
+  // Turns a #reservations conversation into a request object. Returns null
+  // when the call fails or the reply isn't JSON; the caller validates every
+  // field against the catalog.
+  async function parseReservationRequest(transcript, { catalogText, today, weekday }) {
+    if (!String(transcript || "").trim()) return null;
+    try {
+      const raw = await complete("parseReservationRequest", reservationPrompt({ catalogText, today, weekday }), transcript, 512);
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      if (jsonStart === -1 || jsonEnd === -1) return null;
+      return JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+    } catch {
+      return null;
+    }
+  }
+
   return {
     checkDuplicate,
     classifyIssueReport,
     writeLandlordTicket,
+    parseReservationRequest,
   };
 }

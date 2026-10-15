@@ -363,3 +363,24 @@ describe("dispatchSlackEvent — CREA ticket reactions", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
+
+describe("dispatch to #reservations", () => {
+  const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn().mockResolvedValue() };
+
+  it("routes every message in the reservations channel to its handler only", async () => {
+    const handler = vi.fn();
+    const client = makeClient();
+    const event = { type: "message", channel: "CRES", text: "book the MPR", user: "U1", ts: "1" };
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler, reservationsHandler, client });
+    expect(reservationsHandler.handleMessage).toHaveBeenCalledWith({ event, client });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("drops app_mention events there so a mention isn't handled twice", async () => {
+    reservationsHandler.handleMessage.mockClear();
+    const handler = vi.fn();
+    await dispatchSlackEvent({ slackEnvelope: { event: { type: "app_mention", channel: "CRES", text: "<@B> hi", ts: "1" } }, handler, reservationsHandler, client: makeClient() });
+    expect(reservationsHandler.handleMessage).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
+});

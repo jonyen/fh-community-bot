@@ -15,7 +15,7 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler, client }) {
   if (slackEnvelope.type === "slash_command") {
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
@@ -36,6 +36,13 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
 
   const event = slackEnvelope.event;
   if (!event) return;
+
+  // #reservations belongs to the reservations flow alone. A mention there
+  // arrives as both app_mention and message; only the message is handled.
+  if (reservationsHandler && event.channel === reservationsHandler.channelId) {
+    if (event.type === "message") await reservationsHandler.handleMessage({ event, client });
+    return;
+  }
 
   if (event.type === "reaction_added") {
     if (creaTicketHandler) await creaTicketHandler.handleReaction({ event, client });

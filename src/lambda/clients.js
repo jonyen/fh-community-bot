@@ -15,6 +15,12 @@ import { createGenderHandler } from "../events/gender.js";
 import { createSlashRefreshHandler } from "../events/slashRefresh.js";
 import { createRentManagerTwaService } from "../services/rentManagerTwa.js";
 import { createCreaTicketHandler } from "../events/creaTicket.js";
+import { createRoomsAdapter } from "../services/reservations/rooms.js";
+import { createKitchenAdapter } from "../services/reservations/kitchen.js";
+import { createRmsAdapter } from "../services/reservations/rms.js";
+import { buildRmsCatalog } from "../lib/rms-catalog.js";
+import { buildCatalog } from "../lib/reservation-catalog.js";
+import { createReservationsHandler } from "../events/reservations.js";
 
 let cached;
 
@@ -88,7 +94,35 @@ export function getDeps() {
     slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
-  cached = { client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler };
+  let reservationsHandler;
+  const reservationAdapters = {};
+  const res = config.reservations;
+  if (res) {
+    const sheetLink = (id, gid) => `https://docs.google.com/spreadsheets/d/${id}/edit#gid=${gid}`;
+    if (res.roomsSheetId) {
+      reservationAdapters.rooms = createRoomsAdapter({
+        sheetsClient, spreadsheetId: res.roomsSheetId, tab: res.roomsTab, link: sheetLink(res.roomsSheetId, res.roomsGid),
+      });
+    }
+    if (res.kitchenSheetId) {
+      reservationAdapters.kitchen = createKitchenAdapter({
+        sheetsClient, spreadsheetId: res.kitchenSheetId, tab: res.kitchenTab, link: sheetLink(res.kitchenSheetId, res.kitchenGid),
+      });
+    }
+    const rmsCatalog = buildRmsCatalog(res.resourceCalendars);
+    if (rmsCatalog.length) {
+      const calendarClient = google.calendar({ version: "v3", auth: oauth2Client });
+      reservationAdapters.rms = createRmsAdapter({ calendarClient, catalog: rmsCatalog, bookingEnabled: res.rmsBookingEnabled });
+    }
+    reservationsHandler = createReservationsHandler({
+      llm: llmService,
+      adapters: reservationAdapters,
+      catalog: buildCatalog({ rooms: !!reservationAdapters.rooms, kitchen: !!reservationAdapters.kitchen, rms: rmsCatalog }),
+      channelId: res.channelId,
+    });
+  }
+
+  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters };
   return cached;
 }
 
