@@ -218,7 +218,10 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
     const dmId = posted.channel;
     if (envelope.channel_id !== dmId) {
-      await tellPrivately({ ...where, text: `Continuing in your DM with me: <https://slack.com/app_redirect?channel=${dmId}|open DM>` });
+      // A message permalink opens inside the Slack app; app_redirect went
+      // through the browser.
+      const link = await client.chat.getPermalink({ channel: dmId, message_ts: posted.ts }).then((r) => r.permalink, () => null);
+      await tellPrivately({ ...where, text: link ? `Continuing in your DM with me: <${link}|open DM>` : "Continuing in your DM with me (FH Maintenance, under Apps)." });
     }
     const transcript = `Member: ${text}`;
     const raw = await parse(transcript);
