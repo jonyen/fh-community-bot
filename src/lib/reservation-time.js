@@ -132,6 +132,21 @@ export function weekOf(now = new Date()) {
   return { from, to: addDaysIso(from, 6) };
 }
 
+// Digests split the week in two: Mon–Thu ("weekday") and Fri–Sun ("weekend").
+export function digestPeriod(kind, now = new Date()) {
+  const { from: monday } = weekOf(now);
+  return kind === "weekend"
+    ? { kind, from: addDaysIso(monday, 4), to: addDaysIso(monday, 6) }
+    : { kind: "weekday", from: monday, to: addDaysIso(monday, 3) };
+}
+
+// The period a date falls in.
+export function periodCovering(iso) {
+  const dow = utcNoon(iso).getUTCDay();
+  const weekend = dow === 0 || dow >= 5;
+  return digestPeriod(weekend ? "weekend" : "weekday", utcNoon(iso));
+}
+
 export function fmtDay(iso) {
   const d = utcNoon(iso);
   return `${WEEKDAYS_SHORT[d.getUTCDay()]} ${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
