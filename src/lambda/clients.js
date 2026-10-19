@@ -1,6 +1,6 @@
 import { TaggedWebClient } from "../lib/slack-client.js";
 import { google } from "googleapis";
-import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "../config.js";
 import { createSheetsService } from "../services/sheets.js";
 import { createDriveService } from "../services/drive.js";
@@ -52,9 +52,8 @@ export function getDeps() {
     slackBotToken: config.slackBotToken,
   });
 
-  // Credentials come from the Lambda's IAM role via the AWS default chain.
-  const bedrock = new AnthropicBedrock({ awsRegion: process.env.AWS_REGION || "us-east-1" });
-  const llmService = createLlmService(bedrock, config.llmModelId ? { model: config.llmModelId } : {});
+  const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
+  const llmService = createLlmService(anthropic, config.llmModelId ? { model: config.llmModelId } : {});
   const dedupService = createDedupService(llmService);
   // Swapping the model provider means handing this a different service that
   // implements classifyIssueReport — nothing downstream of it changes.

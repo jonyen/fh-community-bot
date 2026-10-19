@@ -20,7 +20,7 @@ Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
                   EventQueue (SQS FIFO, per user) ──▶ WorkerFn (Lambda)
                                               │
                                               ▼
-                       Bedrock (Claude) · Google Sheets · Slack Web API
+                       Claude API · Google Sheets · Slack Web API
 ```
 
 Two AWS Lambdas. SQS in between for the 3-second Slack ack budget. No VPC, no
@@ -46,10 +46,10 @@ idempotency key.
 - GitHub Actions + OIDC for deploys
 - [Slack Web API](https://slack.dev/) (Events API, not Socket Mode)
 - [Google Sheets API](https://developers.google.com/sheets/api)
-- Claude Haiku on [Amazon Bedrock](https://aws.amazon.com/bedrock/) — duplicate detection, form
-  pre-fill and the CREA rewrite. Calls are authorised by the worker's IAM role (no API key); the
-  model is the `LLM_MODEL_ID` repo variable (default `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
-  The AWS account must have accepted the model's Marketplace agreement and have Bedrock quota for it.
+- Claude Haiku on the [Anthropic API](https://docs.anthropic.com/) — duplicate detection, form
+  pre-fill, reservations parsing and the CREA rewrite. Calls use the `ANTHROPIC_API_KEY` repo
+  secret (source of truth: Doppler `personal/prd` as `FHBOT_ANTHROPIC_API_KEY`) and bill to that
+  key's Console credits; the model is the `LLM_MODEL_ID` repo variable (default `claude-haiku-4-5`).
   Every failed call emits `LlmCallFailed`, which the `fh-community-llm-failed` alarm posts to Slack.
   The pre-fill call goes through
   `createIssueClassifierService`, which depends only on a
@@ -82,7 +82,8 @@ npm test
 | `GOOGLE_CLIENT_ID` | Google OAuth2 client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `GOOGLE_REFRESH_TOKEN` | Google OAuth2 refresh token |
-| `LLM_MODEL_ID` | (Optional) Bedrock inference profile for the LLM calls |
+| `ANTHROPIC_API_KEY` | Anthropic API key for the LLM calls |
+| `LLM_MODEL_ID` | (Optional) Anthropic model id for the LLM calls |
 | `GOOGLE_DRIVE_FOLDER_ID` | (Optional) Drive folder ID for uploaded issue photos |
 
 To generate a Google refresh token:
@@ -300,7 +301,7 @@ src/
   config.js                  # env loading
   events/mention.js          # @mention business logic (Slack-runtime-agnostic)
   services/sheets.js         # Google Sheets CRUD
-  services/llm.js            # LLM client (Claude on Bedrock)
+  services/llm.js            # LLM client (Claude API)
   services/dedup.js          # duplicate detection
   lambda/
     receiver.js              # entry: verify Slack sig, enqueue to SQS

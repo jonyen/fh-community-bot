@@ -14,9 +14,10 @@ Parameters:
   GoogleClientSecret:   { Type: String, NoEcho: true }
   GoogleRefreshToken:   { Type: String, NoEcho: true }
   GoogleDriveFolderId:  { Type: String, Default: "" }
-  # Bedrock inference profile for the LLM calls. The account has to have
-  # accepted the model's Marketplace agreement and have quota for it.
-  LlmModelId:           { Type: String, Default: "us.anthropic.claude-haiku-4-5-20251001-v1:0" }
+  # Anthropic API key and model for the LLM calls. Usage bills to the key's
+  # Console account (prepaid credits), not to AWS.
+  AnthropicApiKey:      { Type: String, NoEcho: true }
+  LlmModelId:           { Type: String, Default: "claude-haiku-4-5" }
   # CREA (landlord) Rent Manager tenant portal. Filing tickets by :ticket:
   # reaction is off unless CreaTicketsEnabled is "true" and a username is set.
   CreaTicketsEnabled:    { Type: String, Default: "false", AllowedValues: ["true", "false"] }
@@ -106,6 +107,7 @@ Resources:
           GOOGLE_CLIENT_SECRET:   !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:   !Ref GoogleRefreshToken
           GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
+          ANTHROPIC_API_KEY:      !Ref AnthropicApiKey
           LLM_MODEL_ID:           !Ref LlmModelId
           ESCALATION_USER_ID:    !Ref EscalationUserId
           CREA_TICKETS_ENABLED:  !Ref CreaTicketsEnabled
@@ -124,15 +126,6 @@ Resources:
           AUTH_TABLE:               !Ref AuthTable
           AUTH_KMS_KEY_ID:          !Ref AuthKey
       Policies:
-        # A "us." inference profile routes each call to a foundation model in
-        # one of several US regions, so both need allowing. Scoped to Claude
-        # Haiku so moving between Haiku versions needs no policy change.
-        - Statement:
-            - Effect: Allow
-              Action: bedrock:InvokeModel
-              Resource:
-                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-*
-                - arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-*
         - DynamoDBCrudPolicy: { TableName: !Ref AuthTable }
         - KMSDecryptPolicy: { KeyId: !Ref AuthKey }
       Events:
@@ -374,8 +367,8 @@ Resources:
     Properties:
       AlarmName: fh-community-llm-failed
       AlarmDescription: >-
-        A Claude call on Bedrock failed (model retired, access or quota
-        revoked, throttling). Duplicate warnings, form pre-fill and the CREA
+        A Claude API call failed (model retired, key revoked, credits used
+        up, rate limited). Duplicate warnings, form pre-fill and the CREA
         rewrite quietly fall back while this is firing.
       Namespace: FhCommunityBot
       MetricName: LlmCallFailed

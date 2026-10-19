@@ -147,4 +147,5 @@ jobs:
               GoogleClientId="${{ secrets.GOOGLE_CLIENT_ID }}" \
               GoogleClientSecret="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               GoogleRefreshToken="${{ secrets.GOOGLE_REFRESH_TOKEN }}" \
+              AnthropicApiKey="${{ secrets.ANTHROPIC_API_KEY }}" \
               "${OPTIONAL_PARAMS[@]}"
