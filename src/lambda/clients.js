@@ -20,6 +20,7 @@ import { createKitchenAdapter } from "../services/reservations/kitchen.js";
 import { createRmsAdapter } from "../services/reservations/rms.js";
 import { buildRmsCatalog } from "../lib/rms-catalog.js";
 import { buildCatalog } from "../lib/reservation-catalog.js";
+import { createLivingDigest } from "../services/livingDigest.js";
 import { createReservationsHandler } from "../events/reservations.js";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
@@ -101,6 +102,7 @@ export function getDeps() {
   }
 
   let reservationsHandler;
+  let livingDigest = null;
   const reservationAdapters = {};
   const res = config.reservations;
   if (res) {
@@ -139,9 +141,12 @@ export function getDeps() {
       channelId: res.channelId,
       connect,
     });
+    livingDigest = createLivingDigest({
+      client: slack, adapters: reservationAdapters, channelId: res.channelId, escalationUserId: res.escalationUserId,
+    });
   }
 
-  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters };
+  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters, livingDigest };
   return cached;
 }
 

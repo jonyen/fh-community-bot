@@ -26,35 +26,6 @@ export function reservationLine(r) {
 
 const byStart = (a, b) => (a.start ?? -1) - (b.start ?? -1);
 
-export function buildDigest({ from, to, reservations, maxChars = 3500 }) {
-  const header = `*Reservations this week: ${fmtDay(from)} – ${fmtDay(to)}*`;
-  if (reservations.length === 0) return [`${header}\n\nNo reservations this week.`];
-
-  const days = [...new Set(reservations.map((r) => r.date))].sort();
-  const blocks = days.map((date) => {
-    const lines = [`*${fmtDay(date)}*`];
-    for (const [id, name] of Object.entries(CATEGORY_NAMES)) {
-      const rs = reservations.filter((r) => r.date === date && r.category === id).sort(byStart);
-      if (rs.length === 0) continue;
-      lines.push(`_${name}_`, ...rs.map(reservationLine));
-    }
-    return lines.join("\n");
-  });
-
-  const parts = [];
-  let current = header;
-  for (const block of blocks) {
-    if (current.length + block.length + 2 > maxChars && current !== header) {
-      parts.push(current);
-      current = block;
-    } else {
-      current = `${current}\n\n${block}`;
-    }
-  }
-  parts.push(current);
-  return parts;
-}
-
 // One message per period. Over maxChars, every day is cut to the same N
 // reservation lines (largest N that fits) with "…+K more" on trimmed days.
 export function buildLivingDigest({ kind, from, to, reservations, maxChars = 3500 }) {
