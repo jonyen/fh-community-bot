@@ -3,7 +3,7 @@
 // continues the request instead of starting a new one. Pure; no Slack calls.
 import { REQUEST_EVENT_TYPE, CLOSED_METADATA } from "./reservation-format.js";
 
-// A request idle longer than this is abandoned.
+// A request idle longer than this is abandoned, even if chatter came after.
 export const STALE_MS = 2 * 60 * 60 * 1000;
 
 const ESCAPES = new Set(["start over", "cancel"]);
@@ -27,7 +27,13 @@ export function openRequest(messages, { currentTs, nowMs }) {
       // prior[0] is the newest message before the current one.
       if (nowMs - Number(prior[0].ts) * 1000 > STALE_MS) return null;
       const upto = history.findIndex((m) => m === prior[i]);
-      return history.slice(0, upto + 1).reverse();
+      const request = history.slice(0, upto + 1).reverse();
+      // Any long silence inside the request abandons it; later chatter
+      // the bot ignored doesn't revive it.
+      for (let j = 1; j < request.length; j++) {
+        if ((Number(request[j].ts) - Number(request[j - 1].ts)) * 1000 > STALE_MS) return null;
+      }
+      return request;
     }
   }
   return null;

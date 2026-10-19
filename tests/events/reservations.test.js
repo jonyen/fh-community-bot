@@ -97,6 +97,16 @@ describe("reservations handler", () => {
       expect(client.chat.postMessage).not.toHaveBeenCalled();
     });
 
+    it("tells the member privately when it can't post to their DM", async () => {
+      client.chat.postMessage.mockRejectedValue(new Error("cannot_dm_bot"));
+      await expect(h.handleCommand({ envelope: cmd({ channel_id: "CRES" }), client })).resolves.toBeUndefined();
+      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({
+        channel: "CRES", user: "U9", text: "I couldn't message you directly. Please open a DM with me and try again.",
+      });
+    });
+
     it("parses the request with today's date context", async () => {
       await h.handleCommand({ envelope: cmd(), client });
       expect(llm.parseReservationRequest).toHaveBeenCalledWith(
@@ -338,6 +348,34 @@ describe("reservations handler", () => {
       expect(posts()).toEqual([expect.objectContaining({ channel: "D9", text: "Okay, starting fresh.", metadata: CLOSED_METADATA })]);
     });
 
+    it("a redelivered message the bot already closed is dropped", async () => {
+      // SQS redelivers the member's answer after the bot booked and closed.
+      const event = dm({ text: "Saturday 2-4, youth night", ts: ts(20) });
+      client.conversations.history.mockResolvedValue({ messages: [
+        { bot_id: "B1", text: "✅ Tech Set 2 …", ts: ts(10), metadata: CLOSED_METADATA },
+        event,
+        { bot_id: "B1", text: "Happy to book Tech Set 2. I still need: date…", ts: ts(30) },
+        marker("book tech set 2", 40),
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("a redelivered message that already started a request is dropped", async () => {
+      // Nothing was open, so the first delivery posted a start marker after it.
+      const event = dm({ text: "MPR sat 2-4 for youth night", ts: ts(20) });
+      client.conversations.history.mockResolvedValue({ messages: [
+        marker("MPR sat 2-4 for youth night", 10),
+        event,
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      expect(adapters.rooms.book).not.toHaveBeenCalled();
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
     it("an escape word with nothing open is ignored", async () => {
       client.conversations.history.mockResolvedValue({ messages: [] });
       await h.handleMessage({ event: dm({ text: "cancel" }), client });
@@ -379,7 +417,7 @@ describe("reservations handler", () => {
       llm.parseReservationRequest.mockResolvedValue({ ...BOOK, date: "2026-10-01" });
       await h.handleCommand({ envelope: cmd(), client });
       expect(adapters.rms.book).not.toHaveBeenCalled();
-      expect(posts()[0].text).toBe("Thu 10/1 has already passed. Which date did you mean?");
+      expect(posts()[0].text).toBe("Thu 10/1 has already passed. Please send the request again with the right date.");
       expect(posts()[0].metadata).toEqual(CLOSED_METADATA);
     });
   });

@@ -198,7 +198,13 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const text = String(envelope.text || "").trim();
     const where = { userId, channel: envelope.channel_id, client, responseUrl: envelope.response_url };
     if (!text) return tellPrivately({ ...where, text: `${USAGE}\nI can book: ${categoryCounts(catalog)}.` });
-    const posted = await postStartMarker(client, userId, userId, text);
+    let posted;
+    try {
+      posted = await postStartMarker(client, userId, userId, text);
+    } catch (error) {
+      log.error("reservation DM post failed", { userId, error });
+      return tellPrivately({ ...where, text: "I couldn't message you directly. Please open a DM with me and try again." });
+    }
     const dmId = posted.channel;
     if (envelope.channel_id !== dmId) {
       await tellPrivately({ ...where, text: `Continuing in your DM with me: <https://slack.com/app_redirect?channel=${dmId}|open DM>` });
@@ -290,6 +296,14 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (event.channel_type !== "im" || event.bot_id || event.subtype || !String(event.text || "").trim()) return;
     const res = await client.conversations.history({ channel: event.channel, limit: 50, include_all_metadata: true });
     const history = res.messages || [];
+    // The bot already answered after this message: an SQS redelivery, or a
+    // later message overtook it. Handling it again could book twice.
+    const handled = history.some((m) => m.bot_id && Number(m.ts) > Number(event.ts)
+      && (m.metadata?.event_type === CLOSED_METADATA.event_type || m.metadata?.event_type === REQUEST_EVENT_TYPE));
+    if (handled) {
+      log.info("dm event already handled or overtaken", { channel: event.channel, ts: event.ts });
+      return;
+    }
     const messages = history.some((m) => m.ts === event.ts) ? history : [event, ...history];
     const open = openRequest(messages, { currentTs: event.ts, nowMs: now().getTime() });
     const say = makeSay(client, event.channel);
@@ -339,7 +353,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (req.intent === "check" || req.intent === "list") return handleQuery(req, say, client);
 
     if (req.date && req.date < today) {
-      return say.done(`${fmtDay(req.date)} has already passed. Which date did you mean?`);
+      return say.done(`${fmtDay(req.date)} has already passed. Please send the request again with the right date.`);
     }
     const missing = missingFields(req);
     if (missing.length) {

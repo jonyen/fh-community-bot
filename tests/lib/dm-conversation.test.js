@@ -45,6 +45,20 @@ describe("openRequest", () => {
     expect(openRequest([cur, marker(STALE_MS - MIN)], { currentTs: cur.ts, nowMs: NOW })).toHaveLength(2);
   });
 
+  it("ignores messages newer than the current one", () => {
+    const m = marker(10 * MIN), cur = member(5 * MIN, "Saturday");
+    const out = openRequest([closed(MIN), cur, m], { currentTs: cur.ts, nowMs: NOW });
+    expect(out).toEqual([m, cur]);
+  });
+
+  it("a long gap inside the request makes it stale, even with chatter after", () => {
+    // Marker and ask at T, unmarked "hi" 3h later, then the current message.
+    const T = 3 * 60 * MIN + MIN;
+    const m = marker(T), ask = bot(T - 1000, "I still need: date");
+    const hi = member(MIN, "hi"), cur = member(0, "Van Fri 5-7");
+    expect(openRequest([cur, hi, ask, m], { currentTs: cur.ts, nowMs: NOW })).toBeNull();
+  });
+
   it("no marker is not open", () => {
     const cur = member(MIN, "hi");
     expect(openRequest([cur, bot(5 * MIN, "hello")], { currentTs: cur.ts, nowMs: NOW })).toBeNull();
