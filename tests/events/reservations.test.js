@@ -152,6 +152,47 @@ describe("reservations handler", () => {
       expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
     });
 
+    describe("booking claims", () => {
+      let claimBooking;
+      beforeEach(() => {
+        claimBooking = vi.fn().mockResolvedValue(true);
+        h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, livingDigest, claimBooking });
+      });
+
+      it("claims a /reserve booking by its trigger before writing", async () => {
+        await h.handleCommand({ envelope: cmd({ trigger_id: "T123" }), client });
+        expect(claimBooking).toHaveBeenCalledWith("cmd:T123");
+        expect(claimBooking.mock.invocationCallOrder[0]).toBeLessThan(adapters.rms.book.mock.invocationCallOrder[0]);
+        expect(adapters.rms.book).toHaveBeenCalledTimes(1);
+      });
+
+      it("claims a DM booking by the message it answers", async () => {
+        const event = dm({ text: "Saturday 2-4, youth night" });
+        client.conversations.history.mockResolvedValue({ messages: [event,
+          { bot_id: "B1", text: "Happy to book Tech Set 2. I still need: date…", ts: ts(60) },
+          marker("book tech set 2", 120)] });
+        await h.handleMessage({ event, client });
+        expect(claimBooking).toHaveBeenCalledWith(`dm:D9:${event.ts}`);
+      });
+
+      it("a retry of a booking already attempted writes nothing and says so", async () => {
+        // The first delivery timed out after it started writing.
+        claimBooking.mockResolvedValue(false);
+        await h.handleCommand({ envelope: cmd({ trigger_id: "T123" }), client });
+        expect(adapters.rms.book).not.toHaveBeenCalled();
+        expect(posts()[0]).toMatchObject({
+          text: expect.stringMatching(/^I may already have booked this\. Please check before booking again: /),
+          metadata: expect.objectContaining({ event_type: CLOSED_METADATA.event_type }),
+        });
+      });
+
+      it("books without a claim when the command carries no trigger", async () => {
+        await h.handleCommand({ envelope: cmd(), client });
+        expect(claimBooking).not.toHaveBeenCalled();
+        expect(adapters.rms.book).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("books without a digest when reservations have none", async () => {
       h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW });
       await h.handleCommand({ envelope: cmd(), client });
@@ -436,6 +477,26 @@ describe("reservations handler", () => {
       expect(llm.parseReservationRequest.mock.calls[0][0]).toBe(
         "Member: book tech set 2\nBot: Happy to book Tech Set 2. I still need: date…\nMember: Saturday"
       );
+    });
+
+    it("a message out of turn (a later one was already answered) is not merged; the member is asked to resend", async () => {
+      // E failed, sat in the DLQ, and was redriven after the member moved on.
+      const event = dm({ text: "book MPR sat 2-4 for youth night", ts: ts(300) });
+      const later = dm({ text: "the van friday", ts: ts(200) });
+      client.conversations.history.mockResolvedValue({ messages: [
+        { bot_id: "B1", text: "Happy to book CP Transit. I still need: start and end time…", ts: ts(100), metadata: { event_type: ASK_EVENT_TYPE, event_payload: { reply_to: later.ts } } },
+        { ...marker("the van friday", 150), metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: "U9", text: "the van friday", reply_to: later.ts } } },
+        later,
+        event,
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      expect(adapters.rooms.book).not.toHaveBeenCalled();
+      expect(posts()).toEqual([expect.objectContaining({
+        channel: "D9",
+        text: 'Sorry, I missed your earlier message ("book MPR sat 2-4 for youth night"). Please send it again if you still need it.',
+        metadata: { event_type: ASK_EVENT_TYPE, event_payload: { reply_to: event.ts } },
+      })]);
     });
 
     it("a message handled after an earlier request closed starts its own", async () => {

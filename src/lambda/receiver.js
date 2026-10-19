@@ -75,6 +75,8 @@ function parseSlashCommand(body) {
     team_id: params.get("team_id"),
     response_url: params.get("response_url"),
     text: params.get("text") || "",
+    // Unique per invocation; the worker keys its booking claim on it.
+    trigger_id: params.get("trigger_id") || undefined,
   };
 }
 
@@ -138,6 +140,7 @@ export async function handler(event) {
       team_id: slash.team_id,
       response_url: slash.response_url,
       text: slash.text,
+      trigger_id: slash.trigger_id,
     };
     await sqs.send(
       new SendMessageCommand({

@@ -9,6 +9,8 @@ import { EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
 
 export const PENDING_TTL_S = 1800;
 export const STATE_TTL_S = 600;
+// Long past any SQS redelivery; only there so old claims are cleared.
+export const BOOKING_CLAIM_TTL_S = 7 * 86400;
 
 export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.now() }) {
   const nowS = () => Math.floor(now() / 1000);
@@ -93,5 +95,22 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     await ddb.send(new DeleteCommand({ TableName: tableName, Key: { pk: `pending#${pendingId}` } }));
   }
 
-  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending };
+  // Taken just before a booking is written. A second claim of the same key
+  // means an earlier delivery of this request already started writing (it
+  // timed out, or crashed), so the retry must not write again.
+  async function claimBooking(key) {
+    try {
+      await ddb.send(new PutCommand({
+        TableName: tableName,
+        Item: { pk: `booking#${key}`, expiresAt: nowS() + BOOKING_CLAIM_TTL_S },
+        ConditionExpression: "attribute_not_exists(pk)",
+      }));
+      return true;
+    } catch (error) {
+      if (error.name === "ConditionalCheckFailedException") return false;
+      throw error;
+    }
+  }
+
+  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking };
 }

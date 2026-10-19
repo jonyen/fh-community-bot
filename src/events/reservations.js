@@ -17,7 +17,7 @@ const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set
 export const FIND_CAP = 25;
 const USAGE = "Try `/reserve the MPR Sat 2–4pm for youth night`, `/reserve is Tech Set 2 free Friday 7pm?`, `/reserve what's booked this weekend?` or `/reserve what speakers are there?`";
 
-export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null }) {
+export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null }) {
   const catalogText = catalogPromptText(catalog);
 
   // The start marker is the bot's post, but it carries the member's words.
@@ -94,7 +94,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     });
   }
 
-  async function finishBooking({ req, adapter, requester, say }) {
+  async function finishBooking({ req, adapter, requester, say, bookingKey = null }) {
     let clients;
     if (connect) {
       const member = await connect.memberGoogle.clientsFor(requester.requesterUserId);
@@ -108,6 +108,12 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       requesterName: requester.requesterName, requesterUserId: requester.requesterUserId, phone: requester.phone,
       appliances: req.appliances,
     };
+    // An earlier delivery of this same request already started writing: it
+    // timed out or crashed after book began. Writing again could book twice.
+    if (bookingKey && claimBooking && !(await claimBooking(bookingKey))) {
+      log.warn("booking already attempted", { bookingKey, backend: adapter.backend });
+      return say.done(`I may already have booked this. Please check before booking again: ${adapter.link}`);
+    }
     let result;
     try {
       result = clients ? await adapter.book(booking, { clients }) : await adapter.book(booking);
@@ -214,7 +220,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
     const transcript = `Member: ${text}`;
     const raw = await parse(transcript);
-    return respond({ raw, transcript, user: userId, say: makeSay(client, dmId), client });
+    const bookingKey = envelope.trigger_id ? `cmd:${envelope.trigger_id}` : null;
+    return respond({ raw, transcript, user: userId, say: makeSay(client, dmId), client, bookingKey });
   }
 
   // "Who has the Transit?" with no period: each item's next booking that
@@ -307,6 +314,16 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       log.info("dm event already handled", { channel: event.channel, ts: event.ts });
       return;
     }
+    const say = makeSay(client, event.channel, { replyTo: event.ts });
+    const bookingKey = `dm:${event.channel}:${event.ts}`;
+    // Out of turn: a later message of theirs was already answered (this one
+    // sat in the dead letter queue, or was queued late). Merged now, it could
+    // land in the wrong request, so the member is asked to resend it.
+    const answered = new Set(others.filter((m) => m.bot_id).map((m) => m.metadata?.event_payload?.reply_to).filter(Boolean));
+    if (others.some((m) => !m.bot_id && Number(m.ts) > Number(event.ts) && answered.has(m.ts))) {
+      log.warn("dm event out of turn", { channel: event.channel, ts: event.ts });
+      return say.ask(`Sorry, I missed your earlier message ("${event.text}"). Please send it again if you still need it.`);
+    }
     // The queue runs a member's messages in order. Their later messages are
     // still waiting their turn, so they are left out. A message handled after
     // the bot answered an earlier one joins the conversation as it stands now:
@@ -316,7 +333,6 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const current = newest > Number(event.ts) ? { ...event, ts: (newest + 0.000001).toFixed(6) } : event;
     const ownMarker = seen.find((m) => answers(m) && m.metadata.event_type === REQUEST_EVENT_TYPE);
     const open = openRequest([current, ...seen], { currentTs: current.ts, nowMs: now().getTime() });
-    const say = makeSay(client, event.channel, { replyTo: event.ts });
     if (isEscape(event.text)) {
       if (open) await say.done("Okay, starting fresh.");
       return;
@@ -325,7 +341,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       // A redelivery after only the start marker went out: the marker
       // already carries this message's text.
       const transcript = open.filter((m) => !(ownMarker && m === current)).map(line).join("\n");
-      return respond({ raw: await parse(transcript), transcript, user: event.user, say, client });
+      return respond({ raw: await parse(transcript), transcript, user: event.user, say, client, bookingKey });
     }
     // Nothing open: chatter is ignored; anything else gets a start marker
     // (metadata can't go on the member's own message) and is handled.
@@ -333,7 +349,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const raw = await parse(transcript);
     if (raw && normalizeRequest(raw, catalog).intent === "other") return;
     await postStartMarker(client, event.channel, event.user, event.text, event.ts);
-    return respond({ raw, transcript, user: event.user, say, client });
+    return respond({ raw, transcript, user: event.user, say, client, bookingKey });
   }
 
   function parse(transcript) {
@@ -341,7 +357,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return llm.parseReservationRequest(transcript, { catalogText, today, weekday: weekdayName(today) });
   }
 
-  async function respond({ raw, transcript, user, say, client }) {
+  async function respond({ raw, transcript, user, say, client, bookingKey = null }) {
     const today = nyToday(now());
     if (!raw) return say.ask("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
@@ -390,7 +406,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       phone: profile.phone || "",
       slackEmail: profile.email || null,
     };
-    return finishBooking({ req, adapter, requester, say });
+    return finishBooking({ req, adapter, requester, say, bookingKey });
   }
 
   return { channelId, handleMessage, handleCommand, resume, disconnect };

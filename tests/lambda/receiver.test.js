@@ -154,7 +154,7 @@ describe("receiver.handler", () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const body =
       "token=secret&team_id=T1&channel_id=C1&user_id=U1&command=%2Frefresh-genders" +
-      "&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1%2F123%2Fabc";
+      "&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1%2F123%2Fabc&trigger_id=TR1";
     const ts = Math.floor(Date.now() / 1000).toString();
     const res = await handler({
       body,
@@ -176,6 +176,7 @@ describe("receiver.handler", () => {
       team_id: "T1",
       response_url: "https://hooks.slack.com/commands/T1/123/abc",
       text: "",
+      trigger_id: "TR1",
     });
   });
 

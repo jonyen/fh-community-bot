@@ -144,6 +144,7 @@ export function getDeps() {
       channelId: res.channelId,
       connect,
       livingDigest,
+      claimBooking: connect ? connect.authStore.claimBooking : null,
     });
   }
 
