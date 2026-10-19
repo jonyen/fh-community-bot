@@ -364,3 +364,13 @@ describe("shouldEnqueueEvent for #reservations", () => {
     expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "Saturday", thread_ts: "1.1", ts: "1.2" } })).toBe(true);
   });
 });
+
+describe("shouldEnqueueEvent — DMs", () => {
+  it("enqueues a top-level DM, but not bot or edited ones", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const dm = { type: "message", channel_type: "im", text: "Saturday" };
+    expect(shouldEnqueueEvent({ event: dm })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { ...dm, bot_id: "B1" } })).toBe(false);
+    expect(shouldEnqueueEvent({ event: { ...dm, subtype: "message_changed" } })).toBe(false);
+  });
+});

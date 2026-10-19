@@ -45,6 +45,8 @@ export function shouldEnqueueEvent(parsed) {
   if (event.type === "reaction_added") return isCreaTicketReaction(event.reaction);
   if (event.type !== "message") return true;
   if (event.bot_id) return false; // never enqueue our own / other bots' messages
+  // DMs belong to the reservations flow; skip edits/deletes and other subtypes.
+  if (event.channel_type === "im") return !event.subtype;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
