@@ -1,4 +1,4 @@
-import { WebClient } from "@slack/web-api";
+import { TaggedWebClient } from "../lib/slack-client.js";
 import { google } from "googleapis";
 import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import { loadConfig } from "../config.js";
@@ -36,7 +36,7 @@ export function getDeps() {
 
   const config = loadConfig();
 
-  const slack = new WebClient(config.slackBotToken);
+  const slack = new TaggedWebClient(config.slackBotToken);
 
   const oauth2Client = new google.auth.OAuth2(
     config.googleClientId,

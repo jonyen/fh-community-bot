@@ -32,7 +32,10 @@ export function getCorrelationId() {
 }
 
 function serializeError(err) {
-  return { name: err.name, message: err.message, stack: err.stack };
+  return {
+    name: err.name, message: err.message, stack: err.stack,
+    ...(err.slackMethod ? { slackMethod: err.slackMethod, slackChannel: err.slackChannel } : {}),
+  };
 }
 
 // Google OAuth material must never reach CloudWatch, whoever logs it.
