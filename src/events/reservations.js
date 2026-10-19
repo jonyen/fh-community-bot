@@ -242,7 +242,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       .map(([id, name]) => [name, shown.filter((i) => i.category === id).map((i) => i.label)])
       .filter(([, labels]) => labels.length > 0)
       .map(([name, labels]) => `${name}: ${labels.join(", ")}`);
-    const more = req.items.length > FIND_CAP ? `\n+${req.items.length - FIND_CAP} more` : "";
+    const more = req.items.length > FIND_CAP ? `\n+${req.items.length - FIND_CAP} more. Try a narrower word.` : "";
     return say.done(`${lines.join("\n")}${more}\nTo book one: \`/reserve <name> <day> <time> for <what>\``);
   }
 

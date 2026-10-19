@@ -482,7 +482,16 @@ describe("find intent", () => {
     expect(text).toContain("Item 25");
     expect(text).not.toContain("Item 26,");
     expect(text).not.toMatch(/Item 26(\b|$)/);
-    expect(text).toContain("+5 more");
+    expect(text).toContain("+5 more. Try a narrower word.");
+  });
+
+  it("lists only the matched items when some names are unknown", async () => {
+    const { h, client, answers } = mk(CATALOG, { intent: "find", items: ["Tech Set 2", "Hologram"] });
+    await run(h, client);
+    const text = answers()[0].text;
+    expect(text).toContain("Tech: Tech Set 2");
+    expect(text).not.toContain("Hologram");
+    expect(text).not.toMatch(/^Nothing matches/);
   });
 
   it("says nothing matches and shows what is available", async () => {
