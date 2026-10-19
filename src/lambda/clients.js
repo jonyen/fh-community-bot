@@ -134,15 +134,16 @@ export function getDeps() {
         consentUrl: ({ state, loginHint }) => buildConsentUrl({ clientId: gc.clientId, redirectUri: gc.redirectUri, state, loginHint }),
       };
     }
+    livingDigest = createLivingDigest({
+      client: slack, adapters: reservationAdapters, channelId: res.channelId, escalationUserId: res.escalationUserId,
+    });
     reservationsHandler = createReservationsHandler({
       llm: llmService,
       adapters: reservationAdapters,
       catalog: buildCatalog({ rooms: !!reservationAdapters.rooms, kitchen: !!reservationAdapters.kitchen, rms: rmsCatalog }),
       channelId: res.channelId,
       connect,
-    });
-    livingDigest = createLivingDigest({
-      client: slack, adapters: reservationAdapters, channelId: res.channelId, escalationUserId: res.escalationUserId,
+      livingDigest,
     });
   }
 

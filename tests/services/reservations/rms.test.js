@@ -83,7 +83,7 @@ describe("rms adapter", () => {
   it("books by inviting the resource and returns booked once accepted", async () => {
     const res = await adapter.book({
       date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night",
-      requesterName: "Deandra Shim", requesterUserId: "U9", permalink: "https://slack/p",
+      requesterName: "Deandra Shim", requesterUserId: "U9",
     });
     expect(res).toEqual({ status: "booked", link: "https://calendar.google.com/calendar/u/0/r?cid=set2%40resource.calendar.google.com" });
     expect(cal.events.insert).toHaveBeenCalledWith({
@@ -93,7 +93,7 @@ describe("rms adapter", () => {
       sendUpdates: "all",
       requestBody: {
         summary: "Youth night — Deandra Shim",
-        description: "Requested by: Deandra Shim\nSlack: <@U9>\nhttps://slack/p",
+        description: "Requested by: Deandra Shim\nSlack: <@U9>",
         start: { dateTime: "2026-10-17T14:00:00", timeZone: "America/New_York" },
         end: { dateTime: "2026-10-17T16:00:00", timeZone: "America/New_York" },
         attendees: [{ email: SET2.calendarId, resource: true }],
@@ -107,7 +107,7 @@ describe("rms adapter", () => {
     cal.events.get
       .mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending)
       .mockResolvedValueOnce(accepted);
-    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" });
+    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" });
     expect(res.status).toBe("booked");
     expect(cal.events.get).toHaveBeenCalledTimes(5);
   });
@@ -117,13 +117,13 @@ describe("rms adapter", () => {
     cal.events.get
       .mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(pending)
       .mockResolvedValueOnce({ data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "declined" }] } });
-    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" });
+    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" });
     expect(res.status).toBe("unavailable");
   });
 
   it("deletes the event and reports unavailable when a resource declines", async () => {
     cal.events.get.mockResolvedValue({ data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "declined" }] } });
-    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" });
+    const res = await adapter.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" });
     expect(res.status).toBe("unavailable");
     expect(res.reason).toMatch(/declined/i);
     expect(cal.events.delete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1", sendUpdates: "none" });
@@ -131,7 +131,7 @@ describe("rms adapter", () => {
 
   it("does not write when booking is disabled", async () => {
     const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
-    const res = await off.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" });
+    const res = await off.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" });
     expect(res.status).toBe("unavailable");
     expect(res.reason).toMatch(/Google Calendar/);
     expect(cal.events.insert).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("rms adapter", () => {
     const memberCal = makeCalendar();
     const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
     const res = await off.book(
-      { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9", permalink: "p" },
+      { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" },
       { clients: { calendarClient: memberCal } }
     );
     expect(res.status).toBe("booked");
