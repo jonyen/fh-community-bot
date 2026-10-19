@@ -87,7 +87,7 @@ aws iam put-role-policy --role-name <DEPLOY_ROLE> \
 `DescribeAlarms`, `ListDashboards`, and `GetDashboard` do not support
 resource-level permissions, which is why that statement is `*`.
 
-The weekly reservations digest runs on an EventBridge Scheduler schedule
+The reservations digests run on EventBridge Scheduler schedules
 (`DigestFn`, `ScheduleV2` in `template.yaml`). The Lambda and IAM policies above
 don't cover Scheduler, so without this the deploy fails with an
 `scheduler:CreateSchedule` AccessDenied and rolls back:

@@ -20,6 +20,7 @@ import { createKitchenAdapter } from "../services/reservations/kitchen.js";
 import { createRmsAdapter } from "../services/reservations/rms.js";
 import { buildRmsCatalog } from "../lib/rms-catalog.js";
 import { buildCatalog } from "../lib/reservation-catalog.js";
+import { createLivingDigest } from "../services/livingDigest.js";
 import { createReservationsHandler } from "../events/reservations.js";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
@@ -101,6 +102,7 @@ export function getDeps() {
   }
 
   let reservationsHandler;
+  let livingDigest = null;
   const reservationAdapters = {};
   const res = config.reservations;
   if (res) {
@@ -132,16 +134,21 @@ export function getDeps() {
         consentUrl: ({ state, loginHint }) => buildConsentUrl({ clientId: gc.clientId, redirectUri: gc.redirectUri, state, loginHint }),
       };
     }
+    livingDigest = createLivingDigest({
+      client: slack, adapters: reservationAdapters, channelId: res.channelId, escalationUserId: res.escalationUserId,
+    });
     reservationsHandler = createReservationsHandler({
       llm: llmService,
       adapters: reservationAdapters,
       catalog: buildCatalog({ rooms: !!reservationAdapters.rooms, kitchen: !!reservationAdapters.kitchen, rms: rmsCatalog }),
       channelId: res.channelId,
       connect,
+      livingDigest,
+      claimBooking: connect ? connect.authStore.claimBooking : null,
     });
   }
 
-  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters };
+  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters, livingDigest };
   return cached;
 }
 

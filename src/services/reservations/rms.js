@@ -82,7 +82,7 @@ export function createRmsAdapter({
     return lists.flat().filter((r) => r.date === date && overlaps(start, end, r.start, r.end));
   }
 
-  async function book({ date, start, end, items, title, requesterName, requesterUserId, permalink }, { clients } = {}) {
+  async function book({ date, start, end, items, title, requesterName, requesterUserId }, { clients } = {}) {
     const itemLink = calendarLink(items[0].calendarId);
     // A connected member books on their own calendar; the flag only governs
     // booking on the bot's.
@@ -98,7 +98,7 @@ export function createRmsAdapter({
       sendUpdates: "all",
       requestBody: {
         summary: `${title} — ${requesterName}`,
-        description: `Requested by: ${requesterName}\nSlack: <@${requesterUserId}>\n${permalink}`,
+        description: `Requested by: ${requesterName}\nSlack: <@${requesterUserId}>`,
         start: { dateTime: nyLocal(date, start), timeZone: TZ },
         end: { dateTime: nyLocal(date, end), timeZone: TZ },
         attendees: items.map((i) => ({ email: i.calendarId, resource: true })),

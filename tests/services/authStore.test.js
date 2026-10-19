@@ -1,13 +1,18 @@
 // tests/services/authStore.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createAuthStore, PENDING_TTL_S, STATE_TTL_S } from "../../src/services/authStore.js";
+import { createAuthStore, PENDING_TTL_S, STATE_TTL_S, BOOKING_CLAIM_TTL_S } from "../../src/services/authStore.js";
 
 function fakeDdb() {
   const items = new Map();
   const send = vi.fn(async (cmd) => {
     const i = cmd.input;
     switch (cmd.constructor.name) {
-      case "PutCommand": items.set(i.Item.pk, structuredClone(i.Item)); return {};
+      case "PutCommand": {
+        if (i.ConditionExpression && items.has(i.Item.pk)) {
+          const e = new Error("The conditional request failed"); e.name = "ConditionalCheckFailedException"; throw e;
+        }
+        items.set(i.Item.pk, structuredClone(i.Item)); return {};
+      }
       case "GetCommand": return { Item: items.has(i.Key.pk) ? structuredClone(items.get(i.Key.pk)) : undefined };
       case "DeleteCommand": {
         const old = items.get(i.Key.pk);
@@ -105,5 +110,22 @@ describe("authStore", () => {
     const { pendingId } = await store.createPending({ slackUserId: "U1", slackEmail: "e", request: {}, channel: "C", threadTs: "1" });
     await store.deletePending(pendingId);
     expect(await store.getPending(pendingId)).toBeNull();
+  });
+});
+
+describe("booking claims", () => {
+  it("claims a booking once; a second claim of the same key fails", async () => {
+    const ddb = fakeDdb();
+    const store = createAuthStore({ ddb, kms: {}, tableName: "T", keyId: "K", now: () => 1_000_000 });
+    expect(await store.claimBooking("dm:D9:1.000100")).toBe(true);
+    expect(await store.claimBooking("dm:D9:1.000100")).toBe(false);
+    expect(await store.claimBooking("dm:D9:2.000100")).toBe(true);
+    expect(ddb.items.get("booking#dm:D9:1.000100").expiresAt).toBe(1000 + BOOKING_CLAIM_TTL_S);
+  });
+
+  it("rethrows any other DynamoDB error", async () => {
+    const ddb = { send: vi.fn().mockRejectedValue(Object.assign(new Error("throttled"), { name: "ThrottlingException" })) };
+    const store = createAuthStore({ ddb, kms: {}, tableName: "T", keyId: "K" });
+    await expect(store.claimBooking("k")).rejects.toThrow("throttled");
   });
 });

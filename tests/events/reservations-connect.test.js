@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
-import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
+import { CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE } from "../../src/lib/reservation-format.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const TRANSIT = { label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "tr" };
@@ -22,11 +22,10 @@ function makeAdapter(backend) {
 function makeClient() {
   return {
     chat: {
-      postMessage: vi.fn().mockResolvedValue({ ok: true, ts: "100.1" }),
+      postMessage: vi.fn().mockResolvedValue({ ok: true, channel: "D9", ts: "100.1" }),
       postEphemeral: vi.fn().mockResolvedValue({ ok: true }),
-      getPermalink: vi.fn().mockResolvedValue({ permalink: "https://slack/p1" }),
     },
-    conversations: { replies: vi.fn().mockResolvedValue({ messages: [] }) },
+    conversations: { history: vi.fn().mockResolvedValue({ messages: [] }) },
     users: {
       info: vi.fn().mockResolvedValue({ user: { real_name: "Deandra Shim", profile: { display_name: "Deandra", phone: "555", email: "deandra.shim@acts2.network" } } }),
       lookupByEmail: vi.fn().mockRejectedValue(new Error("users_not_found")),
@@ -51,34 +50,43 @@ function makeConnect(status = "none") {
   };
 }
 
-const cmd = (o = {}) => ({ type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "CRES", text: "book tech set 2 sat 2-4pm for youth night", response_url: "https://hooks.slack/r", ...o });
-const msg = (o = {}) => ({ type: "message", channel: "CRES", user: "U9", text: "book tech set 2 sat 2-4pm for youth night", ts: "100.1", ...o });
+const cmd = (o = {}) => ({ type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "D9", text: "book tech set 2 sat 2-4pm for youth night", response_url: "https://hooks.slack/r", ...o });
 
 describe("reservations with connected accounts", () => {
-  let llm, adapters, client;
+  let llm, adapters, client, livingDigest;
   beforeEach(() => {
+    livingDigest = { refresh: vi.fn().mockResolvedValue(true) };
     llm = { parseReservationRequest: vi.fn().mockResolvedValue(BOOK) };
     adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
     client = makeClient();
   });
-  const replies = () => client.chat.postMessage.mock.calls.map((c) => c[0]).filter((p) => p.thread_ts);
-  const handler = (connect) => createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => new Date("2026-10-14T16:00:00Z"), connect });
+  // Everything the bot posts except the /reserve start marker.
+  const posts = () => client.chat.postMessage.mock.calls.map((c) => c[0]).filter((p) => p.metadata?.event_type !== REQUEST_EVENT_TYPE);
+  const isPrompt = (p) => !!p.blocks;
+  const prompts = () => posts().filter(isPrompt);
+  const replies = () => posts().filter((p) => !isPrompt(p));
+  const handler = (connect) => createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => new Date("2026-10-14T16:00:00Z"), connect, livingDigest });
 
   it("prompts a member who isn't connected, keeps the booking pending, writes nothing", async () => {
     const connect = makeConnect("none");
     await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(adapters.rms.book).not.toHaveBeenCalled();
     const pending = connect.authStore.createPending.mock.calls[0][0];
-    expect(pending).toMatchObject({ slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: "100.1" });
+    expect(pending).toMatchObject({ slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "D9", threadTs: null });
     expect(pending.request.backend).toBe("rms");
     expect(pending.request.req.items).toEqual([SET2]);
-    expect(pending.request.requester).toEqual({ requesterName: "Deandra", requesterUserId: "U9", phone: "555", permalink: "https://slack/p1", slackEmail: "deandra.shim@acts2.network" });
+    expect(pending.request.requester).toEqual({ requesterName: "Deandra", requesterUserId: "U9", phone: "555", slackEmail: "deandra.shim@acts2.network" });
     expect(connect.consentUrl).toHaveBeenCalledWith({ state: "NONCE", loginHint: "deandra.shim@acts2.network" });
-    const eph = client.chat.postEphemeral.mock.calls[0][0];
-    expect(eph).toMatchObject({ channel: "CRES", user: "U9", thread_ts: "100.1", username: "FH Reservations" });
-    expect(eph.text).toMatch(/connect your Google account once/);
-    expect(eph.blocks[1].elements[0]).toMatchObject({ type: "button", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE", action_id: "reservations_connect_google" });
+    // The DM is private, so the prompt is a plain DM message, left open.
+    expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+    const [prompt] = prompts();
+    expect(prompt).toMatchObject({ channel: "D9", username: "FH Reservations" });
+    expect(prompt.thread_ts).toBeUndefined();
+    expect(prompt.metadata.event_type).toBe(ASK_EVENT_TYPE);
+    expect(prompt.text).toMatch(/connect your Google account once/);
+    expect(prompt.blocks[1].elements[0]).toMatchObject({ type: "button", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE", action_id: "reservations_connect_google" });
     expect(replies()).toEqual([]);
+    expect(livingDigest.refresh).not.toHaveBeenCalled();
   });
 
   it("books as a connected member", async () => {
@@ -95,14 +103,14 @@ describe("reservations with connected accounts", () => {
     await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
     expect(connect.memberGoogle.forget).toHaveBeenCalledWith("U9");
-    expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired/);
+    expect(prompts()[0].text).toMatch(/expired/);
     expect(connect.authStore.createPending).toHaveBeenCalled();
   });
 
   it("re-prompts a member whose status is already revoked", async () => {
     const connect = makeConnect("revoked");
     await handler(connect).handleCommand({ envelope: cmd(), client });
-    expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired/);
+    expect(prompts()[0].text).toMatch(/expired/);
     expect(adapters.rms.book).not.toHaveBeenCalled();
   });
 
@@ -154,12 +162,12 @@ describe("reservations with connected accounts", () => {
   });
 
   describe("resume after sign-in", () => {
-    const pending = (connect) => connect.authStore.getPending.mockResolvedValue({
-      slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: "100.1",
+    const pending = (connect, where = { channel: "D9", threadTs: null }) => connect.authStore.getPending.mockResolvedValue({
+      slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", ...where,
       request: {
         backend: "rms",
         req: { items: [SET2], date: "2026-10-17", start: 840, end: 960, title: "Youth night", ministry: null, appliances: {} },
-        requester: { requesterName: "Deandra", requesterUserId: "U9", phone: "555", permalink: "https://slack/p1", slackEmail: "deandra.shim@acts2.network" },
+        requester: { requesterName: "Deandra", requesterUserId: "U9", phone: "555", slackEmail: "deandra.shim@acts2.network" },
       },
     });
 
@@ -171,11 +179,28 @@ describe("reservations with connected accounts", () => {
       expect(connect.authStore.deletePending.mock.invocationCallOrder[0]).toBeLessThan(adapters.rms.book.mock.invocationCallOrder[0]);
       expect(adapters.rms.findConflicts).toHaveBeenCalledWith({ date: "2026-10-17", start: 840, end: 960, items: [SET2] });
       expect(adapters.rms.book.mock.calls[0]).toEqual([
-        { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night", ministry: null, requesterName: "Deandra", requesterUserId: "U9", phone: "555", permalink: "https://slack/p1", appliances: {} },
+        { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night", ministry: null, requesterName: "Deandra", requesterUserId: "U9", phone: "555", appliances: {} },
         { clients: MEMBER_CLIENTS },
       ]);
-      const p = replies()[0];
-      expect(p).toMatchObject({ channel: "CRES", thread_ts: "100.1", reply_broadcast: true, metadata: CLOSED_METADATA });
+    });
+
+    it("resume replies in the DM, closes the request and refreshes the digest", async () => {
+      const connect = makeConnect("active");
+      pending(connect);
+      await handler(connect).resume({ pendingId: "P1", client });
+      const [p] = replies();
+      expect(p).toMatchObject({ channel: "D9", metadata: CLOSED_METADATA });
+      expect(p.text).toMatch(/^✅ Tech Set 2/);
+      expect(p.thread_ts).toBeUndefined();
+      expect(p.reply_broadcast).toBeUndefined();
+      expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
+    });
+
+    it("a pending row from before the DM change replies in its old thread", async () => {
+      const connect = makeConnect("active");
+      pending(connect, { channel: "CRES", threadTs: "100.1" });
+      await handler(connect).resume({ pendingId: "P1", client });
+      expect(replies()[0]).toMatchObject({ channel: "CRES", thread_ts: "100.1", metadata: CLOSED_METADATA });
     });
 
     it("reports a slot taken during sign-in instead of booking", async () => {
@@ -203,20 +228,21 @@ describe("reservations with connected accounts", () => {
       adapters.rooms.book.mockRejectedValue(Object.assign(new Error("Request had insufficient authentication scopes."), { code: 403 }));
       await handler(connect).handleCommand({ envelope: cmd(), client });
       expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
-      expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/expired|connect/i);
+      expect(prompts()[0].text).toMatch(/expired|connect/i);
       expect(replies()).toEqual([]);
     });
 
     it("tells the member when a resume fails instead of going silent", async () => {
       const connect = makeConnect("active");
       connect.authStore.getPending.mockResolvedValue({
-        slackUserId: "U9", slackEmail: "e", channel: "CRES", threadTs: "100.1",
+        slackUserId: "U9", slackEmail: "e", channel: "D9", threadTs: null,
         request: { backend: "rms", req: { items: [SET2], date: "2026-10-17", start: 840, end: 960, title: "T", ministry: null, appliances: {} },
-          requester: { requesterName: "D", requesterUserId: "U9", phone: "", permalink: "p", slackEmail: "e" } },
+          requester: { requesterName: "D", requesterUserId: "U9", phone: "", slackEmail: "e" } },
       });
       adapters.rms.findConflicts.mockRejectedValue(new Error("backendError"));
       await expect(handler(connect).resume({ pendingId: "P1", client })).resolves.toBeUndefined();
-      expect(replies()[0]).toMatchObject({ channel: "CRES", thread_ts: "100.1" });
+      expect(replies()[0]).toMatchObject({ channel: "D9", metadata: CLOSED_METADATA });
+      expect(replies()[0].thread_ts).toBeUndefined();
       expect(replies()[0].text).toBe("⚠️ I couldn't finish this booking after you connected (backendError). Please send it again, or book directly: https://rms");
     });
   });

@@ -74,6 +74,10 @@ Somebody submitted a form and is still looking at an unanswered message.
 against the account limit. A poison message failing and retrying on a loop also
 shows up here before it reaches the DLQ.
 
+The queue is FIFO, grouped by Slack user. A failing message holds back that
+member's later messages until it reaches the DLQ: three receives of up to
+180 s each, so about nine minutes. Other members are not held up.
+
 **Fix:** if the worker is throttled, raise reserved concurrency. If it is
 erroring, the DLQ alarm is about to fire too — treat that as the primary.
 
@@ -125,13 +129,14 @@ the deploy.
 
 ## Deploy fails with a scheduler AccessDenied
 
-The deploy role is missing the `scheduler` inline policy for the weekly digest
-schedule. Apply it from [`aws-bootstrap.md`](aws-bootstrap.md) and re-run the
+The deploy role is missing the `scheduler` inline policy for the digest
+schedules. Apply it from [`aws-bootstrap.md`](aws-bootstrap.md) and re-run the
 deploy. CloudFormation rolls back, so the running bot is unaffected.
 
 ## `fh-community-digest-failed`
 
-The Monday reservations digest Lambda (`DigestFn`) errored and posted nothing.
+The reservations digest Lambda (`DigestFn`, runs Monday and Friday 08:00 New
+York time) errored and posted nothing.
 Check its log group, `/aws/lambda/<DigestFn>`. The usual causes are a revoked
 Google refresh token (`invalid_grant`) or a Slack token problem
 (`not_in_channel`, `invalid_auth`). After fixing, post the digest by hand:
@@ -182,3 +187,29 @@ it went unused for six months). The bot marks them `revoked` and prompts again;
 connecting again fixes it. If it keeps happening for everyone, check the OAuth
 consent screen is still **Internal**: in External testing mode Google expires
 refresh tokens after 7 days.
+
+## `/reserve` works but follow-up messages get no reply
+
+`/reserve` replies in the member's DM with the bot and needs only `chat:write`.
+Follow-ups are plain DM messages, which reach the bot only after these Slack app
+changes. Until they land, `/reserve` answers but follow-ups are ignored:
+
+- Add the bot scope `im:history`. (`im:write` is not needed; the bot posts by
+  user id.)
+- Subscribe to the bot event `message.im`.
+- App Home, Messages tab: turn it on and tick "Allow users to send messages".
+- Reinstall the app to the workspace so the new scope takes effect.
+
+A request closes when it is answered, booked or refused, after 2 hours idle, or
+when the member says "start over" or "cancel".
+
+## Reservation digests in #reservations
+
+Two digest posts, both at 08:00 New York time:
+
+- Weekday digest: Monday, covers Mon-Thu.
+- Weekend digest: Friday, covers Fri-Sun.
+
+After each booking the bot makes, it edits the matching post. Bookings made
+directly in the sheets or calendars show up on the next edit or the next post,
+not before.

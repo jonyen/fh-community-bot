@@ -37,6 +37,14 @@ function readBody(event) {
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
 }
 
+// The event queue is FIFO. Grouping by the Slack user means one member's
+// messages are handled one at a time, in order, so two quick messages can't
+// both pass a conflict check. Different members still run in parallel.
+export function messageGroup(parsed) {
+  const event = parsed.event || {};
+  return event.user || event.channel || "slack";
+}
+
 export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
@@ -45,6 +53,8 @@ export function shouldEnqueueEvent(parsed) {
   if (event.type === "reaction_added") return isCreaTicketReaction(event.reaction);
   if (event.type !== "message") return true;
   if (event.bot_id) return false; // never enqueue our own / other bots' messages
+  // DMs belong to the reservations flow; skip edits/deletes and other subtypes.
+  if (event.channel_type === "im") return !event.subtype;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
@@ -65,6 +75,8 @@ function parseSlashCommand(body) {
     team_id: params.get("team_id"),
     response_url: params.get("response_url"),
     text: params.get("text") || "",
+    // Unique per invocation; the worker keys its booking claim on it.
+    trigger_id: params.get("trigger_id") || undefined,
   };
 }
 
@@ -110,6 +122,7 @@ export async function handler(event) {
         new SendMessageCommand({
           QueueUrl: process.env.EVENT_QUEUE_URL,
           MessageBody: JSON.stringify({ type: "block_actions", payload: parsedPayload }),
+          MessageGroupId: parsedPayload.user?.id || "slack",
         })
       );
       return { statusCode: 200, body: "" };
@@ -127,11 +140,13 @@ export async function handler(event) {
       team_id: slash.team_id,
       response_url: slash.response_url,
       text: slash.text,
+      trigger_id: slash.trigger_id,
     };
     await sqs.send(
       new SendMessageCommand({
         QueueUrl: process.env.EVENT_QUEUE_URL,
         MessageBody: JSON.stringify(envelope),
+        MessageGroupId: slash.user_id || "slack",
       })
     );
     return { statusCode: 200, body: "" };
@@ -156,6 +171,7 @@ export async function handler(event) {
     new SendMessageCommand({
       QueueUrl: process.env.EVENT_QUEUE_URL,
       MessageBody: body,
+      MessageGroupId: messageGroup(parsed),
     })
   );
 

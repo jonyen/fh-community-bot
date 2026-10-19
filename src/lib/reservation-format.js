@@ -12,6 +12,18 @@ export const CLOSED_METADATA = { event_type: "reservation_closed", event_payload
 // reads it as the member's words rather than the bot's.
 export const REQUEST_EVENT_TYPE = "reservation_request";
 
+// Marks a bot question that leaves the request open. Every reply (question or
+// closing) names the member message it answers in event_payload.reply_to, so
+// an SQS redelivery of that message is recognised and never handled twice.
+export const ASK_EVENT_TYPE = "reservation_ask";
+
+// Marks an aside to the member (a resend note) that belongs to no request, so
+// it is left out of every transcript.
+export const NOTE_EVENT_TYPE = "reservation_note";
+
+// Marks the one living digest post per period, so it can be found and edited.
+export const DIGEST_EVENT_TYPE = "reservation_digest";
+
 export function holderText(r) {
   return r.holderUserId ? `<@${r.holderUserId}>` : r.holder || "someone";
 }
@@ -23,31 +35,40 @@ export function reservationLine(r) {
 
 const byStart = (a, b) => (a.start ?? -1) - (b.start ?? -1);
 
-export function buildDigest({ from, to, reservations, maxChars = 3500 }) {
-  const header = `*Reservations this week: ${fmtDay(from)} – ${fmtDay(to)}*`;
-  if (reservations.length === 0) return [`${header}\n\nNo reservations this week.`];
+// One message per period. Over maxChars, every day is cut to the same N
+// reservation lines (largest N that fits) with "…+K more" on trimmed days.
+export function buildLivingDigest({ kind, from, to, reservations, maxChars = 3500 }) {
+  const header = `*${kind === "weekend" ? "This weekend" : "This week"}: ${fmtDay(from)} – ${fmtDay(to)}*`;
+  if (reservations.length === 0) return `${header}\n\nNothing booked yet.`;
 
-  const days = [...new Set(reservations.map((r) => r.date))].sort();
-  const blocks = days.map((date) => {
-    const lines = [`*${fmtDay(date)}*`];
-    for (const [id, name] of Object.entries(CATEGORY_NAMES)) {
-      const rs = reservations.filter((r) => r.date === date && r.category === id).sort(byStart);
-      if (rs.length === 0) continue;
-      lines.push(`_${name}_`, ...rs.map(reservationLine));
-    }
-    return lines.join("\n");
-  });
+  const days = [...new Set(reservations.map((r) => r.date))].sort().map((date) => ({
+    date,
+    groups: Object.entries(CATEGORY_NAMES)
+      .map(([id, name]) => ({ name, rs: reservations.filter((r) => r.date === date && r.category === id).sort(byStart) }))
+      .filter((g) => g.rs.length > 0),
+  }));
 
-  const parts = [];
-  let current = header;
-  for (const block of blocks) {
-    if (current.length + block.length + 2 > maxChars && current !== header) {
-      parts.push(current);
-      current = block;
-    } else {
-      current = `${current}\n\n${block}`;
-    }
+  const render = (limit) => {
+    const blocks = days.map(({ date, groups }) => {
+      const lines = [`*${fmtDay(date)}*`];
+      let left = limit;
+      let total = 0;
+      for (const { name, rs } of groups) {
+        total += rs.length;
+        const shown = rs.slice(0, Math.max(0, left));
+        left -= shown.length;
+        if (shown.length) lines.push(`_${name}_`, ...shown.map(reservationLine));
+      }
+      if (total > limit) lines.push(`…+${total - limit} more`);
+      return lines.join("\n");
+    });
+    return [header, ...blocks].join("\n\n");
+  };
+
+  const most = Math.max(...days.map((d) => d.groups.reduce((n, g) => n + g.rs.length, 0)));
+  for (let n = most; n > 0; n--) {
+    const text = render(n);
+    if (text.length <= maxChars) return text;
   }
-  parts.push(current);
-  return parts;
+  return render(0);
 }

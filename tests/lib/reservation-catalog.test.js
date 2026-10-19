@@ -1,6 +1,6 @@
 // tests/lib/reservation-catalog.test.js
 import { describe, it, expect } from "vitest";
-import { buildCatalog, findItem, catalogPromptText, CATEGORY_OWNERS, CATEGORY_NAMES, ownerFor } from "../../src/lib/reservation-catalog.js";
+import { buildCatalog, findItem, catalogPromptText, categoryCounts, CATEGORY_OWNERS, CATEGORY_NAMES, ownerFor } from "../../src/lib/reservation-catalog.js";
 
 const RMS = [
   { label: "Tech Set 1", category: "tech", backend: "rms", calendarId: "t1" },
@@ -53,5 +53,13 @@ describe("vehicles", () => {
     expect(ownerFor({ label: "Tech Set 1", category: "tech" })).toBe("Alan Chow");
     expect(ownerFor({ label: "X", category: "unknown" })).toBe("the equipment team");
   });
+  it("counts items per category in display order, leaving empty ones out", () => {
+    const cat = [
+      { label: "MPR", category: "rooms", backend: "rooms" },
+      { label: "L120", category: "rooms", backend: "rooms" },
+      { label: "Kitchen", category: "kitchen", backend: "kitchen" },
+      ...RMS,
+    ];
+    expect(categoryCounts(cat)).toBe("Rooms (2) · Kitchen (1) · Tech (1) · Sports (1)");
+  });
 });
-

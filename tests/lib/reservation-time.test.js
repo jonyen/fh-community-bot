@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseSheetDate, formatSheetDate, parseSheetTime, hhmmToMin, fmtTime, fmtRange,
   overlaps, nyOffset, nyDateTime, nyLocal, nyParts, nyToday, addDaysIso, weekOf, fmtDay, weekdayName,
+  digestPeriod, periodCovering,
 } from "../../src/lib/reservation-time.js";
 
 describe("parseSheetDate", () => {
@@ -105,5 +106,18 @@ describe("NY time zone", () => {
   it("weekOf gives Monday to Sunday", () => {
     expect(weekOf(new Date("2026-10-12T12:00:00Z"))).toEqual({ from: "2026-10-12", to: "2026-10-18" });
     expect(weekOf(new Date("2026-10-18T12:00:00Z"))).toEqual({ from: "2026-10-12", to: "2026-10-18" });
+  });
+});
+
+describe("digest periods", () => {
+  it("digestPeriod gives Mon–Thu and Fri–Sun of the current week", () => {
+    const mon = new Date("2026-10-19T12:00:00Z");
+    expect(digestPeriod("weekday", mon)).toEqual({ kind: "weekday", from: "2026-10-19", to: "2026-10-22" });
+    expect(digestPeriod("weekend", new Date("2026-10-23T12:00:00Z"))).toEqual({ kind: "weekend", from: "2026-10-23", to: "2026-10-25" });
+  });
+  it("periodCovering puts Friday in the weekend and Thursday in the weekday", () => {
+    expect(periodCovering("2026-10-22")).toEqual({ kind: "weekday", from: "2026-10-19", to: "2026-10-22" });
+    expect(periodCovering("2026-10-23")).toEqual({ kind: "weekend", from: "2026-10-23", to: "2026-10-25" });
+    expect(periodCovering("2026-10-25")).toEqual({ kind: "weekend", from: "2026-10-23", to: "2026-10-25" });
   });
 });

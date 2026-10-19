@@ -67,6 +67,22 @@ describe("receiver.handler", () => {
     expect(call.input.MessageBody).toBe(body);
   });
 
+  it("groups an event by the Slack user who sent it, so one member's messages run in order", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = JSON.stringify({ type: "event_callback", event: { type: "message", channel_type: "im", user: "U7", channel: "D7", text: "Saturday", ts: "1.1" } });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("U7");
+  });
+
+  it("groups an event with no user by its channel", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = JSON.stringify({ type: "event_callback", event: { type: "app_mention", channel: "C5", text: "hi" } });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("C5");
+  });
+
   it("handles base64-encoded bodies from Function URL", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const raw = JSON.stringify({ type: "event_callback", event: { type: "app_mention" } });
@@ -138,7 +154,7 @@ describe("receiver.handler", () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const body =
       "token=secret&team_id=T1&channel_id=C1&user_id=U1&command=%2Frefresh-genders" +
-      "&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1%2F123%2Fabc";
+      "&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1%2F123%2Fabc&trigger_id=TR1";
     const ts = Math.floor(Date.now() / 1000).toString();
     const res = await handler({
       body,
@@ -151,6 +167,7 @@ describe("receiver.handler", () => {
     expect(res.statusCode).toBe(200);
     expect(sendMock).toHaveBeenCalledTimes(1);
     const enqueued = JSON.parse(sendMock.mock.calls[0][0].input.MessageBody);
+    expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("U1");
     expect(enqueued).toEqual({
       type: "slash_command",
       command: "/refresh-genders",
@@ -159,6 +176,7 @@ describe("receiver.handler", () => {
       team_id: "T1",
       response_url: "https://hooks.slack.com/commands/T1/123/abc",
       text: "",
+      trigger_id: "TR1",
     });
   });
 
@@ -199,6 +217,7 @@ describe("receiver.handler", () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
     const sent = JSON.parse(sendMock.mock.calls[0][0].input.MessageBody);
     expect(sent.type).toBe("block_actions");
+    expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("U1");
     expect(sent.payload.actions[0].action_id).toBe("submit_maintenance_form");
   });
 
@@ -362,5 +381,15 @@ describe("shouldEnqueueEvent for #reservations", () => {
   it("still enqueues thread replies there", async () => {
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
     expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "Saturday", thread_ts: "1.1", ts: "1.2" } })).toBe(true);
+  });
+});
+
+describe("shouldEnqueueEvent — DMs", () => {
+  it("enqueues a top-level DM, but not bot or edited ones", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const dm = { type: "message", channel_type: "im", text: "Saturday" };
+    expect(shouldEnqueueEvent({ event: dm })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { ...dm, bot_id: "B1" } })).toBe(false);
+    expect(shouldEnqueueEvent({ event: { ...dm, subtype: "message_changed" } })).toBe(false);
   });
 });

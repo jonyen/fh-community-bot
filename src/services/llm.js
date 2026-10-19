@@ -40,7 +40,7 @@ Rules:
 Output only the JSON object, no prose.`;
 
 function reservationPrompt({ catalogText, today, weekday }) {
-  return `You read messages in a community building's #reservations Slack channel. Output ONLY a JSON object describing the newest request in the conversation.
+  return `You read a member's direct messages with a community building's reservations bot. Output ONLY a JSON object describing the newest request in the conversation.
 
 Today is ${today} (${weekday}). Time zone: America/New_York.
 
@@ -50,7 +50,7 @@ ${catalogText}
 Kitchen appliance keys: island, whiteCounter, brownCounter, toasterOven, airFryer, microwave (true when wanted); freezer, fridge (number of shelves); largeRiceCooker, smallRiceCooker, instapot (how many).
 
 JSON fields:
-- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), or "other" (anything else, including thanks and chatter).
+- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), "find" (asks what items exist that fit a description, e.g. "what speakers are there?", "something for a picnic"; put every fitting item name in "items"), or "other" (anything else, including thanks and chatter).
 - "items": exact item names from the list above.
 - "unmatched": phrases naming things to book that match nothing in the list.
 - "ambiguous": [{"phrase": <what they wrote>, "options": [exact item names]}] when a phrase could mean several items, e.g. "a tech set".
@@ -170,13 +170,13 @@ export function createLlmService(client, { model = DEFAULT_MODEL } = {}) {
     }
   }
 
-  // Turns a #reservations conversation into a request object. Returns null
+  // Turns a reservations DM conversation into a request object. Returns null
   // when the call fails or the reply isn't JSON; the caller validates every
   // field against the catalog.
   async function parseReservationRequest(transcript, { catalogText, today, weekday }) {
     if (!String(transcript || "").trim()) return null;
     try {
-      const raw = await complete("parseReservationRequest", reservationPrompt({ catalogText, today, weekday }), transcript, 512);
+      const raw = await complete("parseReservationRequest", reservationPrompt({ catalogText, today, weekday }), transcript, 2048);
       const jsonStart = raw.indexOf("{");
       const jsonEnd = raw.lastIndexOf("}");
       if (jsonStart === -1 || jsonEnd === -1) return null;

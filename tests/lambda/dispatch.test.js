@@ -413,3 +413,24 @@ describe("dispatch /reserve", () => {
     expect(reservationsHandler.handleCommand).toHaveBeenCalledWith({ envelope, client });
   });
 });
+
+describe("dispatch DMs", () => {
+  const dm = { type: "message", channel_type: "im", channel: "D1", user: "U9", ts: "2.2", thread_ts: "1.1", text: "who is a woman here" };
+
+  it("routes a threaded DM to the reservations handler only", async () => {
+    const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn().mockResolvedValue() };
+    const handler = vi.fn();
+    const genderHandler = vi.fn();
+    const client = makeClient();
+    await dispatchSlackEvent({ slackEnvelope: { event: dm }, handler, genderHandler, reservationsHandler, client });
+    expect(reservationsHandler.handleMessage).toHaveBeenCalledWith({ event: dm, client });
+    expect(handler).not.toHaveBeenCalled();
+    expect(genderHandler).not.toHaveBeenCalled();
+  });
+
+  it("drops a DM when there is no reservations handler", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({ slackEnvelope: { event: dm }, handler, client: makeClient() });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});

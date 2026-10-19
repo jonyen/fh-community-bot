@@ -9,7 +9,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
-- **#reservations** — `/reserve` books, checks and lists rooms, the kitchen and RMS equipment in plain English; first come, first served, with a weekly digest (see below)
+- **Reservations** — `/reserve` books, checks and lists rooms, the kitchen and RMS equipment in plain English, in a private conversation in the member's DM with the bot; first come, first served. #reservations holds the weekday and weekend digests (see below)
 
 ## Architecture
 
@@ -17,7 +17,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
                         │
                         ▼
-                  EventQueue (SQS) ──▶ WorkerFn (Lambda)
+                  EventQueue (SQS FIFO, per user) ──▶ WorkerFn (Lambda)
                                               │
                                               ▼
                        Bedrock (Claude) · Google Sheets · Slack Web API
@@ -199,24 +199,26 @@ Before the gender feature works in production, update the Slack app config:
 
 ## #reservations
 
-The #reservations channel is the front door for FH's four reservation
-systems. Members ask with the `/reserve` slash command, in plain English, from
-any channel or DM:
+The bot is the front door for FH's four reservation systems. Members ask with
+the `/reserve` slash command, in plain English, from any channel or DM:
 
 - `/reserve Tech Set 2 Sat 2-4pm for youth night`
 - `/reserve is the MPR free Wednesday 7-9?`
 - `/reserve who has the pickleball set this weekend?`
 
-The bot posts each request in #reservations ("📅 @member: …") and answers in
-that post's thread, so everyone sees what was asked and booked. Follow-up
-answers ("Saturday", "5-7 instead") go in the same thread. Ordinary chat in
-the channel is ignored.
+The conversation is private: the bot posts the request in the member's DM with
+the bot ("📅 You asked: …") and answers there. Follow-up answers ("Saturday",
+"5-7 instead") are plain messages in the same DM. A plain DM with nothing open
+also starts a request; chatter is ignored. A request closes when it is
+answered, booked or refused, after 2 hours idle, or when the member says
+"start over" or "cancel".
 
 The bot parses each request with Claude Haiku, checks for a conflict, and writes
 the booking straight into the system that owns the item. Bookings are first
 come, first served, with no approver. If the slot is taken, nothing is written
 and the bot names who holds it. When details are missing, it asks in the
-thread. Confirmations are broadcast to the channel, which is the feed.
+DM. The confirmation goes to the DM; #reservations sees the booking in its
+digest.
 
 | Category | Owner | Backend |
 | --- | --- | --- |
@@ -226,8 +228,10 @@ thread. Confirmations are broadcast to the channel, which is the feed.
 | Sports, outreach, accessories | Joe Pagan (accessories: none) | RMS resource calendars |
 | Vehicles | Brandon Lenz (Airstream), Mark Yeh (CP Transit) | RMS resource calendars |
 
-Every Monday at 8:00 AM New York time, `DigestFn` posts the week's reservations
+`DigestFn` posts two digests to #reservations at 8:00 AM New York time: Monday
+covers Monday–Thursday, and Friday covers Friday–Sunday. Each lists reservations
 from all sources, including bookings made directly in the docs and calendars.
+After each booking it makes, the bot edits the digest that covers that date in place.
 If a source can't be read, the post says so and `ESCALATION_USER_ID` gets a DM.
 
 ### Booking as yourself (connected Google accounts)
@@ -284,7 +288,7 @@ because somebody filed an issue and nobody will see it.
 | `queue-backlog` | Oldest event waiting over 5 minutes |
 | `issue-write-failed` | An issue could not be written to the Sheet |
 | `receiver-slow` | Receiver p99 above 2s against Slack's 3s deadline |
-| `digest-failed` | The weekly reservations digest errored and posted nothing |
+| `digest-failed` | The reservations digest errored and posted nothing |
 
 See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for diagnosis steps and the DLQ
 redrive procedure.

@@ -44,14 +44,23 @@ Globals:
       LogFormat: JSON
 
 Resources:
+  # FIFO, grouped by Slack user (the receiver sets MessageGroupId): one
+  # member's messages are handled one at a time, in order. Content-based
+  # dedup drops Slack's own retries of an event within 5 minutes. A FIFO
+  # queue's dead letter queue must be FIFO too.
   EventDLQ:
     Type: AWS::SQS::Queue
     Properties:
+      QueueName: !Sub ${AWS::StackName}-events-dlq.fifo
+      FifoQueue: true
       MessageRetentionPeriod: 1209600
 
   EventQueue:
     Type: AWS::SQS::Queue
     Properties:
+      QueueName: !Sub ${AWS::StackName}-events.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
       VisibilityTimeout: 180
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt EventDLQ.Arn
@@ -139,13 +148,14 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${WorkerFn}
       RetentionInDays: 14
 
-  # Monday 8 AM New York time, whatever the DST state: EventBridge Scheduler
-  # evaluates the cron in the given zone.
+  # Monday (weekday digest) and Friday (weekend digest) 8 AM New York time,
+  # whatever the DST state: EventBridge Scheduler evaluates the cron in the
+  # given zone.
   DigestFn:
     Type: AWS::Serverless::Function
     Properties:
       Handler: src/lambda/digest.handler
-      Description: Posts the week's reservations to #reservations
+      Description: Posts the living weekday and weekend reservations digests to #reservations
       MemorySize: 256
       Timeout: 120
       Environment:
@@ -161,11 +171,18 @@ Resources:
           ROOM_REQUESTS_SHEET_ID:  !Ref RoomRequestsSheetId
           KITCHEN_SHEET_ID:        !Ref KitchenSheetId
       Events:
-        Weekly:
+        Weekday:
           Type: ScheduleV2
           Properties:
             ScheduleExpression: cron(0 8 ? * MON *)
             ScheduleExpressionTimezone: America/New_York
+            Input: '{"period":"weekday"}'
+        Weekend:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 8 ? * FRI *)
+            ScheduleExpressionTimezone: America/New_York
+            Input: '{"period":"weekend"}'
 
   DigestLogGroup:
     Type: AWS::Logs::LogGroup
@@ -178,7 +195,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: fh-community-digest-failed
-      AlarmDescription: The weekly reservations digest Lambda errored and nothing was posted.
+      AlarmDescription: The reservations digest Lambda errored and nothing was posted.
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:

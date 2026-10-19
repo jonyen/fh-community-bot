@@ -31,7 +31,7 @@ describe("OAuth callback", () => {
     expect(oauth2Client.getToken).toHaveBeenCalledWith({ code: "CODE", redirect_uri: REDIRECT });
     expect(oauth2Client.verifyIdToken).toHaveBeenCalledWith({ idToken: "ID", audience: "CID" });
     expect(authStore.saveUser).toHaveBeenCalledWith({ slackUserId: "U9", googleEmail: "deandra.shim@acts2.network", refreshToken: "1//R", scopes: FULL_SCOPE });
-    expect(enqueue).toHaveBeenCalledWith({ type: "oauth_connected", pendingId: "P1" });
+    expect(enqueue).toHaveBeenCalledWith({ type: "oauth_connected", pendingId: "P1", slackUserId: "U9" });
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain("Connected");
     expect(page.body).not.toContain("1//R");

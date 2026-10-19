@@ -51,6 +51,12 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
   const event = slackEnvelope.event;
   if (!event) return;
 
+  // DMs belong to the reservations flow alone; with no handler they are dropped.
+  if (event.channel_type === "im") {
+    if (reservationsHandler && event.type === "message") await reservationsHandler.handleMessage({ event, client });
+    return;
+  }
+
   // #reservations belongs to the reservations flow alone. A mention there
   // arrives as both app_mention and message; only the message is handled.
   if (reservationsHandler && event.channel === reservationsHandler.channelId) {

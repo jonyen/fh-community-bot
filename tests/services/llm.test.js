@@ -244,6 +244,18 @@ describe("parseReservationRequest", () => {
   });
 });
 
+describe("reservation prompt find intent", () => {
+  it("offers find, speaks of direct messages, and leaves room for long item lists", async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "{}" }] });
+    await createLlmService({ messages: { create } }).parseReservationRequest("Member: x", { catalogText: "", today: "2026-10-15", weekday: "Thursday" });
+    const call = create.mock.calls[0][0];
+    expect(call.system).toContain('"find"');
+    expect(call.system).toContain("direct messages with a community building's reservations bot");
+    expect(call.system).not.toContain("#reservations Slack channel");
+    expect(call.max_tokens).toBe(2048);
+  });
+});
+
 describe("reservation prompt periods", () => {
   it("tells the model to resolve 'this month' style periods into date and toDate", async () => {
     const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "{}" }] });

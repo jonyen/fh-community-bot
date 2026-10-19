@@ -6,7 +6,7 @@ import { findItem } from "./reservation-catalog.js";
 import { hhmmToMin } from "./reservation-time.js";
 import { APPLIANCES } from "../services/reservations/kitchen.js";
 
-const INTENTS = new Set(["book", "check", "list", "other"]);
+const INTENTS = new Set(["book", "check", "list", "find", "other"]);
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const str = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
