@@ -89,6 +89,14 @@ describe("reservations handler", () => {
       expect(client.chat.postEphemeral.mock.calls[0][0].text).toMatch(/\/reserve the MPR/);
     });
 
+    it("shows a find overview with category counts for an empty /reserve", async () => {
+      await h.handleCommand({ envelope: cmd({ text: "" }), client });
+      const text = client.chat.postEphemeral.mock.calls[0][0].text;
+      expect(text).toMatch(/Rooms \(\d+\) · Kitchen \(1\) · Tech \(1\)/);
+      expect(text).toMatch(/\/reserve what speakers/);
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
     it("parses the request with today's date context", async () => {
       await h.handleCommand({ envelope: cmd(), client });
       expect(llm.parseReservationRequest).toHaveBeenCalledWith(
@@ -439,5 +447,50 @@ describe("reservations handler", () => {
       await h.handleCommand({ envelope: cmd({ text: "what's booked saturday" }), client });
       expect(posts()[0].text).toBe("Nothing booked Sat 10/17.");
     });
+  });
+});
+
+describe("find intent", () => {
+  const mk = (catalog, raw) => {
+    const llm = { parseReservationRequest: vi.fn().mockResolvedValue(raw) };
+    const client = makeClient();
+    const h = createReservationsHandler({ llm, adapters: {}, catalog, channelId: "CRES", now: () => NOW });
+    const answers = () => client.chat.postMessage.mock.calls.map((c) => c[0]).filter((p) => p.metadata?.event_type !== REQUEST_EVENT_TYPE);
+    return { h, client, answers };
+  };
+  const run = (h, client) => h.handleCommand({ envelope: cmd({ text: "what speakers are there?" }), client });
+
+  it("groups matches by category and says how to book, closing the request", async () => {
+    const cat = [
+      { label: "Tech Set 1", category: "tech", backend: "rms" }, { label: "Tech Set 2", category: "tech", backend: "rms" },
+      { label: "MPR", category: "rooms", backend: "rooms" },
+    ];
+    const { h, client, answers } = mk(cat, { intent: "find", items: ["Tech Set 1", "MPR", "Tech Set 2"] });
+    await run(h, client);
+    const [a] = answers();
+    expect(a.text).toContain("Rooms: MPR");
+    expect(a.text).toContain("Tech: Tech Set 1, Tech Set 2");
+    expect(a.text).toContain("/reserve <name> <day> <time> for <what>");
+    expect(a.metadata).toEqual(CLOSED_METADATA);
+  });
+
+  it("caps at 25 and counts the rest", async () => {
+    const cat = Array.from({ length: 30 }, (_, i) => ({ label: `Item ${i + 1}`, category: "tech", backend: "rms" }));
+    const { h, client, answers } = mk(cat, { intent: "find", items: cat.map((c) => c.label) });
+    await run(h, client);
+    const text = answers()[0].text;
+    expect(text).toContain("Item 25");
+    expect(text).not.toContain("Item 26,");
+    expect(text).not.toMatch(/Item 26(\b|$)/);
+    expect(text).toContain("+5 more");
+  });
+
+  it("says nothing matches and shows what is available", async () => {
+    const { h, client, answers } = mk(CATALOG, { intent: "find", items: [], unmatched: ["flamethrower"] });
+    await run(h, client);
+    const [a] = answers();
+    expect(a.text).toMatch(/^Nothing matches/);
+    expect(a.text).toMatch(/Kitchen \(1\) · Tech \(1\)/);
+    expect(a.metadata).toEqual(CLOSED_METADATA);
   });
 });

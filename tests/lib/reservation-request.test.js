@@ -35,6 +35,15 @@ describe("normalizeRequest", () => {
   });
 });
 
+describe("find intent", () => {
+  it("keeps the intent and checks items against the catalog", () => {
+    const req = normalizeRequest({ intent: "find", items: ["Tech Set 2", "Nope"] }, CAT);
+    expect(req.intent).toBe("find");
+    expect(req.items.map((i) => i.label)).toEqual(["Tech Set 2"]);
+    expect(req.unmatched).toEqual(["Nope"]);
+  });
+});
+
 describe("missingFields", () => {
   it("lists everything a booking still needs", () => {
     expect(missingFields(normalizeRequest({ intent: "book" }, CAT))).toEqual([

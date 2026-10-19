@@ -41,3 +41,13 @@ export function catalogPromptText(catalog) {
     .map(([name, labels]) => `${name}: ${labels.join(", ")}`)
     .join("\n");
 }
+
+// "Rooms (11) · Kitchen (1) · Tech (23)": what exists, for the bare /reserve
+// overview and the "nothing matches" answer.
+export function categoryCounts(catalog) {
+  return Object.entries(CATEGORY_NAMES)
+    .map(([id, name]) => [name, catalog.filter((e) => e.category === id).length])
+    .filter(([, n]) => n > 0)
+    .map(([name, n]) => `${name} (${n})`)
+    .join(" · ");
+}

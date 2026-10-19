@@ -8,13 +8,14 @@
 import { log, metric } from "../lib/logger.js";
 import { openRequest, isEscape } from "../lib/dm-conversation.js";
 import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
-import { catalogPromptText, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
+import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
 import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE } from "../lib/reservation-format.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
-const USAGE = "Try `/reserve the MPR Sat 2–4pm for youth night`, `/reserve is Tech Set 2 free Friday 7pm?` or `/reserve what's booked this weekend?`";
+export const FIND_CAP = 25;
+const USAGE = "Try `/reserve the MPR Sat 2–4pm for youth night`, `/reserve is Tech Set 2 free Friday 7pm?`, `/reserve what's booked this weekend?` or `/reserve what speakers are there?`";
 
 export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null }) {
   const catalogText = catalogPromptText(catalog);
@@ -196,7 +197,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const userId = envelope.user_id;
     const text = String(envelope.text || "").trim();
     const where = { userId, channel: envelope.channel_id, client, responseUrl: envelope.response_url };
-    if (!text) return tellPrivately({ ...where, text: USAGE });
+    if (!text) return tellPrivately({ ...where, text: `${USAGE}\nI can book: ${categoryCounts(catalog)}.` });
     const posted = await postStartMarker(client, userId, userId, text);
     const dmId = posted.channel;
     if (envelope.channel_id !== dmId) {
@@ -228,6 +229,21 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       blocks.push(`Next up for ${item.label}, ${fmtDay(next.date)}:\n${reservationLine(next)}`);
     }
     return say.done(blocks.join("\n\n"));
+  }
+
+  // "What speakers are there?": the model names the fitting items; they are
+  // checked against the catalog, grouped, and capped so the reply stays short.
+  function find(req, say) {
+    if (req.items.length === 0) {
+      return say.done(`Nothing matches that. I can book: ${categoryCounts(catalog)}. Try describing it another way.`);
+    }
+    const shown = req.items.slice(0, FIND_CAP);
+    const lines = Object.entries(CATEGORY_NAMES)
+      .map(([id, name]) => [name, shown.filter((i) => i.category === id).map((i) => i.label)])
+      .filter(([, labels]) => labels.length > 0)
+      .map(([name, labels]) => `${name}: ${labels.join(", ")}`);
+    const more = req.items.length > FIND_CAP ? `\n+${req.items.length - FIND_CAP} more` : "";
+    return say.done(`${lines.join("\n")}${more}\nTo book one: \`/reserve <name> <day> <time> for <what>\``);
   }
 
   async function handleQuery(req, say, client) {
@@ -310,6 +326,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       req.start = null;
       req.end = null;
     }
+
+    if (req.intent === "find") return find(req, say);
 
     if (req.ambiguous.length) {
       const a = req.ambiguous[0];
