@@ -11,7 +11,7 @@ import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../
 import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
-import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE } from "../lib/reservation-format.js";
+import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE, NOTE_EVENT_TYPE } from "../lib/reservation-format.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
@@ -51,6 +51,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       threadTs,
       ask: (text, extra = {}) => post(text, { metadata: { event_type: ASK_EVENT_TYPE, event_payload: payload }, ...extra }),
       done: (text) => post(text, { metadata: { event_type: CLOSED_METADATA.event_type, event_payload: payload } }),
+      // An aside outside any request: left out of transcripts, closes nothing.
+      note: (text) => post(text, { metadata: { event_type: NOTE_EVENT_TYPE, event_payload: payload } }),
     };
   }
 
@@ -322,7 +324,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const answered = new Set(others.filter((m) => m.bot_id).map((m) => m.metadata?.event_payload?.reply_to).filter(Boolean));
     if (others.some((m) => !m.bot_id && Number(m.ts) > Number(event.ts) && answered.has(m.ts))) {
       log.warn("dm event out of turn", { channel: event.channel, ts: event.ts });
-      return say.ask(`Sorry, I missed your earlier message ("${event.text}"). Please send it again if you still need it.`);
+      return say.note(`Sorry, I missed your earlier message ("${event.text}"). Please send it again if you still need it.`);
     }
     // The queue runs a member's messages in order. Their later messages are
     // still waiting their turn, so they are left out. A message handled after
@@ -340,7 +342,9 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (open) {
       // A redelivery after only the start marker went out: the marker
       // already carries this message's text.
-      const transcript = open.filter((m) => !(ownMarker && m === current)).map(line).join("\n");
+      const transcript = open
+        .filter((m) => !(ownMarker && m === current) && m.metadata?.event_type !== NOTE_EVENT_TYPE)
+        .map(line).join("\n");
       return respond({ raw: await parse(transcript), transcript, user: event.user, say, client, bookingKey });
     }
     // Nothing open: chatter is ignored; anything else gets a start marker

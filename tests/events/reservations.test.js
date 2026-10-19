@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
-import { CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE } from "../../src/lib/reservation-format.js";
+import { CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE, NOTE_EVENT_TYPE } from "../../src/lib/reservation-format.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: [SET2] });
@@ -495,8 +495,21 @@ describe("reservations handler", () => {
       expect(posts()).toEqual([expect.objectContaining({
         channel: "D9",
         text: 'Sorry, I missed your earlier message ("book MPR sat 2-4 for youth night"). Please send it again if you still need it.',
-        metadata: { event_type: ASK_EVENT_TYPE, event_payload: { reply_to: event.ts } },
+        metadata: { event_type: NOTE_EVENT_TYPE, event_payload: { reply_to: event.ts } },
       })]);
+    });
+
+    it("a resend note never enters the open request's transcript", async () => {
+      const event = dm({ text: "5-7pm for outreach", ts: ts(10) });
+      client.conversations.history.mockResolvedValue({ messages: [
+        event,
+        { bot_id: "B1", text: 'Sorry, I missed your earlier message ("book MPR sat 2-4"). Please send it again if you still need it.', ts: ts(50), metadata: { event_type: NOTE_EVENT_TYPE, event_payload: { reply_to: ts(300) } } },
+        ...openHistory,
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest.mock.calls[0][0]).toBe(
+        "Member: book tech set 2\nBot: Happy to book Tech Set 2. I still need: date…\nMember: 5-7pm for outreach"
+      );
     });
 
     it("a message handled after an earlier request closed starts its own", async () => {

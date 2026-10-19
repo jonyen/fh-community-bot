@@ -17,6 +17,10 @@ export const REQUEST_EVENT_TYPE = "reservation_request";
 // an SQS redelivery of that message is recognised and never handled twice.
 export const ASK_EVENT_TYPE = "reservation_ask";
 
+// Marks an aside to the member (a resend note) that belongs to no request, so
+// it is left out of every transcript.
+export const NOTE_EVENT_TYPE = "reservation_note";
+
 // Marks the one living digest post per period, so it can be found and edited.
 export const DIGEST_EVENT_TYPE = "reservation_digest";
 
