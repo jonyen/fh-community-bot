@@ -26,6 +26,7 @@ function makeClient() {
       // Posting to a user id lands in the DM; Slack answers with the DM id.
       postMessage: vi.fn().mockResolvedValue({ ok: true, channel: "D9", ts: ts(0) }),
       postEphemeral: vi.fn().mockResolvedValue({ ok: true }),
+      getPermalink: vi.fn().mockResolvedValue({ ok: true, permalink: "https://slack/p1" }),
     },
     conversations: { history: vi.fn().mockResolvedValue({ messages: [] }) },
     users: {
@@ -77,9 +78,17 @@ describe("reservations handler", () => {
       await h.handleCommand({ envelope: cmd({ channel_id: "CRES" }), client });
       expect(markers()[0].channel).toBe("U9");
       expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({
-        channel: "CRES", user: "U9", text: "Continuing in your DM with me: <https://slack.com/app_redirect?channel=D9|open DM>",
+        channel: "CRES", user: "U9", text: "Continuing in your DM with me: <https://slack/p1|open DM>",
       });
+      expect(client.chat.getPermalink).toHaveBeenCalledWith({ channel: "D9", message_ts: ts(0) });
       expect(posts()[0].channel).toBe("D9");
+    });
+
+    it("still points to the DM, without a link, when the permalink lookup fails", async () => {
+      client.chat.getPermalink.mockRejectedValue(new Error("ratelimited"));
+      await h.handleCommand({ envelope: cmd({ channel_id: "CRES" }), client });
+      expect(client.chat.postEphemeral.mock.calls[0][0].text).toBe("Continuing in your DM with me (FH Maintenance, under Apps).");
+      expect(adapters.rms.book).toHaveBeenCalledTimes(1);
     });
 
     it("answers an empty /reserve privately with an example", async () => {
