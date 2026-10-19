@@ -72,7 +72,7 @@ describe("reservations with connected accounts", () => {
     await handler(connect).handleCommand({ envelope: cmd(), client });
     expect(adapters.rms.book).not.toHaveBeenCalled();
     const pending = connect.authStore.createPending.mock.calls[0][0];
-    expect(pending).toMatchObject({ slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "D9", threadTs: null });
+    expect(pending).toMatchObject({ slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "U9", threadTs: null });
     expect(pending.request.backend).toBe("rms");
     expect(pending.request.req.items).toEqual([SET2]);
     expect(pending.request.requester).toEqual({ requesterName: "Deandra", requesterUserId: "U9", phone: "555", slackEmail: "deandra.shim@acts2.network" });
@@ -80,7 +80,7 @@ describe("reservations with connected accounts", () => {
     // The DM is private, so the prompt is a plain DM message, left open.
     expect(client.chat.postEphemeral).not.toHaveBeenCalled();
     const [prompt] = prompts();
-    expect(prompt).toMatchObject({ channel: "D9", username: "FH Reservations" });
+    expect(prompt).toMatchObject({ channel: "U9", username: "FH Reservations" });
     expect(prompt.thread_ts).toBeUndefined();
     expect(prompt.metadata.event_type).toBe(ASK_EVENT_TYPE);
     expect(prompt.text).toMatch(/connect your Google account once/);

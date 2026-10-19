@@ -41,6 +41,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   // Both name the member message they answer (replyTo), so its redelivery
   // is dropped. threadTs is only set for connect rows saved before replies
   // moved to the DM.
+  // DM posts go to the member's user id: the bot has no im:write, and Slack
+  // answers a post to the IM channel id with channel_not_found.
   function makeSay(client, channel, { threadTs = null, replyTo = null } = {}) {
     const payload = replyTo ? { reply_to: replyTo } : {};
     const post = (text, extra) => client.chat.postMessage({
@@ -226,7 +228,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const transcript = `Member: ${text}`;
     const raw = await parse(transcript);
     const bookingKey = envelope.trigger_id ? `cmd:${envelope.trigger_id}` : null;
-    return respond({ raw, transcript, user: userId, say: makeSay(client, dmId), client, bookingKey });
+    return respond({ raw, transcript, user: userId, say: makeSay(client, userId), client, bookingKey });
   }
 
   // "Who has the Transit?" with no period: each item's next booking that
@@ -319,7 +321,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       log.info("dm event already handled", { channel: event.channel, ts: event.ts });
       return;
     }
-    const say = makeSay(client, event.channel, { replyTo: event.ts });
+    const say = makeSay(client, event.user, { replyTo: event.ts });
     const bookingKey = `dm:${event.channel}:${event.ts}`;
     // Out of turn: a later message of theirs was already answered (this one
     // sat in the dead letter queue, or was queued late). Merged now, it could
@@ -355,7 +357,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const transcript = `Member: ${event.text}`;
     const raw = await parse(transcript);
     if (raw && normalizeRequest(raw, catalog).intent === "other") return;
-    await postStartMarker(client, event.channel, event.user, event.text, event.ts);
+    await postStartMarker(client, event.user, event.user, event.text, event.ts);
     return respond({ raw, transcript, user: event.user, say, client, bookingKey });
   }
 

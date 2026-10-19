@@ -81,7 +81,7 @@ describe("reservations handler", () => {
         channel: "CRES", user: "U9", text: "Continuing in your DM with me: <https://slack/p1|open DM>",
       });
       expect(client.chat.getPermalink).toHaveBeenCalledWith({ channel: "D9", message_ts: ts(0) });
-      expect(posts()[0].channel).toBe("D9");
+      expect(posts()[0].channel).toBe("U9");
     });
 
     it("still points to the DM, without a link, when the permalink lookup fails", async () => {
@@ -133,7 +133,7 @@ describe("reservations handler", () => {
         requesterName: "Deandra", requesterUserId: "U9", phone: "555-0100", appliances: {},
       });
       const [p] = posts();
-      expect(p).toMatchObject({ channel: "D9", username: "FH Reservations", metadata: CLOSED_METADATA });
+      expect(p).toMatchObject({ channel: "U9", username: "FH Reservations", metadata: CLOSED_METADATA });
       expect(p.thread_ts).toBeUndefined();
       expect(p.reply_broadcast).toBeUndefined();
       expect(p.text).toContain("✅ Tech Set 2 · Sat 10/17 · 2:00–4:00 PM · Youth night · <@U9>");
@@ -225,7 +225,7 @@ describe("reservations handler", () => {
       llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Tech Set 2"] });
       await h.handleCommand({ envelope: cmd(), client });
       const [p] = posts();
-      expect(p).toMatchObject({ channel: "D9", text: "Happy to book Tech Set 2. I still need: date, start and end time, what it's for." });
+      expect(p).toMatchObject({ channel: "U9", text: "Happy to book Tech Set 2. I still need: date, start and end time, what it's for." });
       expect(p.metadata).toEqual({ event_type: ASK_EVENT_TYPE, event_payload: {} });
     });
 
@@ -331,7 +331,7 @@ describe("reservations handler", () => {
       );
       expect(markers()).toEqual([]);
       expect(adapters.rms.book).toHaveBeenCalledTimes(1);
-      expect(posts()[0]).toMatchObject({ channel: "D9", metadata: CLOSED_METADATA });
+      expect(posts()[0]).toMatchObject({ channel: "U9", metadata: CLOSED_METADATA });
       expect(posts()[0].thread_ts).toBeUndefined();
     });
 
@@ -342,7 +342,7 @@ describe("reservations handler", () => {
       expect(llm.parseReservationRequest.mock.calls[0][0]).toBe(
         "Member: book tech set 2\nBot: Happy to book Tech Set 2. I still need: date…\nMember: Saturday 2-4, youth night"
       );
-      expect(posts()[0].channel).toBe("D9");
+      expect(posts()[0].channel).toBe("U9");
       expect(posts()[0].thread_ts).toBeUndefined();
     });
 
@@ -370,7 +370,7 @@ describe("reservations handler", () => {
       await h.handleMessage({ event, client });
       expect(llm.parseReservationRequest.mock.calls[0][0]).toBe("Member: also the MPR sat 2-4 for youth night");
       expect(markers()[0]).toMatchObject({
-        channel: "D9", text: "📅 You asked: also the MPR sat 2-4 for youth night",
+        channel: "U9", text: "📅 You asked: also the MPR sat 2-4 for youth night",
         metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: "U9", text: "also the MPR sat 2-4 for youth night" } },
       });
       expect(client.chat.postMessage.mock.invocationCallOrder[0]).toBeLessThan(adapters.rooms.book.mock.invocationCallOrder[0]);
@@ -395,7 +395,7 @@ describe("reservations handler", () => {
       client.conversations.history.mockResolvedValue({ messages: [event, ...openHistory] });
       await h.handleMessage({ event, client });
       expect(llm.parseReservationRequest).not.toHaveBeenCalled();
-      expect(posts()).toEqual([expect.objectContaining({ channel: "D9", text: "Okay, starting fresh.", metadata: { event_type: CLOSED_METADATA.event_type, event_payload: { reply_to: event.ts } } })]);
+      expect(posts()).toEqual([expect.objectContaining({ channel: "U9", text: "Okay, starting fresh.", metadata: { event_type: CLOSED_METADATA.event_type, event_payload: { reply_to: event.ts } } })]);
     });
 
     it("every reply names the message it answers", async () => {
@@ -502,7 +502,7 @@ describe("reservations handler", () => {
       expect(llm.parseReservationRequest).not.toHaveBeenCalled();
       expect(adapters.rooms.book).not.toHaveBeenCalled();
       expect(posts()).toEqual([expect.objectContaining({
-        channel: "D9",
+        channel: "U9",
         text: 'Sorry, I missed your earlier message ("book MPR sat 2-4 for youth night"). Please send it again if you still need it.',
         metadata: { event_type: NOTE_EVENT_TYPE, event_payload: { reply_to: event.ts } },
       })]);
