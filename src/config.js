@@ -10,6 +10,7 @@ const REQUIRED = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REFRESH_TOKEN",
+  "ANTHROPIC_API_KEY",
 ];
 
 function parseChannelIds(raw) {
@@ -123,6 +124,7 @@ export function loadConfig() {
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN,
     googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID || null,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     llmModelId: process.env.LLM_MODEL_ID || null,
     eventQueueUrl: process.env.EVENT_QUEUE_URL,
     genderSheetId: process.env.GENDER_SHEET_ID || null,

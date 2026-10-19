@@ -15,7 +15,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/bedrock-sdk": "^0.34.4",
+    "@anthropic-ai/sdk": "^0.135.0",
     "@aws-sdk/client-dynamodb": "^3.1152.0",
     "@aws-sdk/client-kms": "^3.1152.0",
     "@aws-sdk/client-sqs": "^3.1051.0",

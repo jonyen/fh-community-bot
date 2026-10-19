@@ -138,12 +138,12 @@ describe("classifyIssueReport", () => {
   });
 });
 
-describe("Bedrock request", () => {
+describe("API request", () => {
   it("sends the configured model, system prompt and user message", async () => {
     const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "none" }] });
-    await createLlmService({ messages: { create } }, { model: "us.anthropic.claude-haiku-5-5" }).checkDuplicate("x", []);
+    await createLlmService({ messages: { create } }, { model: "claude-haiku-5-5" }).checkDuplicate("x", []);
     const req = create.mock.calls[0][0];
-    expect(req.model).toBe("us.anthropic.claude-haiku-5-5");
+    expect(req.model).toBe("claude-haiku-5-5");
     expect(req.system).toContain("duplicate issue detector");
     expect(req.messages).toEqual([{ role: "user", content: expect.stringContaining('New report: "x"') }]);
   });
@@ -151,7 +151,7 @@ describe("Bedrock request", () => {
   it("defaults to Claude Haiku 4.5", async () => {
     const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "none" }] });
     await createLlmService({ messages: { create } }).checkDuplicate("x", []);
-    expect(create.mock.calls[0][0].model).toBe("us.anthropic.claude-haiku-4-5-20251001-v1:0");
+    expect(create.mock.calls[0][0].model).toBe("claude-haiku-4-5");
   });
 
   it("emits LlmCallFailed when a call fails, so the alarm fires", async () => {

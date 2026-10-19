@@ -9,6 +9,7 @@ describe("loadConfig", () => {
     GOOGLE_CLIENT_ID: "test-client-id",
     GOOGLE_CLIENT_SECRET: "test-client-secret",
     GOOGLE_REFRESH_TOKEN: "test-refresh-token",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
     LLM_MODEL_ID: "us.anthropic.claude-haiku-5-5",
   };
 
@@ -32,6 +33,7 @@ describe("loadConfig", () => {
     expect(config.googleClientId).toBe("test-client-id");
     expect(config.googleClientSecret).toBe("test-client-secret");
     expect(config.googleRefreshToken).toBe("test-refresh-token");
+    expect(config.anthropicApiKey).toBe("test-anthropic-key");
     expect(config.llmModelId).toBe("us.anthropic.claude-haiku-5-5");
   });
 
@@ -108,10 +110,10 @@ describe("loadConfig — CREA tickets", () => {
   const CREA_KEYS = ["CREA_TICKETS_ENABLED", "CREA_TWA_USERNAME", "CREA_TWA_PASSWORD", "CREA_TWA_PHONE", "CREA_TICKET_USER_IDS"];
   const saved = {};
   beforeEach(() => {
-    for (const k of [...CREA_KEYS, "SLACK_BOT_TOKEN", "SLACK_CHANNEL_IDS", "GOOGLE_SHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"]) saved[k] = process.env[k];
+    for (const k of [...CREA_KEYS, "SLACK_BOT_TOKEN", "SLACK_CHANNEL_IDS", "GOOGLE_SHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN", "ANTHROPIC_API_KEY"]) saved[k] = process.env[k];
     Object.assign(process.env, {
       SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C1", GOOGLE_SHEET_ID: "s", GOOGLE_CLIENT_ID: "c",
-      GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r",
+      GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r", ANTHROPIC_API_KEY: "a",
       CREA_TWA_USERNAME: "u", CREA_TWA_PASSWORD: "p", CREA_TWA_PHONE: "555", CREA_TICKET_USER_IDS: "U1, U2",
     });
   });
@@ -145,6 +147,7 @@ describe("reservations config", () => {
     GOOGLE_CLIENT_ID: "id",
     GOOGLE_CLIENT_SECRET: "secret",
     GOOGLE_REFRESH_TOKEN: "token",
+    ANTHROPIC_API_KEY: "key",
   };
   const KEYS = ["RESERVATIONS_CHANNEL_ID", "ROOM_REQUESTS_SHEET_ID", "KITCHEN_SHEET_ID", "RESOURCE_CALENDARS", "RMS_BOOKING_ENABLED", "ESCALATION_USER_ID"];
   let originalEnv;
@@ -187,7 +190,7 @@ describe("reservations config", () => {
 });
 
 describe("googleConnect config", () => {
-  const BASE = { SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C", GOOGLE_SHEET_ID: "s", GOOGLE_CLIENT_ID: "i", GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r" };
+  const BASE = { SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_IDS: "C", GOOGLE_SHEET_ID: "s", GOOGLE_CLIENT_ID: "i", GOOGLE_CLIENT_SECRET: "c", GOOGLE_REFRESH_TOKEN: "r", ANTHROPIC_API_KEY: "a" };
   const KEYS = ["GOOGLE_WEB_CLIENT_ID", "GOOGLE_WEB_CLIENT_SECRET", "OAUTH_REDIRECT_URI", "AUTH_TABLE", "AUTH_KMS_KEY_ID"];
   let originalEnv;
   beforeEach(() => { originalEnv = { ...process.env }; for (const k of KEYS) delete process.env[k]; Object.assign(process.env, BASE); });

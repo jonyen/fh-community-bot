@@ -1,14 +1,13 @@
 import { log, metric } from "../lib/logger.js";
 
-// Claude on Amazon Bedrock. The Lambda's own IAM role authorises the calls,
-// so there is no API key to store or let go stale. The model id is an
-// inference profile set by the LLM_MODEL_ID environment variable, so moving
-// to a newer model is a config change.
+// Claude on the Anthropic API, billed to the account that owns
+// ANTHROPIC_API_KEY. The model id is set by the LLM_MODEL_ID environment
+// variable, so moving to a newer model is a config change.
 //
 // Every call here fails soft (null), so a dead model looks exactly like a
 // model with no opinion: that is how Groq retiring Llama 3.3 went unnoticed.
 // Each failure therefore emits LlmCallFailed, which alarms in Slack.
-export const DEFAULT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+export const DEFAULT_MODEL = "claude-haiku-4-5";
 
 const SYSTEM_PROMPT_DEDUP = `You are a duplicate issue detector. Given a new issue report and a list of existing open issues, determine if the new report is about the same problem as any existing issue. If it matches an existing issue, respond with ONLY the ID number. If it does not match any, respond with ONLY the word "none". Do not explain.`;
 
