@@ -11,7 +11,7 @@ import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../
 import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
-import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE } from "../lib/reservation-format.js";
+import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE } from "../lib/reservation-format.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
@@ -38,23 +38,26 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   }
 
   // ask leaves the request open for the member's answer; done closes it.
-  // threadTs is only set for connect rows saved before replies moved to the DM.
-  function makeSay(client, channel, threadTs = null) {
+  // Both name the member message they answer (replyTo), so its redelivery
+  // is dropped. threadTs is only set for connect rows saved before replies
+  // moved to the DM.
+  function makeSay(client, channel, { threadTs = null, replyTo = null } = {}) {
+    const payload = replyTo ? { reply_to: replyTo } : {};
     const post = (text, extra) => client.chat.postMessage({
       channel, text, ...BOT_PERSONA, ...(threadTs ? { thread_ts: threadTs } : {}), ...extra,
     });
     return {
       channel,
       threadTs,
-      ask: (text, extra = {}) => post(text, extra),
-      done: (text) => post(text, { metadata: CLOSED_METADATA }),
+      ask: (text, extra = {}) => post(text, { metadata: { event_type: ASK_EVENT_TYPE, event_payload: payload }, ...extra }),
+      done: (text) => post(text, { metadata: { event_type: CLOSED_METADATA.event_type, event_payload: payload } }),
     };
   }
 
-  function postStartMarker(client, channel, userId, text) {
+  function postStartMarker(client, channel, userId, text, replyTo = null) {
     return client.chat.postMessage({
       channel, text: `📅 You asked: ${text}`, ...BOT_PERSONA,
-      metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: userId, text } },
+      metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: userId, text, ...(replyTo ? { reply_to: replyTo } : {}) } },
     });
   }
 
@@ -151,7 +154,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const { req, requester, backend } = pending.request;
     const adapter = adapters[backend];
     if (!adapter) return;
-    const say = makeSay(client, pending.channel, pending.threadTs || null);
+    const say = makeSay(client, pending.channel, { threadTs: pending.threadTs || null });
     // The pending row is gone, so a thrown error here would be retried into
     // nothing. The member was told "booking is being made", so say so instead.
     try {
@@ -296,23 +299,32 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (event.channel_type !== "im" || event.bot_id || event.subtype || !String(event.text || "").trim()) return;
     const res = await client.conversations.history({ channel: event.channel, limit: 50, include_all_metadata: true });
     const history = res.messages || [];
-    // The bot already answered after this message: an SQS redelivery, or a
-    // later message overtook it. Handling it again could book twice.
-    const handled = history.some((m) => m.bot_id && Number(m.ts) > Number(event.ts)
-      && (m.metadata?.event_type === CLOSED_METADATA.event_type || m.metadata?.event_type === REQUEST_EVENT_TYPE));
-    if (handled) {
-      log.info("dm event already handled or overtaken", { channel: event.channel, ts: event.ts });
+    const others = history.filter((m) => m.ts !== event.ts);
+    const answers = (m) => m.bot_id && m.metadata?.event_payload?.reply_to === event.ts;
+    // The bot already replied to this very message: an SQS redelivery.
+    // Handling it again could book twice.
+    if (others.some((m) => answers(m) && m.metadata.event_type !== REQUEST_EVENT_TYPE)) {
+      log.info("dm event already handled", { channel: event.channel, ts: event.ts });
       return;
     }
-    const messages = history.some((m) => m.ts === event.ts) ? history : [event, ...history];
-    const open = openRequest(messages, { currentTs: event.ts, nowMs: now().getTime() });
-    const say = makeSay(client, event.channel);
+    // The queue runs a member's messages in order. Their later messages are
+    // still waiting their turn, so they are left out. A message handled after
+    // the bot answered an earlier one joins the conversation as it stands now:
+    // it is placed just after the newest message.
+    const seen = others.filter((m) => m.bot_id || Number(m.ts) < Number(event.ts));
+    const newest = Math.max(...seen.map((m) => Number(m.ts)));
+    const current = newest > Number(event.ts) ? { ...event, ts: (newest + 0.000001).toFixed(6) } : event;
+    const ownMarker = seen.find((m) => answers(m) && m.metadata.event_type === REQUEST_EVENT_TYPE);
+    const open = openRequest([current, ...seen], { currentTs: current.ts, nowMs: now().getTime() });
+    const say = makeSay(client, event.channel, { replyTo: event.ts });
     if (isEscape(event.text)) {
       if (open) await say.done("Okay, starting fresh.");
       return;
     }
     if (open) {
-      const transcript = open.map(line).join("\n");
+      // A redelivery after only the start marker went out: the marker
+      // already carries this message's text.
+      const transcript = open.filter((m) => !(ownMarker && m === current)).map(line).join("\n");
       return respond({ raw: await parse(transcript), transcript, user: event.user, say, client });
     }
     // Nothing open: chatter is ignored; anything else gets a start marker
@@ -320,7 +332,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const transcript = `Member: ${event.text}`;
     const raw = await parse(transcript);
     if (raw && normalizeRequest(raw, catalog).intent === "other") return;
-    await postStartMarker(client, event.channel, event.user, event.text);
+    await postStartMarker(client, event.channel, event.user, event.text, event.ts);
     return respond({ raw, transcript, user: event.user, say, client });
   }
 

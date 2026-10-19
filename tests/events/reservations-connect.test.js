@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
-import { CLOSED_METADATA, REQUEST_EVENT_TYPE } from "../../src/lib/reservation-format.js";
+import { CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE } from "../../src/lib/reservation-format.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const TRANSIT = { label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "tr" };
@@ -82,7 +82,7 @@ describe("reservations with connected accounts", () => {
     const [prompt] = prompts();
     expect(prompt).toMatchObject({ channel: "D9", username: "FH Reservations" });
     expect(prompt.thread_ts).toBeUndefined();
-    expect(prompt.metadata).toBeUndefined();
+    expect(prompt.metadata.event_type).toBe(ASK_EVENT_TYPE);
     expect(prompt.text).toMatch(/connect your Google account once/);
     expect(prompt.blocks[1].elements[0]).toMatchObject({ type: "button", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE", action_id: "reservations_connect_google" });
     expect(replies()).toEqual([]);

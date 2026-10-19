@@ -12,6 +12,11 @@ export const CLOSED_METADATA = { event_type: "reservation_closed", event_payload
 // reads it as the member's words rather than the bot's.
 export const REQUEST_EVENT_TYPE = "reservation_request";
 
+// Marks a bot question that leaves the request open. Every reply (question or
+// closing) names the member message it answers in event_payload.reply_to, so
+// an SQS redelivery of that message is recognised and never handled twice.
+export const ASK_EVENT_TYPE = "reservation_ask";
+
 // Marks the one living digest post per period, so it can be found and edited.
 export const DIGEST_EVENT_TYPE = "reservation_digest";
 

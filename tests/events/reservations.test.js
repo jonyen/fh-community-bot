@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
-import { CLOSED_METADATA, REQUEST_EVENT_TYPE } from "../../src/lib/reservation-format.js";
+import { CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE } from "../../src/lib/reservation-format.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: [SET2] });
@@ -176,14 +176,14 @@ describe("reservations handler", () => {
       await h.handleCommand({ envelope: cmd(), client });
       const [p] = posts();
       expect(p).toMatchObject({ channel: "D9", text: "Happy to book Tech Set 2. I still need: date, start and end time, what it's for." });
-      expect(p.metadata).toBeUndefined();
+      expect(p.metadata).toEqual({ event_type: ASK_EVENT_TYPE, event_payload: {} });
     });
 
     it("asks which item when ambiguous, leaving the request open", async () => {
       llm.parseReservationRequest.mockResolvedValue({ intent: "book", ambiguous: [{ phrase: "a speaker", options: ["Tech Set 2", "MPR"] }] });
       await h.handleCommand({ envelope: cmd(), client });
       expect(posts()[0].text).toBe("Which one did you mean by \"a speaker\": Tech Set 2, MPR?");
-      expect(posts()[0].metadata).toBeUndefined();
+      expect(posts()[0].metadata).toEqual({ event_type: ASK_EVENT_TYPE, event_payload: {} });
     });
 
     it("says when it doesn't know an item and closes the request", async () => {
@@ -212,7 +212,7 @@ describe("reservations handler", () => {
       llm.parseReservationRequest.mockResolvedValue(null);
       await h.handleCommand({ envelope: cmd(), client });
       expect(posts()[0].text).toBe("Sorry, I couldn't read that. Please try again.");
-      expect(posts()[0].metadata).toBeUndefined();
+      expect(posts()[0].metadata).toEqual({ event_type: ASK_EVENT_TYPE, event_payload: {} });
     });
 
     it("reports a backend write failure with the direct link", async () => {
@@ -345,14 +345,30 @@ describe("reservations handler", () => {
       client.conversations.history.mockResolvedValue({ messages: [event, ...openHistory] });
       await h.handleMessage({ event, client });
       expect(llm.parseReservationRequest).not.toHaveBeenCalled();
-      expect(posts()).toEqual([expect.objectContaining({ channel: "D9", text: "Okay, starting fresh.", metadata: CLOSED_METADATA })]);
+      expect(posts()).toEqual([expect.objectContaining({ channel: "D9", text: "Okay, starting fresh.", metadata: { event_type: CLOSED_METADATA.event_type, event_payload: { reply_to: event.ts } } })]);
+    });
+
+    it("every reply names the message it answers", async () => {
+      const event = dm({ text: "Saturday 2-4, youth night" });
+      client.conversations.history.mockResolvedValue({ messages: [event, ...openHistory] });
+      await h.handleMessage({ event, client });
+      expect(posts()[0].metadata).toEqual({ event_type: CLOSED_METADATA.event_type, event_payload: { reply_to: event.ts } });
+    });
+
+    it("a question names the message it answers, leaving the request open", async () => {
+      const event = dm({ text: "book tech set 2" });
+      client.conversations.history.mockResolvedValue({ messages: [event] });
+      llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Tech Set 2"] });
+      await h.handleMessage({ event, client });
+      expect(posts()[0].metadata).toEqual({ event_type: ASK_EVENT_TYPE, event_payload: { reply_to: event.ts } });
+      expect(markers()[0].metadata.event_payload.reply_to).toBe(event.ts);
     });
 
     it("a redelivered message the bot already closed is dropped", async () => {
       // SQS redelivers the member's answer after the bot booked and closed.
       const event = dm({ text: "Saturday 2-4, youth night", ts: ts(20) });
       client.conversations.history.mockResolvedValue({ messages: [
-        { bot_id: "B1", text: "✅ Tech Set 2 …", ts: ts(10), metadata: CLOSED_METADATA },
+        { bot_id: "B1", text: "✅ Tech Set 2 …", ts: ts(10), metadata: { event_type: CLOSED_METADATA.event_type, event_payload: { reply_to: event.ts } } },
         event,
         { bot_id: "B1", text: "Happy to book Tech Set 2. I still need: date…", ts: ts(30) },
         marker("book tech set 2", 40),
@@ -363,17 +379,79 @@ describe("reservations handler", () => {
       expect(client.chat.postMessage).not.toHaveBeenCalled();
     });
 
-    it("a redelivered message that already started a request is dropped", async () => {
-      // Nothing was open, so the first delivery posted a start marker after it.
-      const event = dm({ text: "MPR sat 2-4 for youth night", ts: ts(20) });
+    it("a redelivered message the bot already asked about is dropped", async () => {
+      const event = dm({ text: "book tech set 2", ts: ts(20) });
       client.conversations.history.mockResolvedValue({ messages: [
-        marker("MPR sat 2-4 for youth night", 10),
+        { bot_id: "B1", text: "Happy to book Tech Set 2. I still need: date…", ts: ts(10), metadata: { event_type: ASK_EVENT_TYPE, event_payload: { reply_to: event.ts } } },
+        marker("book tech set 2", 15),
         event,
       ] });
       await h.handleMessage({ event, client });
       expect(llm.parseReservationRequest).not.toHaveBeenCalled();
-      expect(adapters.rooms.book).not.toHaveBeenCalled();
       expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("a redelivery after only the start marker was posted carries on without a second marker", async () => {
+      // The first delivery died between posting the marker and replying.
+      const event = dm({ text: "MPR sat 2-4 for youth night", ts: ts(20) });
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["MPR"] });
+      client.conversations.history.mockResolvedValue({ messages: [
+        { ...marker("MPR sat 2-4 for youth night", 10), metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: "U9", text: "MPR sat 2-4 for youth night", reply_to: ts(20) } } },
+        event,
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest.mock.calls[0][0]).toBe("Member: MPR sat 2-4 for youth night");
+      expect(markers()).toEqual([]);
+      expect(adapters.rooms.book).toHaveBeenCalledTimes(1);
+    });
+
+    it("a message handled after the bot's reply to an earlier one joins the open request", async () => {
+      // Sent seconds after the first; the queue ran them in order, so the
+      // bot's question to the first is newer than this message.
+      const first = dm({ text: "book tech set 2", ts: ts(30) });
+      const event = dm({ text: "saturday 2-4 for youth night", ts: ts(20) });
+      client.conversations.history.mockResolvedValue({ messages: [
+        { bot_id: "B1", text: "Happy to book Tech Set 2. I still need: date…", ts: ts(10), metadata: { event_type: ASK_EVENT_TYPE, event_payload: { reply_to: first.ts } } },
+        { ...marker("book tech set 2", 15), metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: "U9", text: "book tech set 2", reply_to: first.ts } } },
+        event,
+        first,
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest.mock.calls[0][0]).toBe(
+        "Member: book tech set 2\nBot: Happy to book Tech Set 2. I still need: date…\nMember: saturday 2-4 for youth night"
+      );
+      expect(markers()).toEqual([]);
+      expect(adapters.rms.book).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves out the member's later messages that haven't had their turn", async () => {
+      const event = dm({ text: "Saturday", ts: ts(20) });
+      client.conversations.history.mockResolvedValue({ messages: [
+        dm({ text: "2-4 for youth night", ts: ts(10) }),
+        event,
+        ...openHistory,
+      ] });
+      llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Tech Set 2"], date: "2026-10-17" });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest.mock.calls[0][0]).toBe(
+        "Member: book tech set 2\nBot: Happy to book Tech Set 2. I still need: date…\nMember: Saturday"
+      );
+    });
+
+    it("a message handled after an earlier request closed starts its own", async () => {
+      const first = dm({ text: "book tech set 2 sat 2-4 for youth night", ts: ts(30) });
+      const event = dm({ text: "also the MPR sat 2-4 for youth night", ts: ts(20) });
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["MPR"] });
+      client.conversations.history.mockResolvedValue({ messages: [
+        { bot_id: "B1", text: "✅ Tech Set 2 …", ts: ts(10), metadata: { event_type: CLOSED_METADATA.event_type, event_payload: { reply_to: first.ts } } },
+        marker("book tech set 2 sat 2-4 for youth night", 15),
+        event,
+        first,
+      ] });
+      await h.handleMessage({ event, client });
+      expect(llm.parseReservationRequest.mock.calls[0][0]).toBe("Member: also the MPR sat 2-4 for youth night");
+      expect(markers()).toHaveLength(1);
+      expect(adapters.rooms.book).toHaveBeenCalledTimes(1);
     });
 
     it("an escape word with nothing open is ignored", async () => {
