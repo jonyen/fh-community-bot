@@ -74,6 +74,10 @@ Somebody submitted a form and is still looking at an unanswered message.
 against the account limit. A poison message failing and retrying on a loop also
 shows up here before it reaches the DLQ.
 
+The queue is FIFO, grouped by Slack user. A failing message holds back that
+member's later messages until it reaches the DLQ: three receives of up to
+180 s each, so about nine minutes. Other members are not held up.
+
 **Fix:** if the worker is throttled, raise reserved concurrency. If it is
 erroring, the DLQ alarm is about to fire too — treat that as the primary.
 

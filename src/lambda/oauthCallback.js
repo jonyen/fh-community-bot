@@ -82,7 +82,7 @@ export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue
     if (!pending) {
       return htmlPage(200, "Connected", "Your Google account is connected. Please send your request again in #reservations.");
     }
-    await enqueue({ type: "oauth_connected", pendingId: consumed.pendingId });
+    await enqueue({ type: "oauth_connected", pendingId: consumed.pendingId, slackUserId: consumed.slackUserId });
     return htmlPage(200, "Connected", "You can close this tab and go back to Slack. Your booking is being made now.");
   };
 }
@@ -112,7 +112,11 @@ async function getCallback() {
     }),
     oauth2Client: new OAuth2Client(GOOGLE_WEB_CLIENT_ID, GOOGLE_WEB_CLIENT_SECRET),
     clientId: GOOGLE_WEB_CLIENT_ID,
-    enqueue: (body) => sqs.send(new SendMessageCommand({ QueueUrl: EVENT_QUEUE_URL, MessageBody: JSON.stringify(body) })),
+    // Grouped with the member's DM messages on the FIFO queue, so the
+    // booking resumes in order with them.
+    enqueue: (body) => sqs.send(new SendMessageCommand({
+      QueueUrl: EVENT_QUEUE_URL, MessageBody: JSON.stringify(body), MessageGroupId: body.slackUserId || "oauth",
+    })),
   });
   return cached;
 }

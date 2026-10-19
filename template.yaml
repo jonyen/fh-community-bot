@@ -44,14 +44,23 @@ Globals:
       LogFormat: JSON
 
 Resources:
+  # FIFO, grouped by Slack user (the receiver sets MessageGroupId): one
+  # member's messages are handled one at a time, in order. Content-based
+  # dedup drops Slack's own retries of an event within 5 minutes. A FIFO
+  # queue's dead letter queue must be FIFO too.
   EventDLQ:
     Type: AWS::SQS::Queue
     Properties:
+      QueueName: !Sub ${AWS::StackName}-events-dlq.fifo
+      FifoQueue: true
       MessageRetentionPeriod: 1209600
 
   EventQueue:
     Type: AWS::SQS::Queue
     Properties:
+      QueueName: !Sub ${AWS::StackName}-events.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
       VisibilityTimeout: 180
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt EventDLQ.Arn

@@ -17,7 +17,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 Slack ──HTTPS──▶ ReceiverFn (Lambda Function URL)
                         │
                         ▼
-                  EventQueue (SQS) ──▶ WorkerFn (Lambda)
+                  EventQueue (SQS FIFO, per user) ──▶ WorkerFn (Lambda)
                                               │
                                               ▼
                        Bedrock (Claude) · Google Sheets · Slack Web API

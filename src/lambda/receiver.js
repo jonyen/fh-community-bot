@@ -37,6 +37,14 @@ function readBody(event) {
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
 }
 
+// The event queue is FIFO. Grouping by the Slack user means one member's
+// messages are handled one at a time, in order, so two quick messages can't
+// both pass a conflict check. Different members still run in parallel.
+export function messageGroup(parsed) {
+  const event = parsed.event || {};
+  return event.user || event.channel || "slack";
+}
+
 export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
@@ -112,6 +120,7 @@ export async function handler(event) {
         new SendMessageCommand({
           QueueUrl: process.env.EVENT_QUEUE_URL,
           MessageBody: JSON.stringify({ type: "block_actions", payload: parsedPayload }),
+          MessageGroupId: parsedPayload.user?.id || "slack",
         })
       );
       return { statusCode: 200, body: "" };
@@ -134,6 +143,7 @@ export async function handler(event) {
       new SendMessageCommand({
         QueueUrl: process.env.EVENT_QUEUE_URL,
         MessageBody: JSON.stringify(envelope),
+        MessageGroupId: slash.user_id || "slack",
       })
     );
     return { statusCode: 200, body: "" };
@@ -158,6 +168,7 @@ export async function handler(event) {
     new SendMessageCommand({
       QueueUrl: process.env.EVENT_QUEUE_URL,
       MessageBody: body,
+      MessageGroupId: messageGroup(parsed),
     })
   );
 
