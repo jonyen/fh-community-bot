@@ -4,22 +4,8 @@ import { CATEGORY_NAMES } from "./reservation-catalog.js";
 
 export const BOT_PERSONA = { username: "FH Reservations", icon_emoji: ":calendar:" };
 
-// Marks a thread as finished so later replies ("thanks!") are never parsed
-// into a second booking.
+// Marks a reservation card as finished: booked or refused, no buttons left.
 export const CLOSED_METADATA = { event_type: "reservation_closed", event_payload: {} };
-
-// Marks the bot's post of a member's /reserve request, so the thread logic
-// reads it as the member's words rather than the bot's.
-export const REQUEST_EVENT_TYPE = "reservation_request";
-
-// Marks a bot question that leaves the request open. Every reply (question or
-// closing) names the member message it answers in event_payload.reply_to, so
-// an SQS redelivery of that message is recognised and never handled twice.
-export const ASK_EVENT_TYPE = "reservation_ask";
-
-// Marks an aside to the member (a resend note) that belongs to no request, so
-// it is left out of every transcript.
-export const NOTE_EVENT_TYPE = "reservation_note";
 
 // Marks the one living digest post per period, so it can be found and edited.
 export const DIGEST_EVENT_TYPE = "reservation_digest";

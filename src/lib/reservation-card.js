@@ -93,13 +93,22 @@ export function closedMessage(text) {
   return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }], metadata: CLOSED_METADATA };
 }
 
+function button(message, actionId) {
+  for (const b of message?.blocks || []) {
+    if (b.type !== "actions") continue;
+    const found = b.elements.find((e) => e.action_id === actionId);
+    if (found) return found;
+  }
+  return null;
+}
+
 // The Book value on a card as it stands now; null once it is closed, edited
 // into a state that can't be booked, or gone.
 export function openBookValue(message) {
-  for (const b of message?.blocks || []) {
-    if (b.type !== "actions") continue;
-    const book = b.elements.find((e) => e.action_id === BOOK_ACTION);
-    if (book) return book.value;
-  }
-  return null;
+  return button(message, BOOK_ACTION)?.value ?? null;
+}
+
+// Every open card has Edit; a closed one has no buttons.
+export function isOpenCard(message) {
+  return !!button(message, EDIT_ACTION);
 }

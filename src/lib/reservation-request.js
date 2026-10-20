@@ -56,6 +56,21 @@ export function normalizeRequest(raw, catalog) {
   };
 }
 
+const CHATTER = /^(thanks?( you)?( so much)?|thank you|thx|ty|ok(ay)?|k|cool|nice|great|awesome|perfect|yes|yep|yeah|no|nope|lol|ha(ha)+|sounds good|got it|will do|np|no problem)$/;
+
+// #reservations is read whole, so obvious chatter is dropped before it costs
+// a model call. Anything less obvious goes to the parser, which says "other".
+export function isIgnorableChatter(text) {
+  const t = String(text ?? "")
+    .toLowerCase()
+    .replace(/:[a-z0-9_+-]+:/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return !t || CHATTER.test(t);
+}
+
 export function missingFields(req) {
   const missing = [];
   if (req.items.length === 0) missing.push("what to book");
