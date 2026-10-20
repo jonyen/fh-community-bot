@@ -20,9 +20,6 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
     }
-    if (reservationsHandler?.handleCommand && slackEnvelope.command === "/reserve") {
-      await reservationsHandler.handleCommand({ envelope: slackEnvelope, client });
-    }
     if (reservationsHandler?.disconnect && slackEnvelope.command === "/reservations-disconnect") {
       await reservationsHandler.disconnect({
         userId: slackEnvelope.user_id, channel: slackEnvelope.channel_id, client, responseUrl: slackEnvelope.response_url,
@@ -45,17 +42,20 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     if (creaTicketHandler) {
       await creaTicketHandler.handleDraftAction({ payload: slackEnvelope.payload, client });
     }
+    if (reservationsHandler?.handleCardAction) {
+      await reservationsHandler.handleCardAction({ payload: slackEnvelope.payload, client });
+    }
+    return;
+  }
+
+  // The reservation card's Edit modal was submitted.
+  if (slackEnvelope.type === "view_submission") {
+    if (reservationsHandler?.handleModalSubmit) await reservationsHandler.handleModalSubmit({ payload: slackEnvelope.payload, client });
     return;
   }
 
   const event = slackEnvelope.event;
   if (!event) return;
-
-  // DMs belong to the reservations flow alone; with no handler they are dropped.
-  if (event.channel_type === "im") {
-    if (reservationsHandler && event.type === "message") await reservationsHandler.handleMessage({ event, client });
-    return;
-  }
 
   // #reservations belongs to the reservations flow alone. A mention there
   // arrives as both app_mention and message; only the message is handled.

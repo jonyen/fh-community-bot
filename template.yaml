@@ -77,6 +77,12 @@ Resources:
         Variables:
           SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
           EVENT_QUEUE_URL:      !Ref EventQueue
+          # The reservation card's Edit modal and item typeahead are answered
+          # here, inside Slack's 3-second limit.
+          SLACK_BOT_TOKEN:         !Ref SlackBotToken
+          RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
+          ROOM_REQUESTS_SHEET_ID:  !Ref RoomRequestsSheetId
+          KITCHEN_SHEET_ID:        !Ref KitchenSheetId
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
