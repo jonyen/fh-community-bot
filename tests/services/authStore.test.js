@@ -129,3 +129,47 @@ describe("booking claims", () => {
     await expect(store.claimBooking("k")).rejects.toThrow("throttled");
   });
 });
+
+describe("booking ledger", () => {
+  const make = () => {
+    const ddb = fakeDdb();
+    return { ddb, store: createAuthStore({ ddb, kms: {}, tableName: "T", keyId: "K", now: () => 1_000_000 }) };
+  };
+  const ref = (date, n = 1) => ({ backend: "gcal", date, id: `e${n}` });
+
+  it("records two refs and reads both back", async () => {
+    const { store } = make();
+    await store.recordBooking("U1", ref("2026-10-21", 1), { today: "2026-10-20" });
+    await store.recordBooking("U1", ref("2026-10-22", 2), { today: "2026-10-20" });
+    expect(await store.bookingsFor("U1", { today: "2026-10-20" })).toEqual([ref("2026-10-21", 1), ref("2026-10-22", 2)]);
+  });
+
+  it("hides past refs on read and drops them on the next write", async () => {
+    const { ddb, store } = make();
+    await store.recordBooking("U1", ref("2026-10-20", 1), { today: "2026-10-20" });
+    expect(await store.bookingsFor("U1", { today: "2026-10-21" })).toEqual([]);
+    await store.recordBooking("U1", ref("2026-10-22", 2), { today: "2026-10-21" });
+    expect(ddb.items.get("bookings#U1").refs).toEqual([ref("2026-10-22", 2)]);
+  });
+
+  it("keeps the newest 50 of 51 records", async () => {
+    const { store } = make();
+    for (let n = 1; n <= 51; n++) await store.recordBooking("U1", ref("2026-11-01", n), { today: "2026-10-20" });
+    const refs = await store.bookingsFor("U1", { today: "2026-10-20" });
+    expect(refs).toHaveLength(50);
+    expect(refs[0].id).toBe("e2");
+    expect(refs[49].id).toBe("e51");
+  });
+
+  it("expires the row after the latest ref date", async () => {
+    const { ddb, store } = make();
+    await store.recordBooking("U1", ref("2026-10-21", 1), { today: "2026-10-20" });
+    await store.recordBooking("U1", ref("2026-10-25", 2), { today: "2026-10-20" });
+    expect(ddb.items.get("bookings#U1").expiresAt).toBeGreaterThan(Date.parse("2026-10-26T00:00:00Z") / 1000 - 1);
+  });
+
+  it("returns [] for an unknown user", async () => {
+    const { store } = make();
+    expect(await store.bookingsFor("U404", { today: "2026-10-20" })).toEqual([]);
+  });
+});

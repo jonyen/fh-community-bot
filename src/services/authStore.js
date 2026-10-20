@@ -11,6 +11,7 @@ export const PENDING_TTL_S = 1800;
 export const STATE_TTL_S = 600;
 // Long past any SQS redelivery; only there so old claims are cleared.
 export const BOOKING_CLAIM_TTL_S = 7 * 86400;
+export const MAX_BOOKING_REFS = 50;
 
 export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.now() }) {
   const nowS = () => Math.floor(now() / 1000);
@@ -112,5 +113,26 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     }
   }
 
-  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking };
+  // Remembers a booking the bot made for this member so "what do I have
+  // booked?" and Cancel can find it later. Past refs are pruned on each write.
+  // The row expires two days after the latest ref date (a day of slack).
+  async function recordBooking(slackUserId, ref, { today }) {
+    const pk = `bookings#${slackUserId}`;
+    const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk } }));
+    const kept = (live(Item) ? Item.refs : []).filter((r) => r.date >= today);
+    const refs = [...kept, ref].slice(-MAX_BOOKING_REFS);
+    const latest = refs.reduce((max, r) => (r.date > max ? r.date : max), refs[0].date);
+    await ddb.send(new PutCommand({
+      TableName: tableName,
+      Item: { pk, refs, expiresAt: Date.parse(`${latest}T00:00:00Z`) / 1000 + 2 * 86400 },
+    }));
+  }
+
+  async function bookingsFor(slackUserId, { today }) {
+    const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk: `bookings#${slackUserId}` } }));
+    if (!live(Item)) return [];
+    return Item.refs.filter((r) => r.date >= today);
+  }
+
+  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking, recordBooking, bookingsFor };
 }
