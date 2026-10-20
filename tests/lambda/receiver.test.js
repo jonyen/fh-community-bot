@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import crypto from "node:crypto";
 
 const sendMock = vi.fn();
@@ -69,7 +69,7 @@ describe("receiver.handler", () => {
 
   it("groups an event by the Slack user who sent it, so one member's messages run in order", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
-    const body = JSON.stringify({ type: "event_callback", event: { type: "message", channel_type: "im", user: "U7", channel: "D7", text: "Saturday", ts: "1.1" } });
+    const body = JSON.stringify({ type: "event_callback", event: { type: "message", user: "U7", channel: "C7", text: "Saturday", thread_ts: "1.0", ts: "1.1" } });
     const ts = Math.floor(Date.now() / 1000).toString();
     await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
     expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("U7");
@@ -221,9 +221,9 @@ describe("receiver.handler", () => {
     expect(sent.payload.actions[0].action_id).toBe("submit_maintenance_form");
   });
 
-  it("acks and drops non-block_actions interactivity payloads", async () => {
+  it("acks and drops interactivity payloads nothing handles", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
-    const body = `payload=${encodeURIComponent(JSON.stringify({ type: "view_submission" }))}`;
+    const body = `payload=${encodeURIComponent(JSON.stringify({ type: "view_closed" }))}`;
     const ts = Math.floor(Date.now() / 1000).toString();
     const res = await handler({
       body,
@@ -235,6 +235,24 @@ describe("receiver.handler", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("enqueues a view_submission, grouped by user", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const submission = { type: "view_submission", user: { id: "U1" }, view: { callback_id: "other_modal" } };
+    const body = `payload=${encodeURIComponent(JSON.stringify(submission))}`;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler({
+      body,
+      headers: {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(body, ts),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    });
+    expect(res).toEqual({ statusCode: 200, body: "" });
+    expect(JSON.parse(sendMock.mock.calls[0][0].input.MessageBody)).toEqual({ type: "view_submission", payload: submission });
+    expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("U1");
   });
 
   it("400s a malformed interactivity payload", async () => {
@@ -372,24 +390,102 @@ describe("shouldEnqueueEvent — reactions", () => {
 });
 
 describe("shouldEnqueueEvent for #reservations", () => {
-  it("drops top-level channel chatter: requests come through /reserve", async () => {
+  beforeEach(() => {
     process.env.RESERVATIONS_CHANNEL_ID = "CRES";
-    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
-    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "book the MPR" } })).toBe(false);
+  });
+  afterEach(() => {
     delete process.env.RESERVATIONS_CHANNEL_ID;
   });
-  it("still enqueues thread replies there", async () => {
+
+  it("enqueues every top-level human message there", async () => {
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
-    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", text: "Saturday", thread_ts: "1.1", ts: "1.2" } })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", user: "U1", text: "book the MPR", ts: "1.1" } })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { type: "message", subtype: "file_share", channel: "CRES", user: "U1", text: "book this", ts: "1.1" } })).toBe(true);
+  });
+
+  it("drops thread replies, bot posts and edits there", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    const base = { type: "message", channel: "CRES", user: "U1", text: "Saturday", ts: "1.2" };
+    expect(shouldEnqueueEvent({ event: { ...base, thread_ts: "1.1" } })).toBe(false);
+    expect(shouldEnqueueEvent({ event: { ...base, bot_id: "B1" } })).toBe(false);
+    expect(shouldEnqueueEvent({ event: { ...base, subtype: "message_changed" } })).toBe(false);
   });
 });
 
 describe("shouldEnqueueEvent — DMs", () => {
-  it("enqueues a top-level DM, but not bot or edited ones", async () => {
+  it("drops DMs: reservations no longer talk in DMs", async () => {
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
-    const dm = { type: "message", channel_type: "im", text: "Saturday" };
-    expect(shouldEnqueueEvent({ event: dm })).toBe(true);
-    expect(shouldEnqueueEvent({ event: { ...dm, bot_id: "B1" } })).toBe(false);
-    expect(shouldEnqueueEvent({ event: { ...dm, subtype: "message_changed" } })).toBe(false);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel_type: "im", text: "Saturday" } })).toBe(false);
+    expect(shouldEnqueueEvent({ event: { type: "message", channel_type: "im", text: "Saturday", thread_ts: "1.1" } })).toBe(false);
+  });
+});
+
+describe("reservation card interactions in the receiver", () => {
+  const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
+  const REQ = { intent: "book", items: [SET2], ambiguous: [], unmatched: [], date: "2026-10-17", toDate: null, start: 840, end: 960, title: "Youth night", ministry: null, appliances: {} };
+  let fetchSpy;
+
+  beforeEach(async () => {
+    sendMock.mockReset();
+    sendMock.mockResolvedValue({});
+    process.env.SLACK_SIGNING_SECRET = SECRET;
+    process.env.EVENT_QUEUE_URL = "https://sqs.example/q";
+    process.env.SLACK_BOT_TOKEN = "xoxb-test";
+    process.env.RESERVATIONS_CHANNEL_ID = "CRES";
+    process.env.RESOURCE_CALENDARS = JSON.stringify({ "DMV Tech Equipment-G-Tech Set 2": "t2" });
+    const { _resetReceiverCatalogForTests } = await import("../../src/lambda/receiver.js");
+    _resetReceiverCatalogForTests();
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({ status: 200, json: async () => ({ ok: true }) });
+  });
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    delete process.env.RESERVATIONS_CHANNEL_ID;
+    delete process.env.RESOURCE_CALENDARS;
+  });
+
+  async function post(payload) {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = `payload=${encodeURIComponent(JSON.stringify(payload))}`;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    return handler({ body, headers: { "x-slack-request-timestamp": ts, "x-slack-signature": sign(body, ts), "content-type": "application/x-www-form-urlencoded" } });
+  }
+
+  it("opens the Edit modal itself for the requester and enqueues nothing", async () => {
+    const { cardMessage } = await import("../../src/lib/reservation-card.js");
+    const card = cardMessage({ user: "U9", req: REQ, assessment: { state: "free" } });
+    const edit = card.blocks[1].elements[1];
+    const res = await post({ type: "block_actions", trigger_id: "TRIG", user: { id: "U9" }, channel: { id: "CRES" }, container: { message_ts: "200.2" }, message: { ts: "200.2", thread_ts: "200.1" }, actions: [edit] });
+    expect(res).toEqual({ statusCode: 200, body: "" });
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith("https://slack.com/api/views.open", expect.objectContaining({
+      method: "POST", headers: expect.objectContaining({ Authorization: "Bearer xoxb-test" }),
+    }));
+    const sent = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(sent.trigger_id).toBe("TRIG");
+    expect(sent.view.callback_id).toBe("reservation_edit_modal");
+  });
+
+  it("tells the member privately when the form can't open", async () => {
+    fetchSpy.mockResolvedValueOnce({ status: 200, json: async () => ({ ok: false, error: "expired_trigger_id" }) });
+    const { cardMessage } = await import("../../src/lib/reservation-card.js");
+    const edit = cardMessage({ user: "U9", req: REQ, assessment: { state: "free" } }).blocks[1].elements[1];
+    await post({ type: "block_actions", trigger_id: "TRIG", response_url: "https://hooks.slack/a", user: { id: "U9" }, channel: { id: "CRES" }, container: { message_ts: "200.2" }, message: { ts: "200.2" }, actions: [edit] });
+    expect(fetchSpy.mock.calls[1][0]).toBe("https://hooks.slack/a");
+    expect(JSON.parse(fetchSpy.mock.calls[1][1].body)).toEqual({ response_type: "ephemeral", replace_original: false, text: "I couldn't open the edit form. Please press Edit again." });
+  });
+
+  it("answers the item typeahead", async () => {
+    const res = await post({ type: "block_suggestion", action_id: "reservation_items", value: "set" });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ options: [{ text: { type: "plain_text", text: "Tech Set 2" }, value: "Tech Set 2" }] });
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("enqueues a Book press", async () => {
+    const { cardMessage } = await import("../../src/lib/reservation-card.js");
+    const book = cardMessage({ user: "U9", req: REQ, assessment: { state: "free" } }).blocks[1].elements[0];
+    await post({ type: "block_actions", user: { id: "U9" }, actions: [book] });
+    expect(JSON.parse(sendMock.mock.calls[0][0].input.MessageBody).type).toBe("block_actions");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

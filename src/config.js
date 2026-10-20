@@ -79,7 +79,7 @@ function loadJsonConfig(fileName, rawEnv, fallback) {
 
 // #reservations is on only when its channel is set. Each backend is on only
 // when its own id (or calendar map) is set.
-function loadReservations() {
+export function loadReservations() {
   const channelId = process.env.RESERVATIONS_CHANNEL_ID;
   if (!channelId) return null;
   const calendars = loadJsonConfig("resource-calendars.json", process.env.RESOURCE_CALENDARS, {});

@@ -404,33 +404,37 @@ describe("dispatch for connected accounts", () => {
   });
 });
 
-describe("dispatch /reserve", () => {
-  it("routes /reserve to the reservations handler", async () => {
-    const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn(), handleCommand: vi.fn().mockResolvedValue(), resume: vi.fn(), disconnect: vi.fn() };
-    const client = makeClient();
+describe("dispatch reservation cards", () => {
+  const makeHandler = () => ({ channelId: "CRES", handleMessage: vi.fn(), handleCardAction: vi.fn().mockResolvedValue(), handleModalSubmit: vi.fn().mockResolvedValue(), resume: vi.fn(), disconnect: vi.fn() });
+
+  it("no longer routes /reserve", async () => {
+    const reservationsHandler = { ...makeHandler(), handleCommand: vi.fn() };
     const envelope = { type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "C1", text: "the MPR sat", response_url: "https://r" };
-    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), reservationsHandler, client });
-    expect(reservationsHandler.handleCommand).toHaveBeenCalledWith({ envelope, client });
+    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), reservationsHandler, client: makeClient() });
+    expect(reservationsHandler.handleCommand).not.toHaveBeenCalled();
   });
-});
 
-describe("dispatch DMs", () => {
-  const dm = { type: "message", channel_type: "im", channel: "D1", user: "U9", ts: "2.2", thread_ts: "1.1", text: "who is a woman here" };
-
-  it("routes a threaded DM to the reservations handler only", async () => {
-    const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn().mockResolvedValue() };
-    const handler = vi.fn();
-    const genderHandler = vi.fn();
+  it("hands block_actions to the card handler too", async () => {
+    const reservationsHandler = makeHandler();
+    const maintenanceFormHandler = vi.fn().mockResolvedValue();
     const client = makeClient();
-    await dispatchSlackEvent({ slackEnvelope: { event: dm }, handler, genderHandler, reservationsHandler, client });
-    expect(reservationsHandler.handleMessage).toHaveBeenCalledWith({ event: dm, client });
-    expect(handler).not.toHaveBeenCalled();
-    expect(genderHandler).not.toHaveBeenCalled();
+    const payload = { type: "block_actions", actions: [{ action_id: "reservation_book" }] };
+    await dispatchSlackEvent({ slackEnvelope: { type: "block_actions", payload }, handler: vi.fn(), maintenanceFormHandler, reservationsHandler, client });
+    expect(maintenanceFormHandler).toHaveBeenCalledWith({ payload, client });
+    expect(reservationsHandler.handleCardAction).toHaveBeenCalledWith({ payload, client });
   });
 
-  it("drops a DM when there is no reservations handler", async () => {
+  it("routes a view_submission to the modal handler", async () => {
+    const reservationsHandler = makeHandler();
+    const client = makeClient();
+    const payload = { type: "view_submission", view: { callback_id: "reservation_edit_modal" } };
+    await dispatchSlackEvent({ slackEnvelope: { type: "view_submission", payload }, handler: vi.fn(), reservationsHandler, client });
+    expect(reservationsHandler.handleModalSubmit).toHaveBeenCalledWith({ payload, client });
+  });
+
+  it("drops a view_submission when reservations are off", async () => {
     const handler = vi.fn();
-    await dispatchSlackEvent({ slackEnvelope: { event: dm }, handler, client: makeClient() });
+    await dispatchSlackEvent({ slackEnvelope: { type: "view_submission", payload: {} }, handler, client: makeClient() });
     expect(handler).not.toHaveBeenCalled();
   });
 });

@@ -2,8 +2,58 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { verifySlackSignature } from "./slack-signature.js";
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
 import { isCreaTicketReaction } from "../lib/crea-ticket.js";
+import { loadReservations } from "../config.js";
+import { buildCatalog } from "../lib/reservation-catalog.js";
+import { buildRmsCatalog } from "../lib/rms-catalog.js";
+import { handleReservationInteraction } from "./reservation-interactions.js";
 
 const sqs = new SQSClient({});
+
+// The bookable items, for the Edit modal and its typeahead. Built the same
+// way as the worker's, from the bundled config; null when reservations are off.
+let reservationCatalog;
+function receiverCatalog() {
+  if (reservationCatalog === undefined) {
+    const res = loadReservations();
+    reservationCatalog = res
+      ? buildCatalog({ rooms: !!res.roomsSheetId, kitchen: !!res.kitchenSheetId, rms: buildRmsCatalog(res.resourceCalendars) })
+      : null;
+  }
+  return reservationCatalog;
+}
+
+export function _resetReceiverCatalogForTests() {
+  reservationCatalog = undefined;
+}
+
+// views.open must happen before the trigger_id expires, so the receiver calls
+// Slack directly instead of loading the Web API client.
+async function openView({ trigger_id, view, response_url }) {
+  const res = await fetch("https://slack.com/api/views.open", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ trigger_id, view }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (data.ok) return;
+  console.log(`[receiver] views.open failed: ${data.error || res.status}`);
+  if (!response_url) return;
+  await fetch(response_url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ response_type: "ephemeral", replace_original: false, text: "I couldn't open the edit form. Please press Edit again." }),
+  }).catch(() => {});
+}
+
+function enqueue(body, groupId) {
+  return sqs.send(
+    new SendMessageCommand({
+      QueueUrl: process.env.EVENT_QUEUE_URL,
+      MessageBody: body,
+      MessageGroupId: groupId || "slack",
+    })
+  );
+}
 
 function getHeader(headers, name) {
   if (!headers) return undefined;
@@ -53,8 +103,13 @@ export function shouldEnqueueEvent(parsed) {
   if (event.type === "reaction_added") return isCreaTicketReaction(event.reaction);
   if (event.type !== "message") return true;
   if (event.bot_id) return false; // never enqueue our own / other bots' messages
-  // DMs belong to the reservations flow; skip edits/deletes and other subtypes.
-  if (event.channel_type === "im") return !event.subtype;
+  // #reservations: every top-level message is a possible request. Thread
+  // replies there are people talking to each other.
+  const reservationsChannel = process.env.RESERVATIONS_CHANNEL_ID;
+  if (reservationsChannel && event.channel === reservationsChannel) {
+    return !event.thread_ts && (!event.subtype || event.subtype === "file_share");
+  }
+  if (event.channel_type === "im") return false;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;
   if (/<@[A-Z0-9_]+>/.test(text)) return true;
@@ -75,7 +130,6 @@ function parseSlashCommand(body) {
     team_id: params.get("team_id"),
     response_url: params.get("response_url"),
     text: params.get("text") || "",
-    // Unique per invocation; the worker keys its booking claim on it.
     trigger_id: params.get("trigger_id") || undefined,
   };
 }
@@ -115,16 +169,20 @@ export async function handler(event) {
       } catch {
         return { statusCode: 400, body: "invalid interactivity payload" };
       }
-      if (parsedPayload.type !== "block_actions") {
+      const catalog = receiverCatalog();
+      if (catalog) {
+        const result = await handleReservationInteraction(parsedPayload, { catalog, openView });
+        if (result.handled) {
+          return result.response
+            ? { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(result.response) }
+            : { statusCode: 200, body: "" };
+        }
+      }
+      // An empty 200 to a view_submission closes the modal.
+      if (parsedPayload.type !== "block_actions" && parsedPayload.type !== "view_submission") {
         return { statusCode: 200, body: "" };
       }
-      await sqs.send(
-        new SendMessageCommand({
-          QueueUrl: process.env.EVENT_QUEUE_URL,
-          MessageBody: JSON.stringify({ type: "block_actions", payload: parsedPayload }),
-          MessageGroupId: parsedPayload.user?.id || "slack",
-        })
-      );
+      await enqueue(JSON.stringify({ type: parsedPayload.type, payload: parsedPayload }), parsedPayload.user?.id);
       return { statusCode: 200, body: "" };
     }
 

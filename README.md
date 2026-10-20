@@ -9,7 +9,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
-- **Reservations** — `/reserve` books, checks and lists rooms, the kitchen and RMS equipment in plain English, in a private conversation in the member's DM with the bot; first come, first served. #reservations holds the weekday and weekend digests (see below)
+- **Reservations** — members post plain messages in #reservations to book, check and list rooms, the kitchen and RMS equipment; questions are answered in the thread, and booking requests get a card with **Book** and **Edit**. First come, first served. #reservations also holds the weekday and weekend digests (see below)
 
 ## Architecture
 
@@ -29,7 +29,8 @@ conversation state can't live durably in process memory. Report submission
 avoids this entirely: the in-thread form message carries its own state, and the
 `block_actions` payload Slack sends on Submit contains every field value. The
 same endpoint receives both Events API posts and interactivity payloads
-(enable **Interactivity** in the Slack app config with the same Request URL).
+(enable **Interactivity** in the Slack app config with the same Request URL, and
+set the **Options Load URL** to it too, for the reservation form's item search).
 
 Slack redelivers a payload up to three times when it doesn't get a response
 within those 3 seconds, which a cold start can miss. Duplicates are suppressed
@@ -200,26 +201,35 @@ Before the gender feature works in production, update the Slack app config:
 
 ## #reservations
 
-The bot is the front door for FH's four reservation systems. Members ask with
-the `/reserve` slash command, in plain English, from any channel or DM:
+The bot is the front door for FH's four reservation systems. Members post a
+plain message in #reservations, no command or @mention needed:
 
-- `/reserve Tech Set 2 Sat 2-4pm for youth night`
-- `/reserve is the MPR free Wednesday 7-9?`
-- `/reserve who has the pickleball set this weekend?`
+- `Tech Set 2 Sat 2-4pm for youth night`
+- `is the MPR free Wednesday 7-9?`
+- `who has the pickleball set this weekend?`
 
-The conversation is private: the bot posts the request in the member's DM with
-the bot ("📅 You asked: …") and answers there. Follow-up answers ("Saturday",
-"5-7 instead") are plain messages in the same DM. A plain DM with nothing open
-also starts a request; chatter is ignored. A request closes when it is
-answered, booked or refused, after 2 hours idle, or when the member says
-"start over" or "cancel".
+The bot reads every top-level message and replies in its thread. Chatter gets
+no reply. Thread replies are left to people, so members can sort out a conflict
+there without the bot joining in.
 
-The bot parses each request with Claude Haiku, checks for a conflict, and writes
-the booking straight into the system that owns the item. Bookings are first
-come, first served, with no approver. If the slot is taken, nothing is written
-and the bot names who holds it. When details are missing, it asks in the
-DM. The confirmation goes to the DM; #reservations sees the booking in its
-digest.
+- **Questions** (is it free, who has it, what's booked, "what speakers are
+  there?") are answered in the thread.
+- **Booking requests** get a card: what the bot understood, and whether the
+  slot is free. If it is, the card has **Book** and **Edit**. If it is taken,
+  incomplete or unclear, the card says why and has only **Edit**.
+- **Book** checks for a conflict again and writes the booking straight into the
+  system that owns the item. The card is replaced by the confirmation.
+  #reservations sees the booking in its digest; the confirmation is not
+  broadcast.
+- **Edit** opens a form pre-filled from the card (item search, day, start, end,
+  what it's for, and kitchen equipment for kitchen requests). Submitting it
+  updates the card; it does not book.
+- Only the member who asked can press Book or Edit.
+
+The request rides in the card's buttons, so the bot stores nothing. A second
+press, or a press on a card that was edited since, does nothing. Bookings are
+first come, first served, with no approver. Members who want to book privately
+use the sheet or calendar directly; the digests pick those bookings up.
 
 | Category | Owner | Backend |
 | --- | --- | --- |

@@ -1,29 +1,24 @@
 // src/events/reservations.js
-// Reservations: members ask in plain English, in their DM with the bot, and it
-// books first come first served. /reserve (or a plain DM with nothing open)
-// posts a start marker; the conversation runs from there. It is stateless: each
-// DM re-reads the history back to the marker and re-parses it whole, and the
-// bot's closing reply carries CLOSED_METADATA so it is never acted on twice.
-// #reservations itself holds only the living digests; its threads are ignored.
+// Reservations: members post plain messages in #reservations and the bot
+// replies in each message's thread, first come first served. Questions get an
+// answer. A booking request gets a card (what the bot understood, free or not,
+// Book and Edit); the request rides in the card's buttons, so nothing is
+// stored. Book writes; Edit's modal only updates the card. A booked or refused
+// card is replaced by its outcome, with no buttons left.
 import { log, metric } from "../lib/logger.js";
-import { openRequest, isEscape } from "../lib/dm-conversation.js";
 import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
-import { normalizeRequest, missingFields } from "../lib/reservation-request.js";
-import { reservationLine, BOT_PERSONA, CLOSED_METADATA, REQUEST_EVENT_TYPE, ASK_EVENT_TYPE, NOTE_EVENT_TYPE } from "../lib/reservation-format.js";
+import { normalizeRequest, missingFields, isIgnorableChatter } from "../lib/reservation-request.js";
+import { reservationLine, BOT_PERSONA } from "../lib/reservation-format.js";
+import { cardMessage, closedMessage, decodeCard, openBookValue, isOpenCard, BOOK_ACTION, EDIT_ACTION } from "../lib/reservation-card.js";
+import { readEditModal, MODAL_CALLBACK } from "../lib/reservation-modal.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
-const USAGE = "Try `/reserve the MPR Sat 2–4pm for youth night`, `/reserve is Tech Set 2 free Friday 7pm?`, `/reserve what's booked this weekend?` or `/reserve what speakers are there?`";
 
 export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null }) {
   const catalogText = catalogPromptText(catalog);
-
-  // The start marker is the bot's post, but it carries the member's words.
-  const line = (m) => (m.metadata?.event_type === REQUEST_EVENT_TYPE
-    ? `Member: ${m.metadata.event_payload?.text || ""}`
-    : `${m.bot_id ? "Bot" : "Member"}: ${m.text || ""}`);
 
   async function withMentions(client, reservations) {
     return Promise.all(reservations.map(async (r) => {
@@ -37,30 +32,30 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }));
   }
 
-  // ask leaves the request open for the member's answer; done closes it.
-  // Both name the member message they answer (replyTo), so its redelivery
-  // is dropped. threadTs is only set for connect rows saved before replies
-  // moved to the DM.
-  function makeSay(client, channel, { threadTs = null, replyTo = null } = {}) {
-    const payload = replyTo ? { reply_to: replyTo } : {};
-    const post = (text, extra) => client.chat.postMessage({
-      channel, text, ...BOT_PERSONA, ...(threadTs ? { thread_ts: threadTs } : {}), ...extra,
-    });
+  // Replies in the thread under the member's message.
+  function threadSay(client, channel, threadTs) {
+    const post = (text, extra = {}) => client.chat.postMessage({ channel, text, ...BOT_PERSONA, ...(threadTs ? { thread_ts: threadTs } : {}), ...extra });
+    return { channel, threadTs, cardTs: null, done: (text) => post(text), prompt: (text, blocks) => post(text, { blocks }) };
+  }
+
+  // A card's outcome replaces the card. The connect prompt is for the
+  // requester alone, so it is ephemeral.
+  function cardSay(client, { channel, threadTs, cardTs, user }) {
     return {
-      channel,
-      threadTs,
-      ask: (text, extra = {}) => post(text, { metadata: { event_type: ASK_EVENT_TYPE, event_payload: payload }, ...extra }),
-      done: (text) => post(text, { metadata: { event_type: CLOSED_METADATA.event_type, event_payload: payload } }),
-      // An aside outside any request: left out of transcripts, closes nothing.
-      note: (text) => post(text, { metadata: { event_type: NOTE_EVENT_TYPE, event_payload: payload } }),
+      channel, threadTs, cardTs,
+      done: (text) => client.chat.update({ channel, ts: cardTs, ...closedMessage(text) }),
+      prompt: (text, blocks) => client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text, blocks, ...BOT_PERSONA }),
     };
   }
 
-  function postStartMarker(client, channel, userId, text, replyTo = null) {
-    return client.chat.postMessage({
-      channel, text: `📅 You asked: ${text}`, ...BOT_PERSONA,
-      metadata: { event_type: REQUEST_EVENT_TYPE, event_payload: { user: userId, text, ...(replyTo ? { reply_to: replyTo } : {}) } },
-    });
+  function updateCard(client, { channel, cardTs, user, req, assessment }) {
+    return client.chat.update({ channel, ts: cardTs, ...cardMessage({ user, req, assessment }) });
+  }
+
+  // The card as it stands now, not as it was when the button was pressed.
+  async function readCard(client, channel, threadTs, cardTs) {
+    const res = await client.conversations.replies({ channel, ts: threadTs, limit: 200 });
+    return (res.messages || []).find((m) => m.ts === cardTs) || null;
   }
 
   function conflictText(req, conflicts) {
@@ -75,25 +70,46 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return `Google Calendar won't let your account book ${names}. Ask ${ownerFor(req.items[0])}.`;
   }
 
+  // What a card shows: whether the request can be booked as it stands.
+  async function assess(req, client) {
+    if (req.ambiguous.length) return { state: "ambiguous", ambiguous: req.ambiguous };
+    if (req.date && req.date < nyToday(now())) return { state: "past" };
+    const missing = missingFields(req);
+    if (missing.length) return { state: "missing", missing };
+    const backends = [...new Set(req.items.map((i) => i.backend))];
+    if (backends.length > 1) return { state: "mixed" };
+    const adapter = adapters[backends[0]];
+    const conflicts = await withMentions(client, await adapter.findConflicts({ date: req.date, start: req.start, end: req.end, items: req.items }));
+    return conflicts.length ? { state: "taken", conflicts, adapter } : { state: "free", adapter };
+  }
+
+  async function requesterFor(client, user) {
+    const info = await client.users.info({ user });
+    const profile = info.user?.profile || {};
+    return {
+      requesterName: profile.display_name || info.user?.real_name || "Someone",
+      requesterUserId: user,
+      phone: profile.phone || "",
+      slackEmail: profile.email || null,
+    };
+  }
+
   async function promptConnect({ req, adapter, requester, say, revoked }) {
     if (!requester.slackEmail) {
       return say.done(`I can't see an email on your Slack profile, so I can't connect your Google account. You can book directly: ${adapter.link}`);
     }
     const { nonce } = await connect.authStore.createPending({
       slackUserId: requester.requesterUserId, slackEmail: requester.slackEmail,
-      request: { req, requester, backend: adapter.backend }, channel: say.channel, threadTs: say.threadTs,
+      request: { req, requester, backend: adapter.backend, cardTs: say.cardTs }, channel: say.channel, threadTs: say.threadTs,
     });
     const url = connect.consentUrl({ state: nonce, loginHint: requester.slackEmail });
     const text = revoked
       ? "Your Google connection has expired. Connect again and I'll finish this booking as you."
       : "To book as you, connect your Google account once. I'll finish this booking as soon as you approve.";
-    // The DM is private, so the button needn't be ephemeral.
-    await say.ask(text, {
-      blocks: [
-        { type: "section", text: { type: "mrkdwn", text } },
-        { type: "actions", elements: [{ type: "button", action_id: "reservations_connect_google", style: "primary", text: { type: "plain_text", text: "Connect Google" }, url }] },
-      ],
-    });
+    await say.prompt(text, [
+      { type: "section", text: { type: "mrkdwn", text } },
+      { type: "actions", elements: [{ type: "button", action_id: "reservations_connect_google", style: "primary", text: { type: "plain_text", text: "Connect Google" }, url }] },
+    ]);
   }
 
   async function finishBooking({ req, adapter, requester, say, bookingKey = null }) {
@@ -110,7 +126,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       requesterName: requester.requesterName, requesterUserId: requester.requesterUserId, phone: requester.phone,
       appliances: req.appliances,
     };
-    // An earlier delivery of this same request already started writing: it
+    // An earlier delivery of this same press already started writing: it
     // timed out or crashed after book began. Writing again could book twice.
     if (bookingKey && claimBooking && !(await claimBooking(bookingKey))) {
       log.warn("booking already attempted", { bookingKey, backend: adapter.backend });
@@ -159,15 +175,22 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     // Deleted before booking: an SQS retry of this message finds nothing and
     // can never book twice.
     await connect.authStore.deletePending(pendingId);
-    const { req, requester, backend } = pending.request;
+    const { req, requester, backend, cardTs } = pending.request;
     const adapter = adapters[backend];
     if (!adapter) return;
-    const say = makeSay(client, pending.channel, { threadTs: pending.threadTs || null });
+    // Rows saved before cards (DM requests) have no card to update.
+    const say = cardTs
+      ? cardSay(client, { channel: pending.channel, threadTs: pending.threadTs, cardTs, user: requester.requesterUserId })
+      : threadSay(client, pending.channel, pending.threadTs || null);
     // The pending row is gone, so a thrown error here would be retried into
     // nothing. The member was told "booking is being made", so say so instead.
     try {
       const conflicts = await withMentions(client, await adapter.findConflicts({ date: req.date, start: req.start, end: req.end, items: req.items }));
-      if (conflicts.length) return say.done(conflictText(req, conflicts));
+      if (conflicts.length) {
+        if (!cardTs) return say.done(conflictText(req, conflicts));
+        const full = { ambiguous: [], unmatched: [], toDate: null, ...req };
+        return updateCard(client, { channel: pending.channel, cardTs, user: requester.requesterUserId, req: full, assessment: { state: "taken", conflicts } });
+      }
       return await finishBooking({ req, adapter, requester, say });
     } catch (error) {
       metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend, stage: "resume" } });
@@ -180,8 +203,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
   }
 
-  // Private reply to a slash command; falls back to response_url when the
-  // command came from a channel or DM the bot can't post in.
+  // Private reply to /reservations-disconnect; falls back to response_url
+  // when the command came from a channel or DM the bot can't post in.
   async function tellPrivately({ userId, channel, client, responseUrl, text }) {
     try {
       await client.chat.postEphemeral({ channel, user: userId, text, ...BOT_PERSONA });
@@ -200,36 +223,6 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const had = await connect.memberGoogle.revoke(userId);
     const text = had ? "Disconnected your Google account. Bookings will ask you to connect again." : "Your Google account wasn't connected.";
     return tellPrivately({ userId, channel, client, responseUrl, text });
-  }
-
-  // /reserve <text>: always a new request, in the member's DM. Posting to the
-  // user id lands in the DM, and Slack answers with the DM's channel id.
-  async function handleCommand({ envelope, client }) {
-    const userId = envelope.user_id;
-    const text = String(envelope.text || "").trim();
-    const where = { userId, channel: envelope.channel_id, client, responseUrl: envelope.response_url };
-    if (!text) return tellPrivately({ ...where, text: `${USAGE}\nI can book: ${categoryCounts(catalog)}.` });
-    let posted;
-    let dmId;
-    try {
-      // The bot's own DM with the member (needs im:write). Posting to a user
-      // id instead lands in Slack's read-only notifications DM.
-      dmId = (await client.conversations.open({ users: userId })).channel.id;
-      posted = await postStartMarker(client, dmId, userId, text);
-    } catch (error) {
-      log.error("reservation DM post failed", { userId, error });
-      return tellPrivately({ ...where, text: "I couldn't message you directly. Please open a DM with me and try again." });
-    }
-    if (envelope.channel_id !== dmId) {
-      // A message permalink opens inside the Slack app; app_redirect went
-      // through the browser.
-      const link = await client.chat.getPermalink({ channel: dmId, message_ts: posted.ts }).then((r) => r.permalink, () => null);
-      await tellPrivately({ ...where, text: link ? `Continuing in your DM with me: <${link}|open DM>` : "Continuing in your DM with me (FH Maintenance, under Apps)." });
-    }
-    const transcript = `Member: ${text}`;
-    const raw = await parse(transcript);
-    const bookingKey = envelope.trigger_id ? `cmd:${envelope.trigger_id}` : null;
-    return respond({ raw, transcript, user: userId, say: makeSay(client, dmId), client, bookingKey });
   }
 
   // "Who has the Transit?" with no period: each item's next booking that
@@ -267,7 +260,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       .filter(([, labels]) => labels.length > 0)
       .map(([name, labels]) => `${name}: ${labels.join(", ")}`);
     const more = req.items.length > FIND_CAP ? `\n+${req.items.length - FIND_CAP} more. Try a narrower word.` : "";
-    return say.done(`${lines.join("\n")}${more}\nTo book one: \`/reserve <name> <day> <time> for <what>\``);
+    return say.done(`${lines.join("\n")}${more}\nTo book one, post its name, the day, the time and what it's for.`);
   }
 
   async function handleQuery(req, say, client) {
@@ -307,117 +300,99 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return say.done(text);
   }
 
-  // A DM: continues the open request, or starts one. History holds only
-  // top-level messages, so a thread reply is added in by hand and treated as
-  // a plain message. Everything outside the DM (#reservations threads) is ignored.
+  function parse(text) {
+    const today = nyToday(now());
+    return llm.parseReservationRequest(`Member: ${text}`, { catalogText, today, weekday: weekdayName(today) });
+  }
+
+  // A top-level message in #reservations. Thread replies belong to people.
   async function handleMessage({ event, client }) {
-    if (event.channel_type !== "im" || event.bot_id || event.subtype || !String(event.text || "").trim()) return;
-    const res = await client.conversations.history({ channel: event.channel, limit: 50, include_all_metadata: true });
-    const history = res.messages || [];
-    const others = history.filter((m) => m.ts !== event.ts);
-    const answers = (m) => m.bot_id && m.metadata?.event_payload?.reply_to === event.ts;
-    // The bot already replied to this very message: an SQS redelivery.
-    // Handling it again could book twice.
-    if (others.some((m) => answers(m) && m.metadata.event_type !== REQUEST_EVENT_TYPE)) {
-      log.info("dm event already handled", { channel: event.channel, ts: event.ts });
+    // file_share is a message posted with an attachment; its text still counts.
+    if (event.channel !== channelId || event.thread_ts || event.bot_id || (event.subtype && event.subtype !== "file_share")) return;
+    const text = String(event.text || "").trim();
+    if (isIgnorableChatter(text)) return;
+    // An SQS redelivery: the bot already answered in this message's thread.
+    // If this read fails, the event fails and SQS retries it, rather than risk a second card.
+    const thread = await client.conversations.replies({ channel: event.channel, ts: event.ts, limit: 20 });
+    if ((thread.messages || []).some((m) => m.bot_id && m.ts !== event.ts)) {
+      log.info("reservation message already answered", { channel: event.channel, ts: event.ts });
       return;
     }
-    const say = makeSay(client, event.channel, { replyTo: event.ts });
-    const bookingKey = `dm:${event.channel}:${event.ts}`;
-    // Out of turn: a later message of theirs was already answered (this one
-    // sat in the dead letter queue, or was queued late). Merged now, it could
-    // land in the wrong request, so the member is asked to resend it.
-    const answered = new Set(others.filter((m) => m.bot_id).map((m) => m.metadata?.event_payload?.reply_to).filter(Boolean));
-    if (others.some((m) => !m.bot_id && Number(m.ts) > Number(event.ts) && answered.has(m.ts))) {
-      log.warn("dm event out of turn", { channel: event.channel, ts: event.ts });
-      return say.note(`Sorry, I missed your earlier message ("${event.text}"). Please send it again if you still need it.`);
-    }
-    // The queue runs a member's messages in order. Their later messages are
-    // still waiting their turn, so they are left out. A message handled after
-    // the bot answered an earlier one joins the conversation as it stands now:
-    // it is placed just after the newest message.
-    const seen = others.filter((m) => m.bot_id || Number(m.ts) < Number(event.ts));
-    const newest = Math.max(...seen.map((m) => Number(m.ts)));
-    const current = newest > Number(event.ts) ? { ...event, ts: (newest + 0.000001).toFixed(6) } : event;
-    const ownMarker = seen.find((m) => answers(m) && m.metadata.event_type === REQUEST_EVENT_TYPE);
-    const open = openRequest([current, ...seen], { currentTs: current.ts, nowMs: now().getTime() });
-    if (isEscape(event.text)) {
-      if (open) await say.done("Okay, starting fresh.");
-      return;
-    }
-    if (open) {
-      // A redelivery after only the start marker went out: the marker
-      // already carries this message's text.
-      const transcript = open
-        .filter((m) => !(ownMarker && m === current) && m.metadata?.event_type !== NOTE_EVENT_TYPE)
-        .map(line).join("\n");
-      return respond({ raw: await parse(transcript), transcript, user: event.user, say, client, bookingKey });
-    }
-    // Nothing open: chatter is ignored; anything else gets a start marker
-    // (metadata can't go on the member's own message) and is handled.
-    const transcript = `Member: ${event.text}`;
-    const raw = await parse(transcript);
-    if (raw && normalizeRequest(raw, catalog).intent === "other") return;
-    await postStartMarker(client, event.channel, event.user, event.text, event.ts);
-    return respond({ raw, transcript, user: event.user, say, client, bookingKey });
-  }
-
-  function parse(transcript) {
-    const today = nyToday(now());
-    return llm.parseReservationRequest(transcript, { catalogText, today, weekday: weekdayName(today) });
-  }
-
-  async function respond({ raw, transcript, user, say, client, bookingKey = null }) {
-    const today = nyToday(now());
-    if (!raw) return say.ask("Sorry, I couldn't read that. Please try again.");
+    const say = threadSay(client, event.channel, event.ts);
+    const raw = await parse(text);
+    if (!raw) return say.done("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
     if (req.intent === "other") return;
     // "Sat 2-4" is afternoon. The model is told so, but a small-hours time
     // nobody wrote "am" for is asked about rather than booked at 2 AM.
-    if (req.start != null && req.start < 7 * 60 && !/\d\s*(am|a\.m\.)|morning|sunrise/i.test(transcript)) {
+    if (req.start != null && req.start < 7 * 60 && !/\d\s*(am|a\.m\.)|morning|sunrise/i.test(text)) {
       req.start = null;
       req.end = null;
     }
 
     if (req.intent === "find") return find(req, say);
-
-    if (req.ambiguous.length) {
-      const a = req.ambiguous[0];
-      return say.ask(`Which one did you mean by "${a.phrase}": ${a.options.map((o) => o.label).join(", ")}?`);
-    }
-    if (req.unmatched.length && req.items.length === 0) {
+    if (req.unmatched.length && req.items.length === 0 && req.ambiguous.length === 0) {
       return say.done(`I don't know "${req.unmatched.join('", "')}". I can book rooms, the kitchen, tech sets, vehicles, and sports, outreach and accessories equipment.`);
     }
-    if (req.intent === "check" || req.intent === "list") return handleQuery(req, say, client);
-
-    if (req.date && req.date < today) {
-      return say.done(`${fmtDay(req.date)} has already passed. Please send the request again with the right date.`);
-    }
-    const missing = missingFields(req);
-    if (missing.length) {
-      const what = req.items.length ? req.items.map((i) => i.label).join(", ") : "that";
-      return say.ask(`Happy to book ${what}. I still need: ${missing.join(", ")}.`);
-    }
-    const backends = [...new Set(req.items.map((i) => i.backend))];
-    if (backends.length > 1) {
-      return say.done("Please send one request per kind of booking (rooms, kitchen, or equipment).");
-    }
-    const adapter = adapters[backends[0]];
-    const conflicts = await withMentions(client, await adapter.findConflicts({ date: req.date, start: req.start, end: req.end, items: req.items }));
-    if (conflicts.length) {
-      return say.done(conflictText(req, conflicts));
+    if (req.intent === "check" || req.intent === "list") {
+      if (req.ambiguous.length) {
+        const a = req.ambiguous[0];
+        return say.done(`Which one did you mean by "${a.phrase}": ${a.options.map((o) => o.label).join(", ")}? Ask again with its name.`);
+      }
+      return handleQuery(req, say, client);
     }
 
-    const info = await client.users.info({ user });
-    const profile = info.user?.profile || {};
-    const requester = {
-      requesterName: profile.display_name || info.user?.real_name || "Someone",
-      requesterUserId: user,
-      phone: profile.phone || "",
-      slackEmail: profile.email || null,
-    };
-    return finishBooking({ req, adapter, requester, say, bookingKey });
+    const assessment = await assess(req, client);
+    await client.chat.postMessage({ channel: event.channel, thread_ts: event.ts, ...BOT_PERSONA, ...cardMessage({ user: event.user, req, assessment }) });
   }
 
-  return { channelId, handleMessage, handleCommand, resume, disconnect };
+  // Book on a card, or anyone but the requester pressing Book or Edit. The
+  // requester's Edit is opened by the receiver, which has the trigger_id.
+  async function handleCardAction({ payload, client }) {
+    const action = (payload.actions || []).find((a) => a.action_id === BOOK_ACTION || a.action_id === EDIT_ACTION);
+    if (!action) return;
+    const card = decodeCard(action.value, catalog);
+    if (!card) return;
+    const channel = payload.channel?.id || payload.container?.channel_id;
+    const cardTs = payload.container?.message_ts || payload.message?.ts;
+    const threadTs = payload.message?.thread_ts || cardTs;
+    const userId = payload.user?.id;
+    if (userId !== card.user) {
+      return client.chat.postEphemeral({ channel, user: userId, thread_ts: threadTs, text: `Only <@${card.user}> can book this.`, ...BOT_PERSONA });
+    }
+    if (action.action_id !== BOOK_ACTION) return;
+    if (card.lost.length) {
+      return cardSay(client, { channel, threadTs, cardTs, user: card.user })
+        .done(`I can't book "${card.lost.join('", "')}" any more. Please post the request again.`);
+    }
+    // A member's presses run one at a time, so a second press finds the card
+    // already closed. A press on a card since edited carries an old value.
+    const current = await readCard(client, channel, threadTs, cardTs);
+    if (openBookValue(current) !== action.value) {
+      log.info("stale reservation card press", { channel, cardTs });
+      return;
+    }
+    const assessment = await assess(card.req, client);
+    if (assessment.state !== "free") {
+      return updateCard(client, { channel, cardTs, user: card.user, req: card.req, assessment });
+    }
+    const requester = await requesterFor(client, card.user);
+    const say = cardSay(client, { channel, threadTs, cardTs, user: card.user });
+    return finishBooking({ req: card.req, adapter: assessment.adapter, requester, say, bookingKey: `card:${channel}:${cardTs}` });
+  }
+
+  // The Edit modal was submitted: the card shows the new details. Nothing is booked.
+  async function handleModalSubmit({ payload, client }) {
+    if (payload.view?.callback_id !== MODAL_CALLBACK) return;
+    const { user, channel, threadTs, cardTs, req } = readEditModal(payload.view, catalog);
+    if (!user || payload.user?.id !== user || !channel || !cardTs) return;
+    const current = await readCard(client, channel, threadTs, cardTs);
+    if (!isOpenCard(current)) {
+      return client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text: "That request is already finished. Post a new message to book again.", ...BOT_PERSONA });
+    }
+    const assessment = await assess(req, client);
+    await updateCard(client, { channel, cardTs, user, req, assessment });
+  }
+
+  return { channelId, handleMessage, handleCardAction, handleModalSubmit, resume, disconnect };
 }
