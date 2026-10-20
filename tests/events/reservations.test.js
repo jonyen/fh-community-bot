@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
-import { BOOK_ACTION, EDIT_ACTION, CARD_EVENT_TYPE, decodeCard } from "../../src/lib/reservation-card.js";
+import { BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE, decodeCard, decodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
+import { log } from "../../src/lib/logger.js";
 import { buildEditModal, ITEM_ACTION } from "../../src/lib/reservation-modal.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
@@ -19,6 +20,7 @@ function makeAdapter(backend) {
     findConflicts: vi.fn().mockResolvedValue([]),
     listReservations: vi.fn().mockResolvedValue({ reservations: [], errors: [] }),
     book: vi.fn().mockResolvedValue({ status: "booked", link: `https://${backend}/item` }),
+    cancel: vi.fn().mockResolvedValue({ status: "cancelled", link: `https://${backend}/item` }),
   };
 }
 
@@ -132,7 +134,7 @@ describe("reservations handler", () => {
       expect(card).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, username: "FH Reservations", metadata: { event_type: CARD_EVENT_TYPE, event_payload: { user: "U9" } } });
       expect(card.reply_broadcast).toBeUndefined();
       expect(sectionText(card)).toBe("📅 *Tech Set 2* · Sat 10/17 · 2:00–4:00 PM · Youth night\n✅ Free");
-      expect(buttons(card).map((b) => b.action_id)).toEqual([BOOK_ACTION, EDIT_ACTION]);
+      expect(buttons(card).map((b) => b.action_id)).toEqual([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION]);
       expect(decodeCard(buttons(card)[0].value, CATALOG)).toMatchObject({ user: "U9", req: { items: [SET2], date: "2026-10-17", start: 840, end: 960, title: "Youth night" } });
       expect(livingDigest.refresh).not.toHaveBeenCalled();
     });
@@ -143,7 +145,7 @@ describe("reservations handler", () => {
       await h.handleMessage({ event: msg(), client });
       const [card] = posts();
       expect(sectionText(card)).toContain("❌ Taken:\n• 2:00–3:30 PM · Tech Set 2 · Fall rally (<@UALAN>)");
-      expect(buttons(card).map((b) => b.action_id)).toEqual([EDIT_ACTION]);
+      expect(buttons(card).map((b) => b.action_id)).toEqual([EDIT_ACTION, CANCEL_ACTION]);
     });
 
     it("lists missing details", async () => {
@@ -267,7 +269,7 @@ describe("reservations handler", () => {
       expect(adapters.rms.book).not.toHaveBeenCalled();
       const [u] = updates();
       expect(sectionText(u)).toContain("❌ Taken:");
-      expect(buttons(u).map((b) => b.action_id)).toEqual([EDIT_ACTION]);
+      expect(buttons(u).map((b) => b.action_id)).toEqual([EDIT_ACTION, CANCEL_ACTION]);
     });
 
     it("reports a backend write failure with the direct link", async () => {
@@ -319,6 +321,206 @@ describe("reservations handler", () => {
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: CARD_TS, bot_id: "B1", blocks: kitchen.blocks }] });
       await h.handleCardAction({ payload: press({ actions: [buttons(kitchen)[0]] }), client });
       expect(adapters.kitchen.book.mock.calls[0][0].appliances).toEqual({ airFryer: true });
+    });
+  });
+
+  describe("Cancel on an open card", () => {
+    let card;
+    beforeEach(async () => {
+      await h.handleMessage({ event: msg(), client });
+      card = posts()[0];
+      client.chat.postMessage.mockClear();
+      client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1", blocks: card.blocks }] });
+    });
+    const cancelButton = () => buttons(card).find((b) => b.action_id === CANCEL_ACTION);
+    const press = (o = {}) => ({
+      type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
+      container: { type: "message", message_ts: CARD_TS, channel_id: "CRES" },
+      message: { ts: CARD_TS, thread_ts: MSG_TS, blocks: card.blocks },
+      actions: [cancelButton()], ...o,
+    });
+
+    it("Cancel on an open card closes it with 🚫 Cancelled by <@U9>.", async () => {
+      await h.handleCardAction({ payload: press(), client });
+      expect(updates()).toEqual([{ channel: "CRES", ts: CARD_TS, text: "🚫 Cancelled by <@U9>.", blocks: [{ type: "section", text: { type: "mrkdwn", text: "🚫 Cancelled by <@U9>." } }], metadata: CLOSED_METADATA }]);
+      for (const a of Object.values(adapters)) {
+        expect(a.book).not.toHaveBeenCalled();
+        expect(a.cancel).not.toHaveBeenCalled();
+      }
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+      expect(livingDigest.refresh).not.toHaveBeenCalled();
+    });
+
+    it("Cancel by someone else is answered privately", async () => {
+      await h.handleCardAction({ payload: press({ user: { id: "U7" } }), client });
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U7", thread_ts: MSG_TS, text: "Only <@U9> can cancel this.", username: "FH Reservations" });
+    });
+
+    it("Cancel on an already closed card does nothing", async () => {
+      client.conversations.replies.mockResolvedValue({ messages: [{ ts: CARD_TS, bot_id: "B1", blocks: [{ type: "section", text: { type: "mrkdwn", text: "✅ done" } }] }] });
+      await h.handleCardAction({ payload: press(), client });
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Cancel booking", () => {
+    // now = 2026-10-14 12:00 NY
+    const REF = { backend: "rms", eventId: "ev1", organizerEmail: null, organizerSelf: true, resources: ["t2"], date: "2026-10-17", start: 840, end: 960, title: "Youth night — Deandra" };
+    const SUMMARY = "✅ Tech Set 2 · Sat 10/17 · 2:00–4:00 PM · Youth night · <@U9>";
+    const REQ = { items: [SET2], date: "2026-10-17", start: 840, end: 960, title: "Youth night" };
+    let ledger, booked;
+    const showCard = (m) => client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1", blocks: m.blocks }] });
+    const bookedCard = (ref = REF) => bookedMessage({ user: "U9", text: `${SUMMARY}\n<https://rms/item|Open the booking>`, ref, req: REQ });
+    // A fresh card for the request, as Slack then holds it.
+    const postCard = async () => {
+      client.conversations.replies.mockResolvedValue({ messages: [] });
+      await h.handleMessage({ event: msg(), client });
+      const card = posts()[0];
+      showCard(card);
+      return card;
+    };
+    const press = (m, o = {}) => ({
+      type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
+      container: { type: "message", message_ts: CARD_TS, channel_id: "CRES" },
+      message: { ts: CARD_TS, thread_ts: MSG_TS, blocks: m.blocks },
+      actions: [buttons(m)[0]], ...o,
+    });
+    beforeEach(() => {
+      ledger = { recordBooking: vi.fn().mockResolvedValue(), bookingsFor: vi.fn().mockResolvedValue([]) };
+      h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, livingDigest, ledger });
+      booked = bookedCard();
+      showCard(booked);
+    });
+
+    it("a booking ends with a Cancel booking button and records the ref in the ledger", async () => {
+      adapters.rms.book.mockResolvedValue({ status: "booked", link: "https://rms/item", ref: REF });
+      const card = await postCard();
+      await h.handleCardAction({ payload: press(card), client });
+      const [u] = updates();
+      expect(u).toMatchObject({ channel: "CRES", ts: CARD_TS, metadata: CLOSED_METADATA });
+      expect(u.text.startsWith(`${SUMMARY}\n<https://rms/item|Open the booking>\n`)).toBe(true);
+      expect(u.text).toContain("ENTIRE time");
+      expect(buttons(u).map((b) => b.action_id)).toEqual([CANCEL_BOOKING_ACTION]);
+      expect(decodeRef(buttons(u)[0].value)).toEqual({ user: "U9", ref: REF });
+      expect(buttons(u)[0].confirm.text.text).toBe("Tech Set 2 · Sat 10/17 · 2:00–4:00 PM will be released.");
+      expect(ledger.recordBooking).toHaveBeenCalledWith("U9", REF, { today: "2026-10-14" });
+    });
+
+    it("a failed ledger write is logged, never rethrown", async () => {
+      adapters.rms.book.mockResolvedValue({ status: "booked", link: "https://rms/item", ref: REF });
+      ledger.recordBooking.mockRejectedValue(new Error("ddb down"));
+      const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+      const card = await postCard();
+      await expect(h.handleCardAction({ payload: press(card), client })).resolves.toBeUndefined();
+      expect(spy).toHaveBeenCalledWith("booking ledger write failed", expect.objectContaining({ backend: "rms" }));
+      expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
+      spy.mockRestore();
+    });
+
+    it("a booking without a ref still closes with no buttons and records nothing", async () => {
+      const card = await postCard();
+      await h.handleCardAction({ payload: press(card), client });
+      expect(buttons(updates()[0])).toEqual([]);
+      expect(ledger.recordBooking).not.toHaveBeenCalled();
+    });
+
+    it("Cancel booking cancels, keeps the summary, adds 🚫 Booking cancelled by <@U9>. and refreshes the digest", async () => {
+      await h.handleCardAction({ payload: press(booked), client });
+      expect(adapters.rms.cancel.mock.calls).toEqual([[REF]]);
+      const [u] = updates();
+      expect(u).toMatchObject({ channel: "CRES", ts: CARD_TS, metadata: CLOSED_METADATA, text: `${SUMMARY}\n🚫 Booking cancelled by <@U9>.` });
+      expect(buttons(u)).toEqual([]);
+      expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+    });
+
+    it("Cancel booking by someone else is answered privately", async () => {
+      await h.handleCardAction({ payload: press(booked, { user: { id: "U7" } }), client });
+      expect(adapters.rms.cancel).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ user: "U7", thread_ts: MSG_TS, text: "Only <@U9> can cancel this." });
+    });
+
+    it("Cancel booking after the end time answers That booking has already ended. privately", async () => {
+      for (const ref of [{ ...REF, date: "2026-10-14", start: 540, end: 600 }, { ...REF, date: "2026-10-13" }]) {
+        const m = bookedCard(ref);
+        showCard(m);
+        await h.handleCardAction({ payload: press(m), client });
+      }
+      expect(adapters.rms.cancel).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral.mock.calls.map((c) => c[0])).toEqual([
+        expect.objectContaining({ user: "U9", thread_ts: MSG_TS, text: "That booking has already ended." }),
+        expect.objectContaining({ user: "U9", text: "That booking has already ended." }),
+      ]);
+    });
+
+    it("a booking today with no end time has not ended", async () => {
+      const m = bookedCard({ ...REF, date: "2026-10-14", start: 540, end: null });
+      showCard(m);
+      await h.handleCardAction({ payload: press(m), client });
+      expect(adapters.rms.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("a redelivered Cancel booking says That booking was already cancelled.", async () => {
+      adapters.rms.cancel.mockResolvedValue({ status: "already", link: "https://rms/item" });
+      await h.handleCardAction({ payload: press(booked), client });
+      expect(updates()[0]).toMatchObject({ ts: CARD_TS, metadata: CLOSED_METADATA, text: `${SUMMARY}\nThat booking was already cancelled.` });
+      expect(livingDigest.refresh).not.toHaveBeenCalled();
+    });
+
+    it("a press on a card already cancelled does nothing", async () => {
+      await h.handleCardAction({ payload: press(booked), client });
+      showCard(updates()[0]);
+      await h.handleCardAction({ payload: press(booked), client });
+      expect(adapters.rms.cancel).toHaveBeenCalledTimes(1);
+      expect(updates()).toHaveLength(1);
+    });
+
+    it("changed booking: nothing cancelled, link given", async () => {
+      adapters.rms.cancel.mockResolvedValue({ status: "changed", link: "https://rms/x" });
+      await h.handleCardAction({ payload: press(booked), client });
+      expect(updates()[0].text).toBe(`${SUMMARY}\nI couldn't find that booking as it was; it may have been changed. Please check it here: https://rms/x`);
+      expect(livingDigest.refresh).not.toHaveBeenCalled();
+    });
+
+    it("an unexpected failure keeps the booked card and answers privately", async () => {
+      adapters.rms.cancel.mockRejectedValue(new Error("backendError"));
+      const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+      await h.handleCardAction({ payload: press(booked), client });
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({
+        channel: "CRES", user: "U9", thread_ts: MSG_TS,
+        text: "⚠️ I couldn't cancel that (backendError). Please try again, or cancel it here: https://rms",
+      });
+      spy.mockRestore();
+    });
+
+    it("a calendar event someone else organized can't be cancelled without connect", async () => {
+      const m = bookedCard({ ...REF, organizerSelf: false, organizerEmail: "deandra@x" });
+      showCard(m);
+      await h.handleCardAction({ payload: press(m), client });
+      expect(adapters.rms.cancel).not.toHaveBeenCalled();
+      expect(updates()[0].text).toBe(`${SUMMARY}\nI can't cancel that one from here. Please cancel it in Google Calendar: https://rms`);
+    });
+
+    it("ignores a ref for a backend it has no adapter for, and garbage values", async () => {
+      delete adapters.kitchen;
+      const m = bookedCard({ backend: "kitchen", row: 5, date: "2026-10-17", name: "D", start: 600, end: 700 });
+      showCard(m);
+      await h.handleCardAction({ payload: press(m), client });
+      await h.handleCardAction({ payload: press(booked, { actions: [{ action_id: CANCEL_BOOKING_ACTION, value: "{nope" }] }), client });
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+      expect(adapters.rms.cancel).not.toHaveBeenCalled();
+    });
+
+    it("a press whose value no longer matches the card does nothing", async () => {
+      showCard(bookedCard({ ...REF, eventId: "ev2" }));
+      await h.handleCardAction({ payload: press(booked), client });
+      expect(adapters.rms.cancel).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
     });
   });
 

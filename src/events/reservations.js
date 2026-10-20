@@ -3,21 +3,27 @@
 // replies in each message's thread, first come first served. Questions get an
 // answer. A booking request gets a card (what the bot understood, free or not,
 // Book and Edit); the request rides in the card's buttons, so nothing is
-// stored. Book writes; Edit's modal only updates the card. A booked or refused
-// card is replaced by its outcome, with no buttons left.
+// stored. Book writes; Edit's modal only updates the card; Cancel closes it. A
+// refused card is replaced by its outcome; a booked one keeps a Cancel booking
+// button, whose value says where the booking lives.
 import { log, metric } from "../lib/logger.js";
 import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
 import { isInvalidGrant, isForbidden, isScopeMissing } from "../services/memberGoogle.js";
 import { normalizeRequest, missingFields, isIgnorableChatter } from "../lib/reservation-request.js";
 import { reservationLine, BOT_PERSONA } from "../lib/reservation-format.js";
-import { cardMessage, closedMessage, decodeCard, openBookValue, isOpenCard, BOOK_ACTION, EDIT_ACTION } from "../lib/reservation-card.js";
+import {
+  cardMessage, closedMessage, bookedMessage, decodeCard, decodeRef, openBookValue, isOpenCard, cancelBookingValue, cardSummaryLine,
+  BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION,
+} from "../lib/reservation-card.js";
 import { readEditModal, MODAL_CALLBACK } from "../lib/reservation-modal.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
+const ENDED_TEXT = "That booking has already ended.";
+const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION]);
 
-export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null }) {
+export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null }) {
   const catalogText = catalogPromptText(catalog);
 
   async function withMentions(client, reservations) {
@@ -44,7 +50,19 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return {
       channel, threadTs, cardTs,
       done: (text) => client.chat.update({ channel, ts: cardTs, ...closedMessage(text) }),
+      booked: (text, ref, req) => client.chat.update({ channel, ts: cardTs, ...bookedMessage({ user, text, ref, req }) }),
       prompt: (text, blocks) => client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text, blocks, ...BOT_PERSONA }),
+    };
+  }
+
+  // A booked card's cancel outcomes keep its ✅ summary line above them, for
+  // the record. A passing failure leaves the card and its button as they are.
+  function bookedCardSay(client, { channel, threadTs, cardTs, user, summary }) {
+    const say = cardSay(client, { channel, threadTs, cardTs, user });
+    return {
+      ...say,
+      done: (text) => say.done(summary ? `${summary}\n${text}` : text),
+      failed: (text) => client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text, ...BOT_PERSONA }),
     };
   }
 
@@ -63,11 +81,11 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return `❌ ${names} is taken ${fmtDay(req.date)}:\n${conflicts.map(reservationLine).join("\n")}\nPlease check with them.`;
   }
 
-  function forbiddenText(adapter, req) {
+  function forbiddenText(adapter, req, verb = "book") {
     if (adapter.backend === "rooms") return `You don't have edit access to the room request sheet. Ask ${CATEGORY_OWNERS.rooms} to share it with you: ${adapter.link}`;
     if (adapter.backend === "kitchen") return `You don't have edit access to the kitchen sheet. Ask ${CATEGORY_OWNERS.kitchen} to share it with you: ${adapter.link}`;
     const names = req.items.map((i) => i.label).join(", ");
-    return `Google Calendar won't let your account book ${names}. Ask ${ownerFor(req.items[0])}.`;
+    return `Google Calendar won't let your account ${verb} ${names || "that booking"}. Ask ${req.items[0] ? ownerFor(req.items[0]) : "the equipment team"}.`;
   }
 
   // What a card shows: whether the request can be booked as it stands.
@@ -94,22 +112,39 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     };
   }
 
-  async function promptConnect({ req, adapter, requester, say, revoked }) {
-    if (!requester.slackEmail) {
-      return say.done(`I can't see an email on your Slack profile, so I can't connect your Google account. You can book directly: ${adapter.link}`);
-    }
+  // The pending row holds what to do once the member approves; resume reads it.
+  async function promptConnect({ request, requester, say, text, noEmail }) {
+    if (!requester.slackEmail) return noEmail(`I can't see an email on your Slack profile, so I can't connect your Google account.`);
     const { nonce } = await connect.authStore.createPending({
       slackUserId: requester.requesterUserId, slackEmail: requester.slackEmail,
-      request: { req, requester, backend: adapter.backend, cardTs: say.cardTs }, channel: say.channel, threadTs: say.threadTs,
+      request, channel: say.channel, threadTs: say.threadTs,
     });
     const url = connect.consentUrl({ state: nonce, loginHint: requester.slackEmail });
-    const text = revoked
-      ? "Your Google connection has expired. Connect again and I'll finish this booking as you."
-      : "To book as you, connect your Google account once. I'll finish this booking as soon as you approve.";
     await say.prompt(text, [
       { type: "section", text: { type: "mrkdwn", text } },
       { type: "actions", elements: [{ type: "button", action_id: "reservations_connect_google", style: "primary", text: { type: "plain_text", text: "Connect Google" }, url }] },
     ]);
+  }
+
+  function promptBookConnect({ req, adapter, requester, say, revoked }) {
+    return promptConnect({
+      request: { req, requester, backend: adapter.backend, cardTs: say.cardTs }, requester, say,
+      text: revoked
+        ? "Your Google connection has expired. Connect again and I'll finish this booking as you."
+        : "To book as you, connect your Google account once. I'll finish this booking as soon as you approve.",
+      noEmail: (text) => say.done(`${text} You can book directly: ${adapter.link}`),
+    });
+  }
+
+  async function promptCancelConnect({ ref, adapter, user, say, client, revoked }) {
+    const requester = await requesterFor(client, user);
+    return promptConnect({
+      request: { kind: "cancel", ref, requester, cardTs: say.cardTs, responseUrl: say.responseUrl ?? null }, requester, say,
+      text: revoked
+        ? "Your Google connection has expired. Connect again and I'll cancel this booking as you."
+        : "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve.",
+      noEmail: (text) => (say.failed || say.done)(`${text} You can cancel it directly: ${adapter.link}`),
+    });
   }
 
   async function finishBooking({ req, adapter, requester, say, bookingKey = null }) {
@@ -117,7 +152,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (connect) {
       const member = await connect.memberGoogle.clientsFor(requester.requesterUserId);
       if (member.status !== "active") {
-        return promptConnect({ req, adapter, requester, say, revoked: member.status === "revoked" });
+        return promptBookConnect({ req, adapter, requester, say, revoked: member.status === "revoked" });
       }
       clients = member.clients;
     }
@@ -139,7 +174,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       if (clients && (isInvalidGrant(error) || isScopeMissing(error))) {
         await connect.authStore.markRevoked(requester.requesterUserId);
         connect.memberGoogle.forget(requester.requesterUserId);
-        return promptConnect({ req, adapter, requester, say, revoked: true });
+        return promptBookConnect({ req, adapter, requester, say, revoked: true });
       }
       if (clients && isForbidden(error)) return say.done(forbiddenText(adapter, req));
       metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
@@ -154,17 +189,100 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const note = req.items.some((i) => i.category === "tech") ? `\n${TECH_NOTE}` : "";
     // The booking is written. Failing the event now would make SQS retry it
     // and book again, so a failed confirmation or digest edit is logged, never rethrown.
+    const text = `✅ ${names} · ${fmtDay(req.date)} · ${fmtRange(req.start, req.end)} · ${req.title} · <@${requester.requesterUserId}>\n<${result.link}|Open the booking>${note}`;
     try {
-      await say.done(
-        `✅ ${names} · ${fmtDay(req.date)} · ${fmtRange(req.start, req.end)} · ${req.title} · <@${requester.requesterUserId}>\n<${result.link}|Open the booking>${note}`
-      );
+      await (result.ref && say.booked ? say.booked(text, result.ref, req) : say.done(text));
     } catch (error) {
       log.error("reservation confirmation failed", { backend: adapter.backend, error });
+    }
+    if (result.ref) {
+      try {
+        await ledger?.recordBooking(requester.requesterUserId, result.ref, { today: nyToday(now()) });
+      } catch (error) {
+        log.error("booking ledger write failed", { backend: adapter.backend, error });
+      }
     }
     try {
       await livingDigest?.refresh(req.date);
     } catch (error) {
       log.error("digest refresh failed", { date: req.date, error });
+    }
+  }
+
+  function hasEnded(ref) {
+    const today = nyToday(now());
+    if (ref.date !== today) return ref.date < today;
+    return (ref.end ?? 1440) <= nyParts(now().toISOString()).min;
+  }
+
+  // Undo a booking the bot made. Shared by the booked card and the "mine"
+  // list: say.done takes the outcome, say.failed (if given) a passing failure.
+  async function cancelBooking({ ref, user, say, client }) {
+    const adapter = adapters[ref.backend];
+    if (!adapter) return;
+    if (hasEnded(ref)) return say.done(ENDED_TEXT);
+    const botsOwnEvent = ref.backend === "rms" && ref.organizerSelf;
+    // An event on the member's own calendar needs their account; the bot's can't delete it.
+    if (ref.backend === "rms" && !botsOwnEvent && !connect) {
+      return say.done(`I can't cancel that one from here. Please cancel it in Google Calendar: ${adapter.link}`);
+    }
+    let clients;
+    if (connect && !botsOwnEvent) {
+      const member = await connect.memberGoogle.clientsFor(user);
+      if (member.status !== "active") {
+        return promptCancelConnect({ ref, adapter, user, say, client, revoked: member.status === "revoked" });
+      }
+      clients = member.clients;
+    }
+    let result;
+    try {
+      result = clients ? await adapter.cancel(ref, { clients }) : await adapter.cancel(ref);
+    } catch (error) {
+      if (clients && (isInvalidGrant(error) || isScopeMissing(error))) {
+        await connect.authStore.markRevoked(user);
+        connect.memberGoogle.forget(user);
+        return promptCancelConnect({ ref, adapter, user, say, client, revoked: true });
+      }
+      const items = (Array.isArray(ref.resources) ? ref.resources : []).map((id) => catalog.find((e) => e.calendarId === id)).filter(Boolean);
+      if (clients && isForbidden(error)) return say.done(forbiddenText(adapter, { items }, "cancel"));
+      metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend, stage: "cancel" } });
+      log.error("reservation cancel failed", { backend: adapter.backend, error });
+      return (say.failed || say.done)(`⚠️ I couldn't cancel that (${error.message}). Please try again, or cancel it here: ${adapter.link}`);
+    }
+    if (result.status === "already") return say.done("That booking was already cancelled.");
+    if (result.status !== "cancelled") {
+      return say.done(`I couldn't find that booking as it was; it may have been changed. Please check it here: ${result.link}`);
+    }
+    metric("ReservationCancelled", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
+    // Cancelled. As after a booking, a failed reply or digest edit is logged,
+    // so an SQS retry doesn't run the cancel again.
+    try {
+      await say.done(`🚫 Booking cancelled by <@${user}>.`);
+    } catch (error) {
+      log.error("cancel confirmation failed", { backend: adapter.backend, error });
+    }
+    try {
+      await livingDigest?.refresh(ref.date);
+    } catch (error) {
+      log.error("digest refresh failed", { date: ref.date, error });
+    }
+  }
+
+  async function resumeCancel(pending, client) {
+    const { ref, requester, cardTs } = pending.request;
+    if (!adapters[ref?.backend]) return;
+    const user = requester.requesterUserId;
+    const { channel } = pending;
+    const threadTs = pending.threadTs || null;
+    try {
+      const card = cardTs ? await readCard(client, channel, threadTs, cardTs).catch(() => null) : null;
+      const say = cardTs
+        ? bookedCardSay(client, { channel, threadTs, cardTs, user, summary: cardSummaryLine(card) })
+        : threadSay(client, channel, threadTs);
+      await cancelBooking({ ref, user, say, client });
+    } catch (error) {
+      // The pending row is gone; a rethrow would retry into nothing.
+      log.error("resuming a cancel failed", { backend: ref.backend, error });
     }
   }
 
@@ -175,6 +293,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     // Deleted before booking: an SQS retry of this message finds nothing and
     // can never book twice.
     await connect.authStore.deletePending(pendingId);
+    if (pending.request.kind === "cancel") return resumeCancel(pending, client);
     const { req, requester, backend, cardTs } = pending.request;
     const adapter = adapters[backend];
     if (!adapter) return;
@@ -346,19 +465,42 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     await client.chat.postMessage({ channel: event.channel, thread_ts: event.ts, ...BOT_PERSONA, ...cardMessage({ user: event.user, req, assessment }) });
   }
 
-  // Book on a card, or anyone but the requester pressing Book or Edit. The
-  // requester's Edit is opened by the receiver, which has the trigger_id.
+  // Book, Cancel or Cancel booking on a card, or anyone but the requester
+  // pressing a card button. The requester's Edit is opened by the receiver,
+  // which has the trigger_id.
   async function handleCardAction({ payload, client }) {
-    const action = (payload.actions || []).find((a) => a.action_id === BOOK_ACTION || a.action_id === EDIT_ACTION);
+    const action = (payload.actions || []).find((a) => CARD_ACTIONS.has(a.action_id));
     if (!action) return;
-    const card = decodeCard(action.value, catalog);
-    if (!card) return;
     const channel = payload.channel?.id || payload.container?.channel_id;
     const cardTs = payload.container?.message_ts || payload.message?.ts;
     const threadTs = payload.message?.thread_ts || cardTs;
     const userId = payload.user?.id;
+    const privately = (text) => client.chat.postEphemeral({ channel, user: userId, thread_ts: threadTs, text, ...BOT_PERSONA });
+
+    if (action.action_id === CANCEL_BOOKING_ACTION) {
+      const booked = decodeRef(action.value);
+      if (!booked || !adapters[booked.ref.backend]) return;
+      if (userId !== booked.user) return privately(`Only <@${booked.user}> can cancel this.`);
+      if (hasEnded(booked.ref)) return privately(ENDED_TEXT);
+      // As with Book: a second press, or a redelivery after the card was
+      // updated, finds the button gone.
+      const current = await readCard(client, channel, threadTs, cardTs);
+      if (cancelBookingValue(current) !== action.value) {
+        log.info("stale reservation cancel press", { channel, cardTs });
+        return;
+      }
+      const say = bookedCardSay(client, { channel, threadTs, cardTs, user: userId, summary: cardSummaryLine(current) });
+      return cancelBooking({ ref: booked.ref, user: userId, say, client });
+    }
+
+    const card = decodeCard(action.value, catalog);
+    if (!card) return;
     if (userId !== card.user) {
-      return client.chat.postEphemeral({ channel, user: userId, thread_ts: threadTs, text: `Only <@${card.user}> can book this.`, ...BOT_PERSONA });
+      return privately(`Only <@${card.user}> can ${action.action_id === CANCEL_ACTION ? "cancel" : "book"} this.`);
+    }
+    if (action.action_id === CANCEL_ACTION) {
+      if (!isOpenCard(await readCard(client, channel, threadTs, cardTs))) return;
+      return cardSay(client, { channel, threadTs, cardTs, user: userId }).done(`🚫 Cancelled by <@${userId}>.`);
     }
     if (action.action_id !== BOOK_ACTION) return;
     if (card.lost.length) {

@@ -144,6 +144,7 @@ export function getDeps() {
       connect,
       livingDigest,
       claimBooking: connect ? connect.authStore.claimBooking : null,
+      ledger: connect ? connect.authStore : null,
     });
   }
 
