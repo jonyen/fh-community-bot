@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
-import { BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE, decodeCard, decodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
+import { BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE, decodeCard, decodeRef, encodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
+import { MINE_CANCEL_ACTION } from "../../src/lib/reservation-mine.js";
 import { log } from "../../src/lib/logger.js";
 import { buildEditModal, ITEM_ACTION } from "../../src/lib/reservation-modal.js";
 
@@ -675,5 +676,227 @@ describe("find intent", () => {
     await run(h, client);
     expect(answers()[0].text).toMatch(/^Nothing matches/);
     expect(answers()[0].text).toMatch(/Kitchen \(1\) · Tech \(1\)/);
+  });
+});
+
+describe("my reservations", () => {
+  // now = Tue 2026-10-20, 12:00 PM in New York.
+  const NOW_MINE = new Date("2026-10-20T16:00:00Z");
+  const TRANSIT = { label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "tr" };
+  const CAT = buildCatalog({ rooms: true, kitchen: true, rms: [SET2, TRANSIT] });
+  const LINKS = "Rooms: https://rooms · Kitchen: https://kitchen · Calendar: https://rms";
+  const room = (o = {}) => {
+    const r = { category: "rooms", item: "MPR", date: "2026-10-24", start: 600, end: 720, title: "MBS", holder: "Deandra Shim", holderName: "Deandra Shim", holderUserId: null, holderEmail: null, ...o };
+    return { ...r, ref: { backend: "rooms", date: r.date, start: r.start, end: r.end, title: r.title, holder: r.holder, rooms: [r.item] } };
+  };
+  const kitchen = (o = {}) => {
+    const r = { category: "kitchen", item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dee S", holder: "Dee S", holderName: "Dee S", phone: "(201) 555-0100", holderUserId: null, holderEmail: null, row: 7, ...o };
+    return { ...r, ref: { backend: "kitchen", row: r.row, date: r.date, name: r.holderName, start: r.start, end: r.end } };
+  };
+  const rms = (o = {}, ref = {}) => {
+    const r = { category: "tech", item: "Tech Set 2", date: "2026-10-21", start: 840, end: 960, title: "Youth night", holder: "deandra@x", holderUserId: null, holderEmail: "deandra@x", ...o };
+    return { ...r, ref: { backend: "rms", eventId: "ev1", organizerEmail: "deandra@x", organizerSelf: false, resources: ["t2"], date: r.date, start: r.start, end: r.end, title: r.title, ...ref } };
+  };
+
+  let llm, adapters, client, ledger, livingDigest, fetchSpy;
+  const make = (o = {}) => createReservationsHandler({ llm, adapters, catalog: CAT, channelId: "CRES", now: () => NOW_MINE, livingDigest, ledger, ...o });
+  beforeEach(() => {
+    llm = { parseReservationRequest: vi.fn().mockResolvedValue({ intent: "mine" }) };
+    adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
+    client = makeClient();
+    client.users.info.mockResolvedValue({ user: { real_name: "Deandra Shim", profile: { display_name: "Dee", email: "Deandra@x", phone: "+1 201-555-0100" } } });
+    ledger = { recordBooking: vi.fn(), bookingsFor: vi.fn().mockResolvedValue([]) };
+    livingDigest = { refresh: vi.fn().mockResolvedValue(true) };
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    return () => fetchSpy.mockRestore();
+  });
+  const ask = (h) => h.handleMessage({ event: msg({ text: "what do I have booked?" }), client });
+  const reply = () => client.chat.postEphemeral.mock.calls[0][0];
+  const lines = (m) => m.blocks.filter((b) => b.type === "section" && b.accessory).map((b) => b.text.text);
+  const sectionTexts = (m) => m.blocks.filter((b) => b.type === "section").map((b) => b.text.text);
+  const listPress = (value, o = {}) => ({
+    type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
+    container: { type: "message", message_ts: "300.1", channel_id: "CRES", is_ephemeral: true },
+    response_url: "https://hooks.slack/actions/r1",
+    actions: [{ action_id: MINE_CANCEL_ACTION, value }], ...o,
+  });
+
+  it("mine lists only the asker's bookings for the next 60 days, sorted, privately", async () => {
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: [room(), room({ holder: "Alan Chow", holderName: "Alan Chow", title: "Other" }), room({ holder: "Deandra", holderName: "Deandra", title: "First name only" })], errors: [] });
+    adapters.kitchen.listReservations.mockResolvedValue({ reservations: [kitchen(), kitchen({ phone: "201-555-9999", holderName: "Someone", row: 8 })], errors: [] });
+    adapters.rms.listReservations.mockResolvedValue({ reservations: [
+      rms(),
+      rms({ holderEmail: "alan@x", title: "Alan's" }, { eventId: "ev2" }),
+      // Today, already over at noon.
+      rms({ date: "2026-10-20", start: 540, end: 600, title: "Over" }, { eventId: "ev3" }),
+      // Today, still going.
+      rms({ date: "2026-10-20", start: 660, end: 780, title: "Now", holderUserId: "U9", holderEmail: null }, { eventId: "ev4" }),
+    ], errors: [] });
+    await ask(make());
+    for (const a of Object.values(adapters)) expect(a.listReservations).toHaveBeenCalledWith({ from: "2026-10-20", to: "2026-12-19" });
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    const m = reply();
+    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "FH Reservations" });
+    expect(m.thread_ts).toBeUndefined();
+    expect(lines(m)).toEqual([
+      "📅 *Tech Set 2* · Tue 10/20 · 11:00 AM–1:00 PM · Now",
+      "📅 *Tech Set 2* · Wed 10/21 · 2:00–4:00 PM · Youth night",
+      "📅 *Kitchen* · Thu 10/22 · 5:00–7:00 PM · Dee S · from the kitchen sheet, matched by name",
+      "📅 *MPR* · Sat 10/24 · 10:00 AM–12:00 PM · MBS · from the rooms sheet, matched by name",
+    ]);
+    expect(ledger.bookingsFor).toHaveBeenCalledWith("U9", { today: "2026-10-20" });
+  });
+
+  it("mine merges one calendar event booked on two resources into one line", async () => {
+    adapters.rms.listReservations.mockResolvedValue({ reservations: [
+      rms(), rms({ category: "vehicles", item: "CP Transit" }, { resources: ["tr"] }),
+    ], errors: [] });
+    await ask(make({ connect: { authStore: {}, memberGoogle: {} } }));
+    const m = reply();
+    expect(lines(m)).toEqual(["📅 *Tech Set 2, CP Transit* · Wed 10/21 · 2:00–4:00 PM · Youth night"]);
+    const b = m.blocks.find((x) => x.accessory).accessory;
+    expect(b.action_id).toBe(MINE_CANCEL_ACTION);
+    expect(decodeRef(b.value)).toEqual({ user: "U9", ref: expect.objectContaining({ eventId: "ev1", resources: ["t2", "tr"] }) });
+  });
+
+  it("mine caps at 20 lines and adds …and N more with links", async () => {
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: Array.from({ length: 23 }, (_, i) => room({ start: 600 + i, title: `T${i}` })), errors: [] });
+    await ask(make());
+    const m = reply();
+    expect(lines(m)).toHaveLength(20);
+    expect(lines(m)[0]).toContain("T0");
+    expect(sectionTexts(m).at(-1)).toBe(`…and 3 more. ${LINKS}`);
+    expect(m.blocks.length).toBeLessThanOrEqual(50);
+  });
+
+  it("mine with nothing found gives the empty copy and links", async () => {
+    await ask(make());
+    expect(sectionTexts(reply())).toEqual([`I don't see any upcoming bookings under your name.\n${LINKS}`]);
+  });
+
+  it("mine still answers when one backend fails, with Some bookings couldn't be checked.", async () => {
+    const spy = vi.spyOn(log, "warn").mockImplementation(() => {});
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: [room()], errors: [] });
+    adapters.kitchen.listReservations.mockRejectedValue(new Error("sheets down"));
+    await ask(make());
+    expect(lines(reply())).toHaveLength(1);
+    expect(sectionTexts(reply())).toContain("⚠️ Some bookings couldn't be checked.");
+    // One calendar failing (errors) counts too.
+    client.chat.postEphemeral.mockClear();
+    adapters.kitchen.listReservations.mockResolvedValue({ reservations: [], errors: [] });
+    adapters.rms.listReservations.mockResolvedValue({ reservations: [], errors: ["Tech Set 2: boom"] });
+    await ask(make());
+    expect(sectionTexts(reply())).toContain("⚠️ Some bookings couldn't be checked.");
+    spy.mockRestore();
+  });
+
+  it("a name-matched sheet row says matched by name and its confirm quotes the row", async () => {
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: [room({ title: "MBS ", holder: "deandra shim (youth)", holderName: "deandra shim (youth)" })], errors: [] });
+    await ask(make());
+    const b = reply().blocks.find((x) => x.accessory);
+    expect(b.text.text).toBe("📅 *MPR* · Sat 10/24 · 10:00 AM–12:00 PM · MBS · from the rooms sheet, matched by name");
+    expect(b.accessory.confirm.text.text).toBe('"MBS " · deandra shim (youth) · Sat 10/24 · 10:00 AM–12:00 PM in the rooms sheet');
+  });
+
+  it("a sheet row the bot booked for the member is found through the ledger, with no suffix", async () => {
+    const mine = room({ holder: "D. S.", holderName: "D. S." });
+    ledger.bookingsFor.mockResolvedValue([mine.ref]);
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: [mine], errors: [] });
+    await ask(make());
+    expect(lines(reply())).toEqual(["📅 *MPR* · Sat 10/24 · 10:00 AM–12:00 PM · MBS"]);
+    expect(reply().blocks.find((x) => x.accessory).accessory.confirm.text.text).toBe("MPR · Sat 10/24 · 10:00 AM–12:00 PM will be released.");
+  });
+
+  it("a failed ledger read is logged and the list still comes back", async () => {
+    const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+    ledger.bookingsFor.mockRejectedValue(new Error("ddb down"));
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: [room()], errors: [] });
+    await ask(make());
+    expect(lines(reply())).toHaveLength(1);
+    expect(spy).toHaveBeenCalledWith("booking ledger read failed", expect.anything());
+    spy.mockRestore();
+  });
+
+  it("without connect, a calendar event the member organized gets Open in Calendar; the bot's own gets Cancel", async () => {
+    adapters.rms.listReservations.mockResolvedValue({ reservations: [
+      rms(), rms({ title: "Bot's", holderUserId: "U9" }, { eventId: "ev9", organizerSelf: true, resources: ["tr"] }),
+    ], errors: [] });
+    await ask(make());
+    const [theirs, bots] = reply().blocks.filter((x) => x.accessory).map((x) => x.accessory);
+    expect(theirs).toMatchObject({ text: { text: "Open in Calendar" }, url: "https://calendar.google.com/calendar/u/0/r?cid=t2" });
+    expect(theirs.value).toBeUndefined();
+    expect(bots).toMatchObject({ action_id: MINE_CANCEL_ACTION, text: { text: "Cancel" } });
+  });
+
+  it("with connect, every entry gets Cancel", async () => {
+    adapters.rms.listReservations.mockResolvedValue({ reservations: [rms()], errors: [] });
+    await ask(make({ connect: { authStore: {}, memberGoogle: {} } }));
+    expect(reply().blocks.find((x) => x.accessory).accessory.action_id).toBe(MINE_CANCEL_ACTION);
+  });
+
+  describe("Cancel from the list", () => {
+    let value;
+    beforeEach(async () => {
+      adapters.rooms.listReservations.mockResolvedValue({ reservations: [room(), room({ date: "2026-10-31", title: "Later" })], errors: [] });
+      await ask(make());
+      value = reply().blocks.find((x) => x.accessory).accessory.value;
+      client.chat.postEphemeral.mockClear();
+      adapters.rooms.listReservations.mockClear();
+    });
+    const sent = () => JSON.parse(fetchSpy.mock.calls[0][1].body);
+
+    it("cancel from the list replaces the list via response_url with the 🚫 notice on top", async () => {
+      adapters.rooms.listReservations.mockResolvedValue({ reservations: [room({ date: "2026-10-31", title: "Later" })], errors: [] });
+      await make().handleCardAction({ payload: listPress(value), client });
+      expect(adapters.rooms.cancel.mock.calls).toEqual([[room().ref]]);
+      expect(fetchSpy).toHaveBeenCalledWith("https://hooks.slack/actions/r1", expect.objectContaining({ method: "POST", headers: { "Content-Type": "application/json" } }));
+      const body = sent();
+      expect(body.replace_original).toBe(true);
+      expect(sectionTexts(body)[0]).toBe("🚫 Booking cancelled by <@U9>.");
+      expect(lines(body)).toEqual(["📅 *MPR* · Sat 10/31 · 10:00 AM–12:00 PM · Later · from the rooms sheet, matched by name"]);
+      expect(adapters.rooms.listReservations).toHaveBeenCalledTimes(1);
+      expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-24");
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+    });
+
+    it("a passing failure also replaces the list, with the ⚠️ text on top", async () => {
+      const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+      adapters.rooms.cancel.mockRejectedValue(new Error("backendError"));
+      await make().handleCardAction({ payload: listPress(value), client });
+      expect(sectionTexts(sent())[0]).toBe("⚠️ I couldn't cancel that (backendError). Please try again, or cancel it here: https://rooms");
+      expect(lines(sent())).toHaveLength(2);
+      spy.mockRestore();
+    });
+
+    it("if the list can't be rebuilt, the outcome still replaces it", async () => {
+      const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+      client.users.info.mockRejectedValue(new Error("ratelimited"));
+      await make().handleCardAction({ payload: listPress(value), client });
+      expect(sent()).toEqual({ replace_original: true, text: "🚫 Booking cancelled by <@U9>." });
+      spy.mockRestore();
+    });
+
+    it("someone else's press is refused privately before anything else", async () => {
+      await make().handleCardAction({ payload: listPress(value, { user: { id: "U7" } }), client });
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(client.users.info).toHaveBeenCalledTimes(1);
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toEqual({ channel: "CRES", user: "U7", text: "Only <@U9> can cancel this.", username: "FH Reservations", icon_emoji: ":calendar:" });
+    });
+
+    it("a press after the booking ended says so privately", async () => {
+      const ended = encodeRef({ user: "U9", ref: { ...room().ref, date: "2026-10-19" } });
+      await make().handleCardAction({ payload: listPress(ended), client });
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U9", text: "That booking has already ended." });
+    });
+
+    it("ignores garbage values", async () => {
+      await make().handleCardAction({ payload: listPress("{nope"), client });
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+    });
   });
 });

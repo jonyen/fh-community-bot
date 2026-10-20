@@ -5,7 +5,8 @@
 // Book and Edit); the request rides in the card's buttons, so nothing is
 // stored. Book writes; Edit's modal only updates the card; Cancel closes it. A
 // refused card is replaced by its outcome; a booked one keeps a Cancel booking
-// button, whose value says where the booking lives.
+// button, whose value says where the booking lives. "What do I have
+// booked?" gets a private list, each line with its own Cancel.
 import { log, metric } from "../lib/logger.js";
 import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
@@ -17,11 +18,16 @@ import {
   BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION,
 } from "../lib/reservation-card.js";
 import { readEditModal, MODAL_CALLBACK } from "../lib/reservation-modal.js";
+import { mineMessage, MINE_CANCEL_ACTION } from "../lib/reservation-mine.js";
+import { isMine, refKey } from "../lib/reservation-owner.js";
+import { calendarLink } from "../lib/rms-catalog.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
 const ENDED_TEXT = "That booking has already ended.";
-const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION]);
+const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
+const MINE_DAYS = 60;
+const MINE_CAP = 20;
 
 export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null }) {
   const catalogText = catalogPromptText(catalog);
@@ -276,14 +282,124 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const threadTs = pending.threadTs || null;
     try {
       const card = cardTs ? await readCard(client, channel, threadTs, cardTs).catch(() => null) : null;
+      // No card means the cancel came from the private "mine" list: the
+      // outcome is for the member alone, never posted in public.
       const say = cardTs
         ? bookedCardSay(client, { channel, threadTs, cardTs, user, summary: cardSummaryLine(card) })
-        : threadSay(client, channel, threadTs);
+        : privateSay(client, { channel, user, responseUrl: pending.request.responseUrl ?? null });
       await cancelBooking({ ref, user, say, client });
     } catch (error) {
       // The pending row is gone; a rethrow would retry into nothing.
       log.error("resuming a cancel failed", { backend: ref.backend, error });
     }
+  }
+
+  // Private answers in the channel, with no thread: for the "mine" list.
+  function privateSay(client, { channel, user, responseUrl = null }) {
+    const tell = (text, blocks) => client.chat.postEphemeral({ channel, user, text, ...(blocks ? { blocks } : {}), ...BOT_PERSONA });
+    return { channel, threadTs: null, cardTs: null, responseUrl, done: (text) => tell(text), failed: (text) => tell(text), prompt: tell };
+  }
+
+  function mineLinks() {
+    return { rooms: adapters.rooms?.link, kitchen: adapters.kitchen?.link, calendar: adapters.rms?.link };
+  }
+
+  async function memberFor(client, user) {
+    const info = await client.users.info({ user });
+    const profile = info.user?.profile || {};
+    return { userId: user, realName: info.user?.real_name || "", displayName: profile.display_name || "", email: profile.email || "", phone: profile.phone || "" };
+  }
+
+  // The asker's upcoming bookings across every backend, today through 60
+  // days out. A backend that fails leaves the rest standing, flagged partial.
+  async function listMine({ user, client }) {
+    const today = nyToday(now());
+    const member = await memberFor(client, user);
+    let ledgerKeys = new Set();
+    try {
+      ledgerKeys = new Set(((await ledger?.bookingsFor(user, { today })) ?? []).map(refKey));
+    } catch (error) {
+      log.error("booking ledger read failed", { error });
+    }
+    let partial = false;
+    const lists = await Promise.all(Object.values(adapters).map(async (adapter) => {
+      try {
+        const { reservations, errors } = await adapter.listReservations({ from: today, to: addDaysIso(today, MINE_DAYS) });
+        if (errors?.length) partial = true;
+        return reservations;
+      } catch (error) {
+        partial = true;
+        log.warn("listing my reservations failed", { backend: adapter.backend, error });
+        return [];
+      }
+    }));
+    // RMS lists an event once per resource calendar; one event is one line.
+    const byEvent = new Map();
+    const entries = [];
+    for (const r of lists.flat()) {
+      if (!r.ref || hasEnded(r) || !isMine(r, member, ledgerKeys)) continue;
+      const { backend } = r.ref;
+      const same = backend === "rms" ? byEvent.get(r.ref.eventId) : null;
+      if (same) {
+        for (const id of r.ref.resources || []) if (!same.ref.resources.includes(id)) same.ref.resources.push(id);
+        if (!same.items.includes(r.item)) same.items.push(r.item);
+        continue;
+      }
+      const entry = {
+        items: [r.item], date: r.date, start: r.start, end: r.end, title: r.title, holderName: r.holderName,
+        ref: backend === "rms" ? { ...r.ref, resources: [...(r.ref.resources || [])] } : r.ref,
+        matchedBy: (backend === "rooms" || backend === "kitchen") && !ledgerKeys.has(refKey(r.ref)) ? backend : null,
+        // Without connect, the bot can't touch an event on the member's own calendar.
+        openLink: !connect && backend === "rms" && !r.ref.organizerSelf ? calendarLink(r.ref.resources?.[0] ?? "") : null,
+      };
+      if (backend === "rms") byEvent.set(r.ref.eventId, entry);
+      entries.push(entry);
+    }
+    const sorted = entries
+      .map(({ items, ...e }) => ({ ...e, item: items.join(", ") }))
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? -1) - (b.start ?? -1));
+    return { entries: sorted.slice(0, MINE_CAP), more: Math.max(0, sorted.length - MINE_CAP), partial };
+  }
+
+  async function postMine({ channel, user, client }) {
+    const mine = await listMine({ user, client });
+    return client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, ...mineMessage({ user, ...mine, links: mineLinks() }) });
+  }
+
+  // Ephemeral messages can't be chat.update'd; the list is replaced through
+  // the press's response_url, rebuilt fresh with the outcome on top.
+  async function replaceMine({ responseUrl, user, client, notice }) {
+    let message;
+    try {
+      message = mineMessage({ user, ...(await listMine({ user, client })), links: mineLinks(), notice });
+    } catch (error) {
+      log.error("refreshing my reservations failed", { error });
+      message = { text: notice };
+    }
+    const res = await fetch(responseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replace_original: true, ...message }),
+    });
+    if (!res.ok) log.warn("replacing my reservations failed", { status: res.status });
+  }
+
+  // Cancel on a line of the "mine" list. Only the member it was built for
+  // may press it; the list has no thread, so every answer is private.
+  async function cancelFromList({ payload, action, client }) {
+    const picked = decodeRef(action.value);
+    if (!picked || !adapters[picked.ref.backend]) return;
+    const channel = payload.channel?.id || payload.container?.channel_id;
+    const userId = payload.user?.id;
+    const say = privateSay(client, { channel, user: userId, responseUrl: payload.response_url ?? null });
+    if (userId !== picked.user) return say.done(`Only <@${picked.user}> can cancel this.`);
+    if (hasEnded(picked.ref)) return say.done(ENDED_TEXT);
+    if (say.responseUrl) {
+      const replace = (notice) => replaceMine({ responseUrl: say.responseUrl, user: userId, client, notice });
+      say.done = replace;
+      say.failed = replace;
+    }
+    return cancelBooking({ ref: picked.ref, user: userId, say, client });
   }
 
   async function resume({ pendingId, client }) {
@@ -442,6 +558,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (!raw) return say.done("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
     if (req.intent === "other") return;
+    if (req.intent === "mine") return postMine({ channel: event.channel, user: event.user, client });
     // "Sat 2-4" is afternoon. The model is told so, but a small-hours time
     // nobody wrote "am" for is asked about rather than booked at 2 AM.
     if (req.start != null && req.start < 7 * 60 && !/\d\s*(am|a\.m\.)|morning|sunrise/i.test(text)) {
@@ -471,6 +588,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   async function handleCardAction({ payload, client }) {
     const action = (payload.actions || []).find((a) => CARD_ACTIONS.has(a.action_id));
     if (!action) return;
+    if (action.action_id === MINE_CANCEL_ACTION) return cancelFromList({ payload, action, client });
     const channel = payload.channel?.id || payload.container?.channel_id;
     const cardTs = payload.container?.message_ts || payload.message?.ts;
     const threadTs = payload.message?.thread_ts || cardTs;

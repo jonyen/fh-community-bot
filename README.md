@@ -207,6 +207,7 @@ plain message in #reservations, no command or @mention needed:
 - `Tech Set 2 Sat 2-4pm for youth night`
 - `is the MPR free Wednesday 7-9?`
 - `who has the pickleball set this weekend?`
+- `what do I have booked?`
 
 The bot reads every top-level message and replies in its thread. Chatter gets
 no reply. Thread replies are left to people, so members can sort out a conflict
@@ -224,7 +225,23 @@ there without the bot joining in.
 - **Edit** opens a form pre-filled from the card (item search, day, start, end,
   what it's for, and kitchen equipment for kitchen requests). Submitting it
   updates the card; it does not book.
-- Only the member who asked can press Book or Edit.
+- **Cancel** on an open card closes it (`🚫 Cancelled by @member.`). Nothing
+  is written.
+- A booked card keeps a **Cancel booking** button. After a confirm dialog it
+  releases the booking: a rooms row is marked `Canceled` in Status (the row
+  stays), a kitchen row is cleared (the dated row stays), and a calendar event
+  is deleted, or only its resources are removed when it has other guests. The
+  card keeps its ✅ line and adds `🚫 Booking cancelled by @member.` A booking
+  that was edited since, or has already ended, is not touched.
+- **"What do I have booked?"** gets a private reply in the channel: the
+  member's bookings from today through 60 days ahead, at most 20 lines, each
+  with its own **Cancel** (behind a confirm dialog). Bookings the bot made are
+  matched exactly. Rows typed into the sheets by hand are matched by name (and,
+  for the kitchen, phone), so those lines say `from the rooms sheet, matched by
+  name` and the confirm dialog quotes the row as typed. Without connected
+  accounts, a calendar event the member made themselves gets an **Open in
+  Calendar** link instead of Cancel.
+- Only the member who asked can press Book, Edit, Cancel or Cancel booking.
 
 The request rides in the card's buttons, so the bot stores nothing. A second
 press, or a press on a card that was edited since, does nothing. Bookings are

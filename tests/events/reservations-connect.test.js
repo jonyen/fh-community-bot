@@ -4,6 +4,7 @@ import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
 import { cardMessage, bookedMessage, EDIT_ACTION, CANCEL_ACTION } from "../../src/lib/reservation-card.js";
+import { mineMessage } from "../../src/lib/reservation-mine.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const TRANSIT = { label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "tr" };
@@ -214,14 +215,46 @@ describe("reservations with connected accounts", () => {
       expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
     });
 
-    it("a resumed cancel with no card answers in the thread", async () => {
+    it("a cancel from the list prompts privately, then resumes and answers privately, never in public", async () => {
+      const connect = makeConnect("none");
+      const button = mineMessage({ user: "U9", entries: [{ item: "MPR", ...ROOM_REF, matchedBy: null, openLink: null, ref: ROOM_REF }], more: 0, links: {} })
+        .blocks.find((b) => b.accessory).accessory;
+      await handler(connect).handleCardAction({ client, payload: {
+        type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
+        container: { type: "message", message_ts: "300.1", channel_id: "CRES", is_ephemeral: true },
+        response_url: "https://hooks.slack/actions/r1", actions: [button],
+      } });
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+      const row = connect.authStore.createPending.mock.calls[0][0];
+      expect(row).toEqual({
+        slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: null,
+        request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: null, responseUrl: "https://hooks.slack/actions/r1" },
+      });
+      const [prompt] = ephemerals();
+      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", text: "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve." });
+      expect(prompt.thread_ts).toBeUndefined();
+
+      client.chat.postEphemeral.mockClear();
+      const after = makeConnect("active");
+      after.authStore.getPending.mockResolvedValue(row);
+      await handler(after).resume({ pendingId: "P1", client });
+      expect(adapters.rooms.cancel.mock.calls).toEqual([[ROOM_REF, { clients: MEMBER_CLIENTS }]]);
+      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: "🚫 Booking cancelled by <@U9>.", username: "FH Reservations", icon_emoji: ":calendar:" }]);
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+    });
+
+    it("a resumed cancel with no card answers privately, even with a thread on the row", async () => {
       const connect = makeConnect("active");
+      adapters.rooms.cancel.mockResolvedValue({ status: "changed", link: "https://rooms/x" });
       connect.authStore.getPending.mockResolvedValue({
         slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: MSG_TS,
         request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: null, responseUrl: null },
       });
       await handler(connect).resume({ pendingId: "P1", client });
-      expect(client.chat.postMessage.mock.calls[0][0]).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, text: "🚫 Booking cancelled by <@U9>." });
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U9", text: "I couldn't find that booking as it was; it may have been changed. Please check it here: https://rooms/x" })]);
+      expect(ephemerals()[0].thread_ts).toBeUndefined();
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
       expect(client.chat.update).not.toHaveBeenCalled();
     });
 

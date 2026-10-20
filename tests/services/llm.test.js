@@ -256,6 +256,14 @@ describe("reservation prompt find intent", () => {
   });
 });
 
+describe("reservation prompt mine intent", () => {
+  it("offers mine for questions about one's own bookings", async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "{}" }] });
+    await createLlmService({ messages: { create } }).parseReservationRequest("Member: x", { catalogText: "", today: "2026-10-20", weekday: "Tuesday" });
+    expect(create.mock.calls[0][0].system).toContain('"mine" (asks what they themselves have booked, e.g. "what do I have booked?", "my reservations")');
+  });
+});
+
 describe("reservation prompt periods", () => {
   it("tells the model to resolve 'this month' style periods into date and toDate", async () => {
     const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "{}" }] });
