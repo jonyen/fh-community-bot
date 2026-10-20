@@ -44,9 +44,12 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     return rows;
   }
 
+  const refOf = (r) => ({ backend: "kitchen", row: r.row, date: r.date, name: r.name, start: r.start, end: r.end });
+
   const toReservation = (r) => ({
     category: "kitchen", item: "Kitchen", date: r.date, start: r.start, end: r.end, title: r.name,
-    holder: r.phone ? `${r.name} (${r.phone})` : r.name, holderUserId: null, holderEmail: null,
+    holder: r.phone ? `${r.name} (${r.phone})` : r.name, holderName: r.name, phone: r.phone,
+    holderUserId: null, holderEmail: null, ref: refOf(r),
   });
 
   async function listReservations({ from, to }) {
@@ -81,8 +84,20 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
       spreadsheetId,
       requestBody: { valueInputOption: "USER_ENTERED", data },
     });
-    return { status: "booked", link };
+    return { status: "booked", link, ref: refOf({ row: free.row, date, name: requesterName.trim(), start, end }) };
   }
 
-  return { backend: "kitchen", link, listReservations, findConflicts, book };
+  async function cancel(ref, { clients } = {}) {
+    const target = (await readRows()).find((r) => r.row === ref.row);
+    if (!target) return { status: "changed", link };
+    if (!target.name) return { status: "already", link };
+    if (target.name !== ref.name.trim() || target.date !== ref.date || target.start !== ref.start || target.end !== ref.end) {
+      return { status: "changed", link };
+    }
+    const writer = clients?.sheetsClient || sheetsClient;
+    await writer.spreadsheets.values.clear({ spreadsheetId, range: `'${tab}'!B${target.row}:P${target.row}` });
+    return { status: "cancelled", link };
+  }
+
+  return { backend: "kitchen", link, listReservations, findConflicts, book, cancel };
 }

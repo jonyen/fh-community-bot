@@ -27,6 +27,7 @@ function makeSheets(values = SHEET) {
       values: {
         get: vi.fn().mockResolvedValue({ data: { values } }),
         batchUpdate: vi.fn().mockResolvedValue({}),
+        clear: vi.fn().mockResolvedValue({}),
       },
     },
   };
@@ -46,8 +47,10 @@ describe("kitchen adapter", () => {
   it("lists filled rows after the header, skipping SAMPLE rows", async () => {
     const { reservations } = await adapter.listReservations({ from: "2026-10-17", to: "2026-10-17" });
     expect(reservations).toEqual([
-      { category: "kitchen", item: "Kitchen", date: "2026-10-17", start: 1020, end: 1140, title: "RPG", holder: "RPG (111)", holderUserId: null, holderEmail: null },
-      { category: "kitchen", item: "Kitchen", date: "2026-10-17", start: 1080, end: 1200, title: "AYM", holder: "AYM (222)", holderUserId: null, holderEmail: null },
+      { category: "kitchen", item: "Kitchen", date: "2026-10-17", start: 1020, end: 1140, title: "RPG", holder: "RPG (111)", holderName: "RPG", phone: "111", holderUserId: null, holderEmail: null,
+        ref: { backend: "kitchen", row: 7, date: "2026-10-17", name: "RPG", start: 1020, end: 1140 } },
+      { category: "kitchen", item: "Kitchen", date: "2026-10-17", start: 1080, end: 1200, title: "AYM", holder: "AYM (222)", holderName: "AYM", phone: "222", holderUserId: null, holderEmail: null,
+        ref: { backend: "kitchen", row: 8, date: "2026-10-17", name: "AYM", start: 1080, end: 1200 } },
     ]);
   });
 
@@ -65,7 +68,10 @@ describe("kitchen adapter", () => {
       date: "2026-10-17", start: 1020, end: 1080, requesterName: "Jina Kim", phone: "555-0100",
       appliances: { airFryer: true, largeRiceCooker: 2 },
     });
-    expect(res).toEqual({ status: "booked", link: "https://kitchen" });
+    expect(res).toEqual({
+      status: "booked", link: "https://kitchen",
+      ref: { backend: "kitchen", row: 9, date: "2026-10-17", name: "Jina Kim", start: 1020, end: 1080 },
+    });
     expect(sheets.spreadsheets.values.batchUpdate).toHaveBeenCalledWith({
       spreadsheetId: "K1",
       requestBody: {
@@ -114,5 +120,65 @@ describe("kitchen adapter", () => {
     expect(sheets.spreadsheets.values.get).toHaveBeenCalled();
     expect(member.spreadsheets.values.batchUpdate).toHaveBeenCalledTimes(1);
     expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it("book's ref equals what a later read of that row lists", async () => {
+    const res = await adapter.book({ date: "2026-10-17", start: 1020, end: 1080, requesterName: "  Jina Kim ", phone: "", appliances: {} });
+    const rows = SHEET.map((r) => [...r]);
+    rows[8] = ["Sat, 10/17", "Jina Kim", "", "5:00 PM", "6:00 PM", ...F];
+    adapter = createKitchenAdapter({
+      sheetsClient: makeSheets(rows), spreadsheetId: "K1", tab: "FH-Kitchen-RSVP", link: "https://kitchen",
+      now: () => new Date("2026-10-14T12:00:00Z"),
+    });
+    const { reservations } = await adapter.listReservations({ from: "2026-10-17", to: "2026-10-17" });
+    expect(reservations.find((r) => r.ref.row === 9).ref).toEqual(res.ref);
+  });
+
+  describe("cancel", () => {
+    const ref = { backend: "kitchen", row: 7, date: "2026-10-17", name: "RPG", start: 1020, end: 1140 };
+
+    it("clears B:P of the row", async () => {
+      const res = await adapter.cancel(ref);
+      expect(sheets.spreadsheets.values.clear).toHaveBeenCalledWith({ spreadsheetId: "K1", range: "'FH-Kitchen-RSVP'!B7:P7" });
+      expect(res).toEqual({ status: "cancelled", link: "https://kitchen" });
+    });
+
+    it("returns already when the row's name is empty", async () => {
+      const res = await adapter.cancel({ ...ref, row: 9 });
+      expect(res).toEqual({ status: "already", link: "https://kitchen" });
+      expect(sheets.spreadsheets.values.clear).not.toHaveBeenCalled();
+    });
+
+    it("returns changed when the name or times differ, and clears nothing", async () => {
+      for (const patch of [{ name: "Other" }, { start: 1000 }, { end: 1200 }, { date: "2026-10-18" }]) {
+        const res = await adapter.cancel({ ...ref, ...patch });
+        expect(res).toEqual({ status: "changed", link: "https://kitchen" });
+      }
+      expect(sheets.spreadsheets.values.clear).not.toHaveBeenCalled();
+    });
+
+    it("returns changed when the row is gone", async () => {
+      const res = await adapter.cancel({ ...ref, row: 99 });
+      expect(res.status).toBe("changed");
+      expect(sheets.spreadsheets.values.clear).not.toHaveBeenCalled();
+    });
+
+    it("ignores appliance columns when matching", async () => {
+      const rows = SHEET.map((r) => [...r]);
+      rows[6] = ["Sat, 10/17", "RPG", "111", "5:00 PM", "7:00 PM", "TRUE", "TRUE", "FALSE", "2", "--", "TRUE"];
+      adapter = createKitchenAdapter({
+        sheetsClient: makeSheets(rows), spreadsheetId: "K1", tab: "FH-Kitchen-RSVP", link: "https://kitchen",
+        now: () => new Date("2026-10-14T12:00:00Z"),
+      });
+      expect((await adapter.cancel(ref)).status).toBe("cancelled");
+    });
+
+    it("clears with the member's Sheets client but reads with the bot's", async () => {
+      const member = { spreadsheets: { values: { clear: vi.fn().mockResolvedValue({}) } } };
+      const res = await adapter.cancel(ref, { clients: { sheetsClient: member } });
+      expect(res.status).toBe("cancelled");
+      expect(member.spreadsheets.values.clear).toHaveBeenCalledWith({ spreadsheetId: "K1", range: "'FH-Kitchen-RSVP'!B7:P7" });
+      expect(sheets.spreadsheets.values.clear).not.toHaveBeenCalled();
+    });
   });
 });
