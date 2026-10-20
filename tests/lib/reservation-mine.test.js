@@ -37,6 +37,21 @@ describe("mineMessage", () => {
     expect(line.accessory.confirm.text.text).toBe('"MBS " · deandra shim · Sat 10/24 · 10:00 AM–12:00 PM in the rooms sheet');
   });
 
+  it("a name-matched kitchen row quotes just the name, since the kitchen title is the name", () => {
+    const KREF = { backend: "kitchen", row: 7, date: "2026-10-24", start: 600, end: 720, name: "Deandra Shim" };
+    const KITCHEN = { item: "Kitchen", date: "2026-10-24", start: 600, end: 720, title: "Deandra Shim", holderName: "Deandra Shim", ref: KREF, matchedBy: "kitchen", openLink: null };
+    const line = sections(mineMessage({ user: "U9", entries: [KITCHEN], more: 0, links: LINKS }))[1];
+    expect(line.accessory.confirm.text.text).toBe("Deandra Shim · Sat 10/24 · 10:00 AM–12:00 PM in the kitchen sheet");
+  });
+
+  it("caps a huge hand-typed title so no section passes Slack's 3,000 characters", () => {
+    const big = "x".repeat(5000);
+    const m = mineMessage({ user: "U9", entries: [{ ...RMS, title: big }], more: 0, links: LINKS, notice: `🚫 Cancelled ${big}` });
+    for (const b of sections(m)) expect(b.text.text.length).toBeLessThanOrEqual(3000);
+    expect(sections(m)[2].text.text).toMatch(/^📅 \*Tech Set 2\* · Wed 10\/21 · 2:00–4:00 PM · x+…$/);
+    expect(sections(m)[0].text.text.endsWith("…")).toBe(true);
+  });
+
   it("an entry with an open link gets Open in Calendar instead of Cancel", () => {
     const m = mineMessage({ user: "U9", entries: [{ ...RMS, openLink: "https://calendar.google.com/calendar/u/0/r?cid=t2" }], more: 0, links: LINKS });
     const b = sections(m)[1].accessory;

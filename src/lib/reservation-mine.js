@@ -3,7 +3,7 @@
 // line each with a Cancel button. A line found by a guessed name says so, and
 // its confirm quotes the sheet row as typed so a wrong match is easy to spot.
 import { fmtDay, fmtRange } from "./reservation-time.js";
-import { encodeRef } from "./reservation-card.js";
+import { encodeRef, fitSection } from "./reservation-card.js";
 
 export const MINE_CANCEL_ACTION = "reservation_mine_cancel";
 export const MINE_OPEN_ACTION = "reservation_mine_open";
@@ -15,7 +15,7 @@ const VALUE_MAX = 2000;
 const CONFIRM_MAX = 300;
 
 const plain = (text) => ({ type: "plain_text", text });
-const section = (text, accessory) => ({ type: "section", text: { type: "mrkdwn", text }, ...(accessory ? { accessory } : {}) });
+const section = (text, accessory) => ({ type: "section", text: { type: "mrkdwn", text: fitSection(text) }, ...(accessory ? { accessory } : {}) });
 
 // Labels in a fixed order; only backends that are configured have a link.
 export function linksLine(links = {}) {
@@ -33,9 +33,10 @@ function entryLine(e) {
 
 function confirmText(e) {
   const when = `${fmtDay(e.date)} · ${fmtRange(e.start, e.end)}`;
-  return e.matchedBy
-    ? `"${e.title ?? ""}" · ${e.holderName ?? ""} · ${when} in the ${e.matchedBy} sheet`
-    : `${e.item} · ${when} will be released.`;
+  if (!e.matchedBy) return `${e.item} · ${when} will be released.`;
+  // A kitchen row's title is its name, so quote the name once.
+  const row = e.matchedBy === "kitchen" ? `${e.holderName ?? ""}` : `"${e.title ?? ""}" · ${e.holderName ?? ""}`;
+  return `${row} · ${when} in the ${e.matchedBy} sheet`;
 }
 
 function accessoryFor(user, e) {

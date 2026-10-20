@@ -142,6 +142,18 @@ describe("bookedMessage and refs", () => {
     expect(cardSummaryLine(msg)).toBe("✅ Tech Set 2 · Sat 10/17 · 2:00–4:00 PM · Youth night · <@U9>");
   });
 
+  it("caps section text at Slack's 3,000 characters for a huge hand-typed title", () => {
+    const big = `✅ Tech Set 2 · Sat 10/17 · ${"x".repeat(5000)}`;
+    for (const msg of [bookedMessage({ user: "U9", text: big, ref: REF, req: REQ }), closedMessage(big)]) {
+      const [section] = msg.blocks;
+      expect(section.text.text).toHaveLength(3000);
+      expect(section.text.text.endsWith("…")).toBe(true);
+      expect(section.text.text.startsWith("✅ Tech Set 2 · Sat 10/17 · x")).toBe(true);
+    }
+    const card = cardMessage({ user: "U9", req: { ...REQ, title: "x".repeat(5000) }, assessment: { state: "free" } });
+    expect(card.blocks.find((b) => b.type === "section").text.text.length).toBeLessThanOrEqual(3000);
+  });
+
   it("a ref too big for a button value leaves the button off", () => {
     const msg = bookedMessage({ user: "U9", text: TEXT, ref: { ...REF, title: "x".repeat(2100) }, req: REQ });
     expect(actionsOf(msg)).toEqual([]);

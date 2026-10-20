@@ -17,6 +17,10 @@ const VALUE_MAX = 2000;
 const TITLE_MAX = 150;
 const MINISTRY_MAX = 100;
 const cut = (s, n) => (s ? String(s).slice(0, n) : null);
+// Slack refuses a whole message when one section's text passes 3,000
+// characters, and a hand-typed title can be any length.
+const SECTION_MAX = 3000;
+export const fitSection = (text) => (text.length > SECTION_MAX ? `${text.slice(0, SECTION_MAX - 1)}…` : text);
 
 export function encodeCard({ user, req }) {
   return JSON.stringify({
@@ -89,7 +93,7 @@ export function cardMessage({ user, req, assessment }) {
   return {
     text: summary(req, { bold: false }),
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text: `${summary(req, { bold: true })}\n${status(assessment)}` } },
+      { type: "section", text: { type: "mrkdwn", text: fitSection(`${summary(req, { bold: true })}\n${status(assessment)}`) } },
       { type: "actions", elements: buttons },
     ],
     metadata: { event_type: CARD_EVENT_TYPE, event_payload: { user } },
@@ -98,7 +102,7 @@ export function cardMessage({ user, req, assessment }) {
 
 // The card once it is booked or refused: the outcome, no buttons.
 export function closedMessage(text) {
-  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }], metadata: CLOSED_METADATA };
+  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text: fitSection(text) } }], metadata: CLOSED_METADATA };
 }
 
 // Where a written booking lives, so Cancel booking can find it again. The
@@ -132,7 +136,7 @@ export function bookedMessage({ user, text, ref, req }) {
   return {
     text,
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text } },
+      { type: "section", text: { type: "mrkdwn", text: fitSection(text) } },
       { type: "actions", elements: [{
         type: "button", action_id: CANCEL_BOOKING_ACTION, style: "danger", text: plain("Cancel booking"), value,
         confirm: { title: plain("Cancel this booking?"), text: plain(`${what} will be released.`.slice(0, 300)), confirm: plain("Cancel booking"), deny: plain("Keep it") },
