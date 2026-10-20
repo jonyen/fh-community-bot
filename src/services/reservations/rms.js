@@ -20,9 +20,12 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+// book() writes this line, so it marks an event the bot made.
+const SLACK_MARK = /Slack: <@([A-Z0-9]+)>/;
+
 function holderOf(e) {
   const desc = e.description || "";
-  const userId = desc.match(/Slack: <@([A-Z0-9]+)>/)?.[1] || null;
+  const userId = desc.match(SLACK_MARK)?.[1] || null;
   const name = desc.match(/Requested by: (.+)/)?.[1]?.trim();
   if (e.organizer?.self && name) return { holder: name, holderUserId: userId, holderEmail: null };
   const email = e.organizer?.email || e.creator?.email || null;
@@ -144,8 +147,9 @@ export function createRmsAdapter({
     return { status: "booked", link: itemLink, ref };
   }
 
-  // Delete the event when nobody else is invited; otherwise only release the
-  // booked resources so the people's event survives.
+  // Delete an event the bot made when nobody else is invited; otherwise
+  // (made in Google Calendar, or with guests) only release the booked
+  // resources so the people's event survives.
   async function cancel(ref, { clients } = {}) {
     const [cal, calendarId] = ref.organizerSelf ? [calendarClient, botCalendarId] : [clients?.calendarClient, "primary"];
     if (!cal) throw new Error("member clients required");
@@ -164,7 +168,7 @@ export function createRmsAdapter({
     const organizer = e.organizer?.email;
     const attendees = e.attendees || [];
     const people = attendees.filter((a) => !a.resource && !a.self && a.email !== organizer);
-    if (people.length === 0) {
+    if (people.length === 0 && SLACK_MARK.test(e.description || "")) {
       await cal.events.delete({ calendarId, eventId, sendUpdates: "all" });
     } else {
       await cal.events.patch({

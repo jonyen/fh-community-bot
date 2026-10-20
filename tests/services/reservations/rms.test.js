@@ -175,6 +175,7 @@ describe("rms adapter", () => {
         start: { dateTime: nyLocal("2026-10-17", 840), timeZone: "America/New_York" },
         end: { dateTime: nyLocal("2026-10-17", 960), timeZone: "America/New_York" },
         organizer: { email: "bot@x", self: true },
+        description: "Requested by: Jon Yen\nSlack: <@U1>",
         attendees: [{ email: SET2.calendarId, resource: true }],
         ...extra,
       },
@@ -213,6 +214,20 @@ describe("rms adapter", () => {
         requestBody: { attendees: [{ email: "pat@x.org" }] },
       });
       expect(cal.events.delete).not.toHaveBeenCalled();
+    });
+
+    it("removes only the booked resources from a member-made event with no guests and no bot marker", async () => {
+      const memberCal = makeCalendar();
+      memberCal.events.get.mockResolvedValue(got({ organizer: { email: "me@x", self: true }, description: "Team practice" }));
+      const res = await adapter.cancel(ref({ organizerSelf: false, organizerEmail: "me@x" }), { clients: { calendarClient: memberCal } });
+      expect(res.status).toBe("cancelled");
+      expect(memberCal.events.patch).toHaveBeenCalledWith({
+        calendarId: "primary", eventId: "E1", sendUpdates: "all", requestBody: { attendees: [] },
+      });
+      expect(memberCal.events.delete).not.toHaveBeenCalled();
+      memberCal.events.get.mockResolvedValue(got({ organizer: { email: "me@x", self: true }, description: undefined }));
+      await adapter.cancel(ref({ organizerSelf: false, organizerEmail: "me@x" }), { clients: { calendarClient: memberCal } });
+      expect(memberCal.events.delete).not.toHaveBeenCalled();
     });
 
     it("returns already for a cancelled event", async () => {

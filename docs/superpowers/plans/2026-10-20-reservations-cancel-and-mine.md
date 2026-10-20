@@ -16,7 +16,7 @@
 - Before-booking Cancel closes the card with `🚫 Cancelled by <@U>.` No confirm dialog. Nothing is written.
 - After-booking cancel: button text `Cancel booking`, with a Slack `confirm` object naming items, day and time.
 - Card after a booking is cancelled: the original ✅ summary line, then `🚫 Booking cancelled by <@U>.`
-- RMS: delete the event when it has no human attendees besides the organizer; otherwise patch it to remove only the booking's resource attendees. `sendUpdates: "all"` on both. A recurring event's instance id cancels only that occurrence.
+- RMS: delete the event when the bot made it (its description carries the `Slack: <@…>` line book() writes) and it has no human attendees besides the organizer; otherwise (made in Google Calendar, or with human guests) patch it to remove only the booking's resource attendees. `sendUpdates: "all"` on both. A recurring event's instance id cancels only that occurrence.
 - Rooms: write `Canceled` in Status (column H). Never delete or clear a rooms row. `canceled` and `cancelled` are inactive like `denied`/`declined`.
 - Kitchen: clear B–P of the row (name, phone, times, appliances); the dated row stays.
 - "Still matches": rooms compare title, date, start, end, name (F) and rooms set; kitchen compares name, date, start, end; RMS compares event status not cancelled, and date and start. Status, notes and appliances are never compared.
