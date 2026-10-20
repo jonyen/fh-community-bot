@@ -1,6 +1,7 @@
 // tests/services/reservations/rms.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRmsAdapter } from "../../../src/services/reservations/rms.js";
+import { nyLocal } from "../../../src/lib/reservation-time.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "set2@resource.calendar.google.com" };
 const POOL = { label: "Kiddie Pool", category: "accessories", backend: "rms", calendarId: "pool@resource.calendar.google.com" };
@@ -16,6 +17,7 @@ function makeCalendar() {
       insert: vi.fn().mockResolvedValue({ data: { id: "E1" } }),
       get: vi.fn().mockResolvedValue({ data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "accepted" }] } }),
       delete: vi.fn().mockResolvedValue({}),
+      patch: vi.fn().mockResolvedValue({}),
     },
   };
 }
@@ -30,7 +32,7 @@ describe("rms adapter", () => {
 
   it("lists every catalog calendar over the NY window", async () => {
     cal.events.list.mockImplementation(async ({ calendarId }) => ({
-      data: { items: calendarId === SET2.calendarId ? [ev("Youth night — Deandra", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { organizer: { email: "alan@acts2.network", displayName: "Alan Chow" } })] : [] },
+      data: { items: calendarId === SET2.calendarId ? [ev("Youth night — Deandra", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { id: "EV1", organizer: { email: "alan@acts2.network", displayName: "Alan Chow" } })] : [] },
     }));
     const { reservations, errors } = await adapter.listReservations({ from: "2026-10-12", to: "2026-10-18" });
     expect(errors).toEqual([]);
@@ -41,6 +43,10 @@ describe("rms adapter", () => {
     expect(reservations).toEqual([{
       category: "tech", item: "Tech Set 2", date: "2026-10-17", start: 840, end: 960,
       title: "Youth night — Deandra", holder: "Alan Chow", holderUserId: null, holderEmail: "alan@acts2.network",
+      ref: {
+        backend: "rms", eventId: "EV1", organizerEmail: "alan@acts2.network", organizerSelf: false,
+        resources: [SET2.calendarId], date: "2026-10-17", start: 840, end: 960, title: "Youth night — Deandra",
+      },
     }]);
   });
 
@@ -85,7 +91,14 @@ describe("rms adapter", () => {
       date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night",
       requesterName: "Deandra Shim", requesterUserId: "U9",
     });
-    expect(res).toEqual({ status: "booked", link: "https://calendar.google.com/calendar/u/0/r?cid=set2%40resource.calendar.google.com" });
+    expect(res).toEqual({
+      status: "booked",
+      link: "https://calendar.google.com/calendar/u/0/r?cid=set2%40resource.calendar.google.com",
+      ref: {
+        backend: "rms", eventId: "E1", organizerEmail: null, organizerSelf: true,
+        resources: [SET2.calendarId], date: "2026-10-17", start: 840, end: 960, title: "Youth night — Deandra Shim",
+      },
+    });
     expect(cal.events.insert).toHaveBeenCalledWith({
       calendarId: "primary",
       // A resource only processes the invite when it is actually sent
@@ -148,5 +161,115 @@ describe("rms adapter", () => {
     expect(memberCal.events.insert).toHaveBeenCalledTimes(1);
     expect(memberCal.events.get).toHaveBeenCalled();
     expect(cal.events.insert).not.toHaveBeenCalled();
+  });
+
+  describe("cancel", () => {
+    const LINK = "https://calendar.google.com/calendar/u/0/r?cid=set2%40resource.calendar.google.com";
+    const ref = (extra = {}) => ({
+      backend: "rms", eventId: "E1", organizerEmail: null, organizerSelf: true,
+      resources: [SET2.calendarId], date: "2026-10-17", start: 840, end: 960, title: "T", ...extra,
+    });
+    const got = (extra = {}) => ({
+      data: {
+        status: "confirmed",
+        start: { dateTime: nyLocal("2026-10-17", 840), timeZone: "America/New_York" },
+        end: { dateTime: nyLocal("2026-10-17", 960), timeZone: "America/New_York" },
+        organizer: { email: "bot@x", self: true },
+        attendees: [{ email: SET2.calendarId, resource: true }],
+        ...extra,
+      },
+    });
+
+    it("deletes a bot event with only resource attendees", async () => {
+      cal.events.get.mockResolvedValue(got());
+      const res = await adapter.cancel(ref());
+      expect(res).toEqual({ status: "cancelled", link: LINK });
+      expect(cal.events.delete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1", sendUpdates: "all" });
+      expect(cal.events.patch).not.toHaveBeenCalled();
+    });
+
+    it("uses the configured bot calendar id", async () => {
+      const a = createRmsAdapter({ calendarClient: cal, catalog: [SET2], botCalendarId: "bot@x", sleep: async () => {} });
+      cal.events.get.mockResolvedValue(got());
+      await a.cancel(ref());
+      expect(cal.events.get).toHaveBeenCalledWith({ calendarId: "bot@x", eventId: "E1" });
+      expect(cal.events.delete).toHaveBeenCalledWith({ calendarId: "bot@x", eventId: "E1", sendUpdates: "all" });
+    });
+
+    it("ignores the organizer and self attendees when deciding whether people are invited", async () => {
+      cal.events.get.mockResolvedValue(got({ attendees: [
+        { email: SET2.calendarId, resource: true }, { email: "bot@x" }, { email: "me@x", self: true },
+      ] }));
+      await adapter.cancel(ref());
+      expect(cal.events.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it("removes only the booked resources when people are invited", async () => {
+      cal.events.get.mockResolvedValue(got({ attendees: [{ email: SET2.calendarId, resource: true }, { email: "pat@x.org" }] }));
+      const res = await adapter.cancel(ref());
+      expect(res.status).toBe("cancelled");
+      expect(cal.events.patch).toHaveBeenCalledWith({
+        calendarId: "primary", eventId: "E1", sendUpdates: "all",
+        requestBody: { attendees: [{ email: "pat@x.org" }] },
+      });
+      expect(cal.events.delete).not.toHaveBeenCalled();
+    });
+
+    it("returns already for a cancelled event", async () => {
+      cal.events.get.mockResolvedValue(got({ status: "cancelled" }));
+      expect(await adapter.cancel(ref())).toEqual({ status: "already", link: LINK });
+      expect(cal.events.delete).not.toHaveBeenCalled();
+    });
+
+    it("returns already for a 404 or 410", async () => {
+      cal.events.get.mockRejectedValueOnce(Object.assign(new Error("Not Found"), { code: 404 }));
+      expect((await adapter.cancel(ref())).status).toBe("already");
+      cal.events.get.mockRejectedValueOnce(Object.assign(new Error("Gone"), { response: { status: 410 } }));
+      expect((await adapter.cancel(ref())).status).toBe("already");
+      expect(cal.events.delete).not.toHaveBeenCalled();
+    });
+
+    it("propagates other errors", async () => {
+      cal.events.get.mockRejectedValue(Object.assign(new Error("boom"), { code: 500 }));
+      await expect(adapter.cancel(ref())).rejects.toThrow("boom");
+    });
+
+    it("returns changed when the event moved to another day or time", async () => {
+      cal.events.get.mockResolvedValueOnce(got({ start: { dateTime: nyLocal("2026-10-18", 840) }, end: { dateTime: nyLocal("2026-10-18", 960) } }));
+      expect((await adapter.cancel(ref())).status).toBe("changed");
+      cal.events.get.mockResolvedValueOnce(got({ start: { dateTime: nyLocal("2026-10-17", 900) }, end: { dateTime: nyLocal("2026-10-17", 960) } }));
+      expect(await adapter.cancel(ref())).toEqual({ status: "changed", link: LINK });
+      expect(cal.events.delete).not.toHaveBeenCalled();
+      expect(cal.events.patch).not.toHaveBeenCalled();
+    });
+
+    it("compares all-day events by date with a null start", async () => {
+      cal.events.get.mockResolvedValue(got({ start: { date: "2026-10-17" }, end: { date: "2026-10-18" } }));
+      expect((await adapter.cancel(ref({ start: null, end: null }))).status).toBe("cancelled");
+      expect((await adapter.cancel(ref())).status).toBe("changed");
+    });
+
+    it("cancels a member-organized event with the member's client on primary", async () => {
+      const memberCal = makeCalendar();
+      memberCal.events.get.mockResolvedValue(got({ organizer: { email: "me@x", self: true } }));
+      const a = createRmsAdapter({ calendarClient: cal, catalog: [SET2], botCalendarId: "bot@x", sleep: async () => {} });
+      const res = await a.cancel(ref({ organizerSelf: false, organizerEmail: "me@x" }), { clients: { calendarClient: memberCal } });
+      expect(res.status).toBe("cancelled");
+      expect(memberCal.events.get).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1" });
+      expect(memberCal.events.delete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1", sendUpdates: "all" });
+      expect(cal.events.get).not.toHaveBeenCalled();
+    });
+
+    it("throws when a non-bot event has no member clients", async () => {
+      await expect(adapter.cancel(ref({ organizerSelf: false }))).rejects.toThrow("member clients required");
+      expect(cal.events.get).not.toHaveBeenCalled();
+    });
+
+    it("keeps the same eventId when one event is listed from two resources", async () => {
+      cal.events.list.mockResolvedValue({ data: { items: [ev("Shared", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { id: "EV9" })] } });
+      const { reservations } = await adapter.listReservations({ from: "2026-10-17", to: "2026-10-17", items: [SET2, POOL] });
+      expect(reservations.map((r) => r.ref.eventId)).toEqual(["EV9", "EV9"]);
+      expect(reservations.map((r) => r.ref.resources)).toEqual([[SET2.calendarId], [POOL.calendarId]]);
+    });
   });
 });
