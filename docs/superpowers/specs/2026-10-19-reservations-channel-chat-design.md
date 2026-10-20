@@ -104,10 +104,12 @@ message:
   user): the channel sees the booking in the living digest only.
 - If the slot filled since the card was posted, the card changes to the
   Taken state. Nothing is written.
-- **Double clicks and SQS redelivery:** the booking claim keyed on the card's
-  message `ts` makes the second press a no-op. Today `claimBooking` lives in
-  `authStore` and is only present when connect is configured. It must work
-  without connect too.
+- **Double clicks:** one member's presses run one at a time (the FIFO queue
+  groups by user). Before booking, the worker re-reads the card and books only
+  if it still has a Book button carrying the pressed value, so a second press
+  or a press on an edited card does nothing. **SQS redelivery** after a crash
+  mid-write is still guarded by `claimBooking`, keyed `card:<channel>:<ts>`,
+  when connect is configured.
 - If connect is configured and the member isn't connected, the existing
   connect prompt is posted ephemerally in the thread, and `resume` replaces the
   card instead of replying in the DM.
