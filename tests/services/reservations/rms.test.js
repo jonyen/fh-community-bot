@@ -1,7 +1,7 @@
 // tests/services/reservations/rms.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRmsAdapter } from "../../../src/services/reservations/rms.js";
-import { nyLocal } from "../../../src/lib/reservation-time.js";
+import { nyDateTime } from "../../../src/lib/reservation-time.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "set2@resource.calendar.google.com" };
 const POOL = { label: "Kiddie Pool", category: "accessories", backend: "rms", calendarId: "pool@resource.calendar.google.com" };
@@ -172,8 +172,8 @@ describe("rms adapter", () => {
     const got = (extra = {}) => ({
       data: {
         status: "confirmed",
-        start: { dateTime: nyLocal("2026-10-17", 840), timeZone: "America/New_York" },
-        end: { dateTime: nyLocal("2026-10-17", 960), timeZone: "America/New_York" },
+        start: { dateTime: nyDateTime("2026-10-17", 840), timeZone: "America/New_York" },
+        end: { dateTime: nyDateTime("2026-10-17", 960), timeZone: "America/New_York" },
         organizer: { email: "bot@x", self: true },
         description: "Requested by: Jon Yen\nSlack: <@U1>",
         attendees: [{ email: SET2.calendarId, resource: true }],
@@ -250,9 +250,9 @@ describe("rms adapter", () => {
     });
 
     it("returns changed when the event moved to another day or time", async () => {
-      cal.events.get.mockResolvedValueOnce(got({ start: { dateTime: nyLocal("2026-10-18", 840) }, end: { dateTime: nyLocal("2026-10-18", 960) } }));
+      cal.events.get.mockResolvedValueOnce(got({ start: { dateTime: nyDateTime("2026-10-18", 840) }, end: { dateTime: nyDateTime("2026-10-18", 960) } }));
       expect((await adapter.cancel(ref())).status).toBe("changed");
-      cal.events.get.mockResolvedValueOnce(got({ start: { dateTime: nyLocal("2026-10-17", 900) }, end: { dateTime: nyLocal("2026-10-17", 960) } }));
+      cal.events.get.mockResolvedValueOnce(got({ start: { dateTime: nyDateTime("2026-10-17", 900) }, end: { dateTime: nyDateTime("2026-10-17", 960) } }));
       expect(await adapter.cancel(ref())).toEqual({ status: "changed", link: LINK });
       expect(cal.events.delete).not.toHaveBeenCalled();
       expect(cal.events.patch).not.toHaveBeenCalled();
