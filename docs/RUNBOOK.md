@@ -188,20 +188,32 @@ connecting again fixes it. If it keeps happening for everyone, check the OAuth
 consent screen is still **Internal**: in External testing mode Google expires
 refresh tokens after 7 days.
 
-## `/reserve` works but follow-up messages get no reply
+## A #reservations message gets no reply
 
-`/reserve` replies in the member's DM with the bot and needs only `chat:write`.
-Follow-ups are plain DM messages, which reach the bot only after these Slack app
-changes. Until they land, `/reserve` answers but follow-ups are ignored:
+The bot reads top-level messages in #reservations only (not thread replies) and
+stays silent on anything it reads as chatter. If real requests get no reply:
 
-- Add the bot scope `im:history`. (`im:write` is not needed; the bot posts by
-  user id.)
-- Subscribe to the bot event `message.im`.
-- App Home, Messages tab: turn it on and tick "Allow users to send messages".
-- Reinstall the app to the workspace so the new scope takes effect.
+- The bot must be a member of #reservations, and `RESERVATIONS_CHANNEL_ID` must
+  be set on both the receiver and the worker (`template.yaml`).
+- The app must be subscribed to `message.channels` (`message.groups` if the
+  channel is private).
+- Check the worker logs for `reservation message already answered`: the bot
+  skips a message whose thread already has a bot reply.
 
-A request closes when it is answered, booked or refused, after 2 hours idle, or
-when the member says "start over" or "cancel".
+## Card buttons or the Edit form don't work
+
+- **Interactivity:** the Request URL and the **Options Load URL** (Select Menus)
+  must both be the receiver's Function URL. Without the Options Load URL, the
+  item search in the Edit form shows no results.
+- **Edit does nothing:** the receiver opens the form itself, with
+  `SLACK_BOT_TOKEN`. Look for `views.open failed` in the receiver logs.
+- **Book does nothing:** a press is ignored when the card no longer carries the
+  pressed request (already booked, or edited since). Look for
+  `stale reservation card press` in the worker logs.
+
+Slack app clean-up after the move from DMs: the `/reserve` slash command, the
+`message.im` event and the `im:history` scope are no longer used and can be
+removed.
 
 ## Reservation digests in #reservations
 
