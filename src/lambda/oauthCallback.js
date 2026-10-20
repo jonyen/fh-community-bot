@@ -83,7 +83,8 @@ export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue
       return htmlPage(200, "Connected", "Your Google account is connected. Please send your request again in #reservations.");
     }
     await enqueue({ type: "oauth_connected", pendingId: consumed.pendingId, slackUserId: consumed.slackUserId });
-    return htmlPage(200, "Connected", "You can close this tab and go back to Slack. Your booking is being made now.");
+    const doing = pending.request?.kind === "cancel" ? "cancelled" : "made";
+    return htmlPage(200, "Connected", `You can close this tab and go back to Slack. Your booking is being ${doing} now.`);
   };
 }
 

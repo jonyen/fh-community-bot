@@ -37,6 +37,20 @@ describe("OAuth callback", () => {
     expect(page.body).not.toContain("1//R");
   });
 
+  it("says the booking is being made on a book resume", async () => {
+    const { cb } = setup({ pending: { slackUserId: "U9", request: { req: {}, backend: "rms" } } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.body).toContain("Your booking is being made now.");
+  });
+
+  it("says the booking is being cancelled on a cancel resume", async () => {
+    const { cb } = setup({ pending: { slackUserId: "U9", request: { kind: "cancel", ref: { backend: "rms" } } } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain("Your booking is being cancelled now.");
+    expect(page.body).not.toContain("being made");
+  });
+
   it("rejects a reused or unknown link without touching Google", async () => {
     const { cb, oauth2Client, enqueue } = setup({ state: null });
     const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
