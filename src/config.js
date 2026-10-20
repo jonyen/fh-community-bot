@@ -94,6 +94,9 @@ export function loadReservations() {
     resourceCalendars: calendars && typeof calendars === "object" && !Array.isArray(calendars) ? calendars : {},
     rmsBookingEnabled: (process.env.RMS_BOOKING_ENABLED || "true").toLowerCase() !== "false",
     escalationUserId: process.env.ESCALATION_USER_ID || null,
+    // The bot records every booking it makes here; needs only the table, not
+    // the Google connect settings.
+    ledgerTable: process.env.AUTH_TABLE || null,
   };
 }
 

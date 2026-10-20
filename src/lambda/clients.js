@@ -122,16 +122,22 @@ export function getDeps() {
       reservationAdapters.rms = createRmsAdapter({ calendarClient, catalog: rmsCatalog, bookingEnabled: res.rmsBookingEnabled });
     }
     let connect = null;
+    let ledger = null;
     const gc = config.googleConnect;
+    const ddb = gc || res.ledgerTable ? DynamoDBDocumentClient.from(new DynamoDBClient({})) : null;
     if (gc) {
       const authStore = createAuthStore({
-        ddb: DynamoDBDocumentClient.from(new DynamoDBClient({})), kms: new KMSClient({}), tableName: gc.tableName, keyId: gc.keyId,
+        ddb, kms: new KMSClient({}), tableName: gc.tableName, keyId: gc.keyId,
       });
       connect = {
         authStore,
         memberGoogle: createMemberGoogle({ authStore, clientId: gc.clientId, clientSecret: gc.clientSecret }),
         consentUrl: ({ state, loginHint }) => buildConsentUrl({ clientId: gc.clientId, redirectUri: gc.redirectUri, state, loginHint }),
       };
+      ledger = authStore;
+    } else if (res.ledgerTable) {
+      // The ledger (recordBooking/bookingsFor) needs only DynamoDB, not KMS.
+      ledger = createAuthStore({ ddb, tableName: res.ledgerTable });
     }
     livingDigest = createLivingDigest({
       client: slack, adapters: reservationAdapters, channelId: res.channelId, escalationUserId: res.escalationUserId,
@@ -144,7 +150,7 @@ export function getDeps() {
       connect,
       livingDigest,
       claimBooking: connect ? connect.authStore.claimBooking : null,
-      ledger: connect ? connect.authStore : null,
+      ledger,
     });
   }
 

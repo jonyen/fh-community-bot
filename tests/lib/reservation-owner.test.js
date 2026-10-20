@@ -15,6 +15,13 @@ describe("reservation-owner", () => {
   it("matches accented sheet names to plain Slack names", () => {
     expect(namesMatch("José Núñez (Youth)", { ...M, realName: "Jose Nunez", displayName: "" })).toBe(true);
   });
+  it("never matches on a first name alone, even when it equals a display or real name", () => {
+    const david = { ...M, realName: "David Kim", displayName: "David" };
+    expect(namesMatch("David", david)).toBe(false);
+    expect(namesMatch("David (Youth)", david)).toBe(false);
+    expect(namesMatch("Grace", { ...M, realName: "Grace", displayName: "" })).toBe(false);
+    expect(namesMatch("JY", M)).toBe(true);
+  });
   it("never matches when the member has no names", () => {
     expect(namesMatch("", { ...M, realName: "", displayName: "" })).toBe(false);
     expect(namesMatch("Jon", { ...M, realName: "", displayName: "" })).toBe(false);

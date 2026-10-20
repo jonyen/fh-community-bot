@@ -30,6 +30,8 @@ function matchesCandidate(sheet, cand) {
 
 export function namesMatch(sheetName, member) {
   const sheet = normalizeName(sheetName);
+  // A first name alone never matches, even when it is the whole display or real name.
+  if (sheet && !sheet.includes(" ") && sheet === normalizeName(member?.realName).split(" ")[0]) return false;
   return [member?.realName, member?.displayName].some((n) => matchesCandidate(sheet, normalizeName(n)));
 }
 
