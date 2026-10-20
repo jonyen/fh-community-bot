@@ -28,14 +28,21 @@ export function _resetReceiverCatalogForTests() {
 
 // views.open must happen before the trigger_id expires, so the receiver calls
 // Slack directly instead of loading the Web API client.
-async function openView({ trigger_id, view }) {
+async function openView({ trigger_id, view, response_url }) {
   const res = await fetch("https://slack.com/api/views.open", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify({ trigger_id, view }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!data.ok) console.log(`[receiver] views.open failed: ${data.error || res.status}`);
+  if (data.ok) return;
+  console.log(`[receiver] views.open failed: ${data.error || res.status}`);
+  if (!response_url) return;
+  await fetch(response_url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ response_type: "ephemeral", replace_original: false, text: "I couldn't open the edit form. Please press Edit again." }),
+  }).catch(() => {});
 }
 
 function enqueue(body, groupId) {
@@ -99,7 +106,9 @@ export function shouldEnqueueEvent(parsed) {
   // #reservations: every top-level message is a possible request. Thread
   // replies there are people talking to each other.
   const reservationsChannel = process.env.RESERVATIONS_CHANNEL_ID;
-  if (reservationsChannel && event.channel === reservationsChannel) return !event.thread_ts && !event.subtype;
+  if (reservationsChannel && event.channel === reservationsChannel) {
+    return !event.thread_ts && (!event.subtype || event.subtype === "file_share");
+  }
   if (event.channel_type === "im") return false;
   const text = event.text || "";
   if (matchesGenderEvent(text)) return true;

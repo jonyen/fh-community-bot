@@ -21,6 +21,7 @@ export async function handleReservationInteraction(payload, { catalog, openView 
     const cardTs = payload.container?.message_ts || payload.message?.ts;
     await openView({
       trigger_id: payload.trigger_id,
+      response_url: payload.response_url,
       view: buildEditModal({
         user: card.user,
         channel: payload.channel?.id || payload.container?.channel_id,

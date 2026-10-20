@@ -400,6 +400,7 @@ describe("shouldEnqueueEvent for #reservations", () => {
   it("enqueues every top-level human message there", async () => {
     const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
     expect(shouldEnqueueEvent({ event: { type: "message", channel: "CRES", user: "U1", text: "book the MPR", ts: "1.1" } })).toBe(true);
+    expect(shouldEnqueueEvent({ event: { type: "message", subtype: "file_share", channel: "CRES", user: "U1", text: "book this", ts: "1.1" } })).toBe(true);
   });
 
   it("drops thread replies, bot posts and edits there", async () => {
@@ -462,6 +463,15 @@ describe("reservation card interactions in the receiver", () => {
     const sent = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(sent.trigger_id).toBe("TRIG");
     expect(sent.view.callback_id).toBe("reservation_edit_modal");
+  });
+
+  it("tells the member privately when the form can't open", async () => {
+    fetchSpy.mockResolvedValueOnce({ status: 200, json: async () => ({ ok: false, error: "expired_trigger_id" }) });
+    const { cardMessage } = await import("../../src/lib/reservation-card.js");
+    const edit = cardMessage({ user: "U9", req: REQ, assessment: { state: "free" } }).blocks[1].elements[1];
+    await post({ type: "block_actions", trigger_id: "TRIG", response_url: "https://hooks.slack/a", user: { id: "U9" }, channel: { id: "CRES" }, container: { message_ts: "200.2" }, message: { ts: "200.2" }, actions: [edit] });
+    expect(fetchSpy.mock.calls[1][0]).toBe("https://hooks.slack/a");
+    expect(JSON.parse(fetchSpy.mock.calls[1][1].body)).toEqual({ response_type: "ephemeral", replace_original: false, text: "I couldn't open the edit form. Please press Edit again." });
   });
 
   it("answers the item typeahead", async () => {

@@ -39,6 +39,7 @@ describe("encodeCard / decodeCard", () => {
   it("drops items that are no longer in the catalog and rejects garbage", () => {
     const value = JSON.stringify({ u: "U9", i: ["Tech Set 2", "Gone Item"] });
     expect(decodeCard(value, CATALOG).req.items).toEqual([SET2]);
+    expect(decodeCard(value, CATALOG).lost).toEqual(["Gone Item"]);
     expect(decodeCard("not json", CATALOG)).toBeNull();
     expect(decodeCard(JSON.stringify({ i: [] }), CATALOG)).toBeNull();
   });

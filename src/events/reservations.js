@@ -307,11 +307,13 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
 
   // A top-level message in #reservations. Thread replies belong to people.
   async function handleMessage({ event, client }) {
-    if (event.channel !== channelId || event.thread_ts || event.bot_id || event.subtype) return;
+    // file_share is a message posted with an attachment; its text still counts.
+    if (event.channel !== channelId || event.thread_ts || event.bot_id || (event.subtype && event.subtype !== "file_share")) return;
     const text = String(event.text || "").trim();
     if (isIgnorableChatter(text)) return;
     // An SQS redelivery: the bot already answered in this message's thread.
-    const thread = await client.conversations.replies({ channel: event.channel, ts: event.ts, limit: 20 }).catch(() => ({ messages: [] }));
+    // If this read fails, the event fails and SQS retries it, rather than risk a second card.
+    const thread = await client.conversations.replies({ channel: event.channel, ts: event.ts, limit: 20 });
     if ((thread.messages || []).some((m) => m.bot_id && m.ts !== event.ts)) {
       log.info("reservation message already answered", { channel: event.channel, ts: event.ts });
       return;
@@ -359,6 +361,10 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       return client.chat.postEphemeral({ channel, user: userId, thread_ts: threadTs, text: `Only <@${card.user}> can book this.`, ...BOT_PERSONA });
     }
     if (action.action_id !== BOOK_ACTION) return;
+    if (card.lost.length) {
+      return cardSay(client, { channel, threadTs, cardTs, user: card.user })
+        .done(`I can't book "${card.lost.join('", "')}" any more. Please post the request again.`);
+    }
     // A member's presses run one at a time, so a second press finds the card
     // already closed. A press on a card since edited carries an old value.
     const current = await readCard(client, channel, threadTs, cardTs);

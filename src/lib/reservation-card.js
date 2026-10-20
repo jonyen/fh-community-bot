@@ -36,10 +36,14 @@ export function decodeCard(value, catalog) {
     return null;
   }
   if (!v || typeof v.u !== "string") return null;
-  const items = (Array.isArray(v.i) ? v.i : []).map((l) => findItem(catalog, l)).filter(Boolean);
+  const labels = Array.isArray(v.i) ? v.i : [];
+  const items = labels.map((l) => findItem(catalog, l)).filter(Boolean);
+  // Labels the catalog no longer has (a resource renamed or removed since).
+  const lost = labels.filter((l) => !findItem(catalog, l));
   const num = (n) => (Number.isInteger(n) ? n : null);
   return {
     user: v.u,
+    lost,
     req: {
       intent: "book", items, ambiguous: [], unmatched: [],
       date: typeof v.d === "string" ? v.d : null, toDate: null,

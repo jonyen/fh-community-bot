@@ -90,6 +90,17 @@ describe("reservations handler", () => {
       expect(client.chat.postMessage).not.toHaveBeenCalled();
     });
 
+    it("fails the event, so SQS retries, when it can't check for an earlier answer", async () => {
+      client.conversations.replies.mockRejectedValue(new Error("ratelimited"));
+      await expect(h.handleMessage({ event: msg(), client })).rejects.toThrow("ratelimited");
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("reads a request posted with an attachment", async () => {
+      await h.handleMessage({ event: msg({ subtype: "file_share" }), client });
+      expect(llm.parseReservationRequest).toHaveBeenCalled();
+    });
+
     it("does nothing for a message the bot already answered (SQS redelivery)", async () => {
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1" }] });
       await h.handleMessage({ event: msg(), client });
@@ -239,6 +250,15 @@ describe("reservations handler", () => {
       await h.handleCardAction({ payload: press({ actions: [{ action_id: "maintenance_submit", value: "x" }] }), client });
       expect(client.conversations.replies).toHaveBeenCalledTimes(1);
       expect(adapters.rms.book).not.toHaveBeenCalled();
+    });
+
+    it("refuses to book an item the catalog no longer has, instead of booking the rest", async () => {
+      const gone = buttons(card)[0].value.replace('"Tech Set 2"', '"Tech Set 2","Old Set"');
+      const blocks = card.blocks.map((b) => (b.type === "actions" ? { ...b, elements: b.elements.map((e) => ({ ...e, value: gone })) } : b));
+      client.conversations.replies.mockResolvedValue({ messages: [{ ts: CARD_TS, bot_id: "B1", blocks }] });
+      await h.handleCardAction({ payload: press({ actions: [{ ...buttons(card)[0], value: gone }] }), client });
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(updates()[0]).toMatchObject({ text: 'I can\'t book "Old Set" any more. Please post the request again.', metadata: CLOSED_METADATA });
     });
 
     it("a slot taken since the card was posted turns the card to taken and writes nothing", async () => {

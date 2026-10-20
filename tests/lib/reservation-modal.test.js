@@ -78,6 +78,11 @@ describe("modalErrors", () => {
     expect(modalErrors(submitted(view, { start: "18:00", end: "17:00" }))).toEqual({ end: "End must be after start." });
     expect(modalErrors(submitted(view, { start: "18:00", end: "18:00" }))).toEqual({ end: "End must be after start." });
   });
+  it("reads an end of 00:00 after a later start as midnight", () => {
+    expect(modalErrors(submitted(view, { start: "20:00", end: "00:00" }))).toBeNull();
+    expect(readEditModal(submitted(view, { start: "20:00", end: "00:00" }), CATALOG).req).toMatchObject({ start: 1200, end: 1440 });
+    expect(block(buildEditModal({ ...WHERE, req: { ...REQ, start: 1200, end: 1440 } }), "end").element.initial_time).toBe("00:00");
+  });
   it("rejects no items", () => {
     expect(modalErrors(submitted(view, { items: [] }))).toEqual({ items: "Pick what to book." });
   });

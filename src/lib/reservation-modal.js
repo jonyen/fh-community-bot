@@ -59,6 +59,15 @@ export function buildEditModal({ user, channel, threadTs, cardTs, req }) {
 
 const values = (view) => view?.state?.values || {};
 
+// The timepicker has no 24:00, so an end of 00:00 after a later start is
+// midnight at the end of the day (1440, as the adapters read it).
+function readTimes(v) {
+  const start = hhmmToMin(v.start?.start?.selected_time);
+  let end = hhmmToMin(v.end?.end?.selected_time);
+  if (end === 0 && start > 0) end = 1440;
+  return { start, end };
+}
+
 export function readEditModal(view, catalog) {
   const v = values(view);
   let meta = {};
@@ -79,7 +88,7 @@ export function readEditModal(view, catalog) {
     req: {
       intent: "book", items, ambiguous: [], unmatched: [],
       date: v.date?.date?.selected_date || null, toDate: null,
-      start: hhmmToMin(v.start?.start?.selected_time), end: hhmmToMin(v.end?.end?.selected_time),
+      ...readTimes(v),
       title: (v.title?.title?.value || "").trim() || null,
       ministry: meta.m || null,
       appliances,
@@ -92,8 +101,7 @@ export function modalErrors(view) {
   const v = values(view);
   const errors = {};
   if (!(v.items?.[ITEM_ACTION]?.selected_options || []).length) errors.items = "Pick what to book.";
-  const start = hhmmToMin(v.start?.start?.selected_time);
-  const end = hhmmToMin(v.end?.end?.selected_time);
+  const { start, end } = readTimes(v);
   if (start != null && end != null && end <= start) errors.end = "End must be after start.";
   return Object.keys(errors).length ? errors : null;
 }
