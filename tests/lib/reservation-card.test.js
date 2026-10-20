@@ -1,6 +1,9 @@
 // tests/lib/reservation-card.test.js
 import { describe, it, expect } from "vitest";
-import { encodeCard, decodeCard, cardMessage, closedMessage, openBookValue, BOOK_ACTION, EDIT_ACTION, CARD_EVENT_TYPE } from "../../src/lib/reservation-card.js";
+import {
+  encodeCard, decodeCard, cardMessage, closedMessage, openBookValue, bookedMessage, encodeRef, decodeRef, cancelBookingValue, cardSummaryLine,
+  BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE,
+} from "../../src/lib/reservation-card.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
 
@@ -62,14 +65,14 @@ describe("cardMessage", () => {
     const conflicts = [{ item: "Tech Set 2", date: "2026-10-17", start: 840, end: 930, title: "Fall rally", holder: "Alan", holderUserId: "UALAN" }];
     const msg = cardMessage({ user: "U9", req: REQ, assessment: { state: "taken", conflicts } });
     expect(textOf(msg)).toContain("❌ Taken:\n• 2:00–3:30 PM · Tech Set 2 · Fall rally (<@UALAN>)\nCheck with them, or press Edit to pick another time.");
-    expect(actionsOf(msg).map((a) => a.action_id)).toEqual([EDIT_ACTION]);
+    expect(actionsOf(msg).map((a) => a.action_id)).toEqual([EDIT_ACTION, CANCEL_ACTION]);
   });
 
   it("missing details are listed with placeholders in the summary", () => {
     const req = { ...REQ, date: null, start: null, end: null, title: null };
     const msg = cardMessage({ user: "U9", req, assessment: { state: "missing", missing: ["date", "start and end time", "what it's for"] } });
     expect(textOf(msg)).toBe("📅 *Tech Set 2* · _day?_ · _time?_ · _what for?_\nMissing: date, start and end time, what it's for. Press Edit to fill it in.");
-    expect(actionsOf(msg).map((a) => a.action_id)).toEqual([EDIT_ACTION]);
+    expect(actionsOf(msg).map((a) => a.action_id)).toEqual([EDIT_ACTION, CANCEL_ACTION]);
   });
 
   it("an ambiguous item asks which one", () => {
@@ -98,5 +101,87 @@ describe("closedMessage and openBookValue", () => {
     expect(openBookValue(free)).toBe(actionsOf(free)[0].value);
     expect(openBookValue(cardMessage({ user: "U9", req: REQ, assessment: { state: "past" } }))).toBeNull();
     expect(openBookValue(undefined)).toBeNull();
+  });
+});
+
+describe("Cancel", () => {
+  it("every open card has Cancel after Edit", () => {
+    for (const state of ["free", "taken", "missing", "past", "mixed"]) {
+      const msg = cardMessage({ user: "U9", req: REQ, assessment: { state, conflicts: [], missing: ["date"] } });
+      const all = actionsOf(msg);
+      expect(all.at(-1)).toMatchObject({ action_id: CANCEL_ACTION, text: { text: "Cancel" } });
+      expect(all.at(-1).style).toBeUndefined();
+      expect(all.at(-2).action_id).toBe(EDIT_ACTION);
+      expect(all.at(-1).value).toBe(all.at(-2).value);
+    }
+  });
+});
+
+describe("bookedMessage and refs", () => {
+  const REF = { backend: "rms", eventId: "ev1", organizerEmail: null, organizerSelf: true, resources: ["t2"], date: "2026-10-17", start: 840, end: 960, title: "Youth night — Deandra" };
+  const TEXT = "✅ Tech Set 2 · Sat 10/17 · 2:00–4:00 PM · Youth night · <@U9>\n<https://rms/item|Open the booking>";
+
+  it("bookedMessage has one confirmed Cancel booking button whose value round-trips", () => {
+    const msg = bookedMessage({ user: "U9", text: TEXT, ref: REF, req: REQ });
+    expect(msg.text).toBe(TEXT);
+    expect(msg.metadata).toEqual(CLOSED_METADATA);
+    expect(textOf(msg)).toBe(TEXT);
+    const all = actionsOf(msg);
+    expect(all).toHaveLength(1);
+    const [b] = all;
+    expect(b).toMatchObject({ action_id: CANCEL_BOOKING_ACTION, style: "danger", text: { text: "Cancel booking" } });
+    expect(b.confirm).toEqual({
+      title: { type: "plain_text", text: "Cancel this booking?" },
+      text: { type: "plain_text", text: "Tech Set 2 · Sat 10/17 · 2:00–4:00 PM will be released." },
+      confirm: { type: "plain_text", text: "Cancel booking" },
+      deny: { type: "plain_text", text: "Keep it" },
+    });
+    expect(decodeRef(b.value)).toEqual({ user: "U9", ref: REF });
+    expect(JSON.parse(b.value)).toEqual({ u: "U9", r: REF });
+    expect(cancelBookingValue(msg)).toBe(b.value);
+    expect(cardSummaryLine(msg)).toBe("✅ Tech Set 2 · Sat 10/17 · 2:00–4:00 PM · Youth night · <@U9>");
+  });
+
+  it("caps section text at Slack's 3,000 characters for a huge hand-typed title", () => {
+    const big = `✅ Tech Set 2 · Sat 10/17 · ${"x".repeat(5000)}`;
+    for (const msg of [bookedMessage({ user: "U9", text: big, ref: REF, req: REQ }), closedMessage(big)]) {
+      const [section] = msg.blocks;
+      expect(section.text.text).toHaveLength(3000);
+      expect(section.text.text.endsWith("…")).toBe(true);
+      expect(section.text.text.startsWith("✅ Tech Set 2 · Sat 10/17 · x")).toBe(true);
+    }
+    const card = cardMessage({ user: "U9", req: { ...REQ, title: "x".repeat(5000) }, assessment: { state: "free" } });
+    expect(card.blocks.find((b) => b.type === "section").text.text.length).toBeLessThanOrEqual(3000);
+  });
+
+  it("a ref too big for a button value leaves the button off", () => {
+    const msg = bookedMessage({ user: "U9", text: TEXT, ref: { ...REF, title: "x".repeat(2100) }, req: REQ });
+    expect(actionsOf(msg)).toEqual([]);
+    expect(msg.text).toBe(TEXT);
+  });
+
+  it("decodeRef rejects garbage", () => {
+    const ok = { backend: "kitchen", row: 5, date: "2026-10-17", name: "D", start: 600, end: 700 };
+    expect(decodeRef(encodeRef({ user: "U9", ref: ok }))).toEqual({ user: "U9", ref: ok });
+    for (const bad of [
+      "not json", "null", "[]", "42",
+      JSON.stringify({ r: ok }),
+      JSON.stringify({ u: 9, r: ok }),
+      JSON.stringify({ u: "U9" }),
+      JSON.stringify({ u: "U9", r: "x" }),
+      JSON.stringify({ u: "U9", r: [ok] }),
+      JSON.stringify({ u: "U9", r: { ...ok, backend: "pool" } }),
+      JSON.stringify({ u: "U9", r: { ...ok, backend: "toString" } }),
+      JSON.stringify({ u: "U9", r: { ...ok, date: 20261017 } }),
+    ]) {
+      expect(decodeRef(bad)).toBeNull();
+    }
+    expect(decodeRef(undefined)).toBeNull();
+  });
+
+  it("an open card has no Cancel booking value and its first line is the summary", () => {
+    const free = cardMessage({ user: "U9", req: REQ, assessment: { state: "free" } });
+    expect(cancelBookingValue(free)).toBeNull();
+    expect(cardSummaryLine(null)).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 // src/lib/reservation-card.js
 // A booking request is answered with a card: what the bot understood, whether
-// it is free, and Book / Edit buttons. The request rides in the buttons' value,
+// it is free, and Book / Edit / Cancel buttons. The request rides in the buttons' value,
 // so the card is its own state and nothing is stored anywhere else.
 import { findItem } from "./reservation-catalog.js";
 import { fmtDay, fmtRange } from "./reservation-time.js";
@@ -8,12 +8,19 @@ import { reservationLine, CLOSED_METADATA } from "./reservation-format.js";
 
 export const BOOK_ACTION = "reservation_book";
 export const EDIT_ACTION = "reservation_edit";
+export const CANCEL_ACTION = "reservation_cancel";
+export const CANCEL_BOOKING_ACTION = "reservation_cancel_booking";
 export const CARD_EVENT_TYPE = "reservation_card";
 
 // Slack caps a button value at 2,000 characters.
+const VALUE_MAX = 2000;
 const TITLE_MAX = 150;
 const MINISTRY_MAX = 100;
 const cut = (s, n) => (s ? String(s).slice(0, n) : null);
+// Slack refuses a whole message when one section's text passes 3,000
+// characters, and a hand-typed title can be any length.
+const SECTION_MAX = 3000;
+export const fitSection = (text) => (text.length > SECTION_MAX ? `${text.slice(0, SECTION_MAX - 1)}…` : text);
 
 export function encodeCard({ user, req }) {
   return JSON.stringify({
@@ -81,11 +88,12 @@ export function cardMessage({ user, req, assessment }) {
       ? [{ type: "button", action_id: BOOK_ACTION, style: "primary", text: { type: "plain_text", text: "Book" }, value }]
       : []),
     { type: "button", action_id: EDIT_ACTION, text: { type: "plain_text", text: "Edit" }, value },
+    { type: "button", action_id: CANCEL_ACTION, text: { type: "plain_text", text: "Cancel" }, value },
   ];
   return {
     text: summary(req, { bold: false }),
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text: `${summary(req, { bold: true })}\n${status(assessment)}` } },
+      { type: "section", text: { type: "mrkdwn", text: fitSection(`${summary(req, { bold: true })}\n${status(assessment)}`) } },
       { type: "actions", elements: buttons },
     ],
     metadata: { event_type: CARD_EVENT_TYPE, event_payload: { user } },
@@ -94,7 +102,48 @@ export function cardMessage({ user, req, assessment }) {
 
 // The card once it is booked or refused: the outcome, no buttons.
 export function closedMessage(text) {
-  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }], metadata: CLOSED_METADATA };
+  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text: fitSection(text) } }], metadata: CLOSED_METADATA };
+}
+
+// Where a written booking lives, so Cancel booking can find it again. The
+// value comes back from Slack, so it is checked before anything trusts it.
+const REF_BACKENDS = new Set(["rooms", "kitchen", "rms"]);
+
+export function encodeRef({ user, ref }) {
+  return JSON.stringify({ u: user, r: ref });
+}
+
+export function decodeRef(value) {
+  let v;
+  try {
+    v = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  const r = v?.r;
+  if (typeof v?.u !== "string" || !r || typeof r !== "object" || Array.isArray(r)) return null;
+  if (!REF_BACKENDS.has(r.backend) || typeof r.date !== "string") return null;
+  return { user: v.u, ref: r };
+}
+
+// The card once booked: the outcome and one Cancel booking button, behind
+// Slack's confirm dialog. A ref too big for a button value gets no button.
+export function bookedMessage({ user, text, ref, req }) {
+  const value = encodeRef({ user, ref });
+  if (value.length > VALUE_MAX) return closedMessage(text);
+  const what = `${req.items.map((i) => i.label).join(", ")} · ${fmtDay(req.date)} · ${fmtRange(req.start, req.end)}`;
+  const plain = (t) => ({ type: "plain_text", text: t });
+  return {
+    text,
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text: fitSection(text) } },
+      { type: "actions", elements: [{
+        type: "button", action_id: CANCEL_BOOKING_ACTION, style: "danger", text: plain("Cancel booking"), value,
+        confirm: { title: plain("Cancel this booking?"), text: plain(`${what} will be released.`.slice(0, 300)), confirm: plain("Cancel booking"), deny: plain("Keep it") },
+      }] },
+    ],
+    metadata: CLOSED_METADATA,
+  };
 }
 
 function button(message, actionId) {
@@ -115,4 +164,15 @@ export function openBookValue(message) {
 // Every open card has Edit; a closed one has no buttons.
 export function isOpenCard(message) {
   return !!button(message, EDIT_ACTION);
+}
+
+// The Cancel booking value on a booked card as it stands now; null once cancelled.
+export function cancelBookingValue(message) {
+  return button(message, CANCEL_BOOKING_ACTION)?.value ?? null;
+}
+
+// The first line of a card's text: on a booked card, the ✅ summary.
+export function cardSummaryLine(message) {
+  const section = (message?.blocks || []).find((b) => b.type === "section");
+  return section?.text?.text?.split("\n")[0] ?? null;
 }

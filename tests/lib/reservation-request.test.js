@@ -17,6 +17,9 @@ describe("normalizeRequest", () => {
     expect([req.date, req.start, req.end]).toEqual(["2026-10-17", 840, 960]);
     expect(req.appliances).toEqual({ airFryer: true, largeRiceCooker: 2 });
   });
+  it("normalizeRequest keeps intent mine", () => {
+    expect(normalizeRequest({ intent: "mine" }, CAT).intent).toBe("mine");
+  });
   it("treats an unknown intent as other", () => {
     expect(normalizeRequest({ intent: "chitchat" }, CAT).intent).toBe("other");
     expect(normalizeRequest(null, CAT).intent).toBe("other");

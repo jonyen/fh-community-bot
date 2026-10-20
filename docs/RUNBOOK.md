@@ -215,6 +215,19 @@ Slack app clean-up after the move from DMs: the `/reserve` slash command, the
 `message.im` event and the `im:history` scope are no longer used and can be
 removed.
 
+## A cancel says "I couldn't find that booking as it was"
+
+The bot cancels only when the row or event still matches what it booked (or
+what the "mine" list showed): rooms compare title, date, start, end, name and
+rooms; the kitchen compares name, date, start and end; calendars compare date
+and start. Someone edited the row or event since, so the bot deleted nothing
+and gave the member a link to fix it by hand. Nothing to repair in the bot.
+
+Cancelled rooms bookings stay in the rooms sheet with `Canceled` in Status, by
+design: the row is Management's record. The bot, the digests and conflict
+checks treat `Canceled` like Denied. Kitchen cancels clear the row's details and
+leave the dated row.
+
 ## Reservation digests in #reservations
 
 Two digest posts, both at 08:00 New York time:

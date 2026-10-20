@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
-import { cardMessage, EDIT_ACTION } from "../../src/lib/reservation-card.js";
+import { cardMessage, bookedMessage, EDIT_ACTION, CANCEL_ACTION } from "../../src/lib/reservation-card.js";
+import { mineMessage } from "../../src/lib/reservation-mine.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const TRANSIT = { label: "CP Transit", category: "vehicles", backend: "rms", calendarId: "tr" };
@@ -20,6 +21,7 @@ function makeAdapter(backend) {
     findConflicts: vi.fn().mockResolvedValue([]),
     listReservations: vi.fn().mockResolvedValue({ reservations: [], errors: [] }),
     book: vi.fn().mockResolvedValue({ status: "booked", link: `https://${backend}/item` }),
+    cancel: vi.fn().mockResolvedValue({ status: "cancelled", link: `https://${backend}/item` }),
   };
 }
 
@@ -170,6 +172,134 @@ describe("reservations with connected accounts", () => {
     expect(adapters.rms.book.mock.calls[0]).toHaveLength(1);
   });
 
+  describe("Cancel booking", () => {
+    const ROOM_REF = { backend: "rooms", date: "2026-10-17", start: 840, end: 960, title: "Youth night", holder: "Deandra", rooms: ["MPR"] };
+    const BOT_RMS_REF = { backend: "rms", eventId: "ev1", organizerEmail: null, organizerSelf: true, resources: ["t2"], date: "2026-10-17", start: 840, end: 960, title: "Youth night — Deandra" };
+    const SUMMARY = "✅ MPR · Sat 10/17 · 2:00–4:00 PM · Youth night · <@U9>";
+    const REQUESTER = { requesterName: "Deandra", requesterUserId: "U9", phone: "555", slackEmail: "deandra.shim@acts2.network" };
+    const bookedCard = (ref) => bookedMessage({ user: "U9", text: `${SUMMARY}\n<https://rooms/item|Open the booking>`, ref, req: { ...REQ, items: [MPR] } });
+
+    async function pressCancel(h, ref) {
+      const card = bookedCard(ref);
+      client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS }, { ts: CARD_TS, bot_id: "B1", blocks: card.blocks }] });
+      const button = card.blocks.find((b) => b.type === "actions").elements[0];
+      await h.handleCardAction({ client, payload: {
+        user: { id: "U9" }, channel: { id: "CRES" }, container: { message_ts: CARD_TS, channel_id: "CRES" },
+        message: { ts: CARD_TS, thread_ts: MSG_TS, blocks: card.blocks }, actions: [button],
+      } });
+    }
+
+    it("an unconnected member's cancel prompts Connect Google and resumes into cancel", async () => {
+      const connect = makeConnect("none");
+      await pressCancel(handler(connect), ROOM_REF);
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+      const row = connect.authStore.createPending.mock.calls[0][0];
+      expect(row).toEqual({
+        slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: MSG_TS,
+        request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: CARD_TS, responseUrl: null },
+      });
+      const [prompt] = ephemerals();
+      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", thread_ts: MSG_TS, text: "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve." });
+      expect(prompt.blocks[1].elements[0]).toMatchObject({ action_id: "reservations_connect_google", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE" });
+
+      // The member approves: the pending row resumes into the cancel, as them.
+      const after = makeConnect("active");
+      after.authStore.getPending.mockResolvedValue(row);
+      await handler(after).resume({ pendingId: "P1", client });
+      expect(after.authStore.deletePending).toHaveBeenCalledWith("P1");
+      expect(after.authStore.deletePending.mock.invocationCallOrder[0]).toBeLessThan(adapters.rooms.cancel.mock.invocationCallOrder[0]);
+      expect(adapters.rooms.cancel.mock.calls).toEqual([[ROOM_REF, { clients: MEMBER_CLIENTS }]]);
+      expect(adapters.rooms.book).not.toHaveBeenCalled();
+      expect(updates()).toEqual([expect.objectContaining({ channel: "CRES", ts: CARD_TS, metadata: CLOSED_METADATA, text: `${SUMMARY}\n🚫 Booking cancelled by <@U9>.` })]);
+      expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
+    });
+
+    it("a cancel from the list prompts privately, then resumes and answers privately, never in public", async () => {
+      const connect = makeConnect("none");
+      const button = mineMessage({ user: "U9", entries: [{ item: "MPR", ...ROOM_REF, matchedBy: null, openLink: null, ref: ROOM_REF }], more: 0, links: {} })
+        .blocks.find((b) => b.accessory).accessory;
+      await handler(connect).handleCardAction({ client, payload: {
+        type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
+        container: { type: "message", message_ts: "300.1", channel_id: "CRES", is_ephemeral: true },
+        response_url: "https://hooks.slack/actions/r1", actions: [button],
+      } });
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+      const row = connect.authStore.createPending.mock.calls[0][0];
+      expect(row).toEqual({
+        slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: null,
+        request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: null, responseUrl: "https://hooks.slack/actions/r1" },
+      });
+      const [prompt] = ephemerals();
+      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", text: "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve." });
+      expect(prompt.thread_ts).toBeUndefined();
+
+      client.chat.postEphemeral.mockClear();
+      const after = makeConnect("active");
+      after.authStore.getPending.mockResolvedValue(row);
+      await handler(after).resume({ pendingId: "P1", client });
+      expect(adapters.rooms.cancel.mock.calls).toEqual([[ROOM_REF, { clients: MEMBER_CLIENTS }]]);
+      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: "🚫 Booking cancelled by <@U9>.", username: "FH Reservations", icon_emoji: ":calendar:" }]);
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+    });
+
+    it("a resumed cancel with no card answers privately, even with a thread on the row", async () => {
+      const connect = makeConnect("active");
+      adapters.rooms.cancel.mockResolvedValue({ status: "changed", link: "https://rooms/x" });
+      connect.authStore.getPending.mockResolvedValue({
+        slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES", threadTs: MSG_TS,
+        request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: null, responseUrl: null },
+      });
+      await handler(connect).resume({ pendingId: "P1", client });
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U9", text: "I couldn't find that booking as it was; it may have been changed. Please check it here: https://rooms/x" })]);
+      expect(ephemerals()[0].thread_ts).toBeUndefined();
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+    });
+
+    it("cancels as a connected member", async () => {
+      const connect = makeConnect("active");
+      await pressCancel(handler(connect), ROOM_REF);
+      expect(adapters.rooms.cancel.mock.calls).toEqual([[ROOM_REF, { clients: MEMBER_CLIENTS }]]);
+      expect(updates()[0].text).toBe(`${SUMMARY}\n🚫 Booking cancelled by <@U9>.`);
+    });
+
+    it("a bot-organized RMS event is cancelled with the bot client even when connect is on", async () => {
+      const connect = makeConnect("none");
+      await pressCancel(handler(connect), BOT_RMS_REF);
+      expect(adapters.rms.cancel.mock.calls).toEqual([[BOT_RMS_REF]]);
+      expect(connect.memberGoogle.clientsFor).not.toHaveBeenCalled();
+      expect(connect.authStore.createPending).not.toHaveBeenCalled();
+      expect(updates()[0].text).toBe(`${SUMMARY}\n🚫 Booking cancelled by <@U9>.`);
+    });
+
+    it("a member-organized RMS event is cancelled as the member", async () => {
+      const connect = makeConnect("active");
+      const ref = { ...BOT_RMS_REF, organizerSelf: false, organizerEmail: "deandra.shim@acts2.network" };
+      await pressCancel(handler(connect), ref);
+      expect(adapters.rms.cancel.mock.calls).toEqual([[ref, { clients: MEMBER_CLIENTS }]]);
+    });
+
+    it("re-prompts when the member's token was revoked during a cancel", async () => {
+      const connect = makeConnect("active");
+      adapters.rooms.cancel.mockRejectedValue(Object.assign(new Error("invalid_grant"), { response: { data: { error: "invalid_grant" } } }));
+      await pressCancel(handler(connect), ROOM_REF);
+      expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
+      expect(connect.memberGoogle.forget).toHaveBeenCalledWith("U9");
+      expect(connect.authStore.createPending.mock.calls[0][0].request.kind).toBe("cancel");
+      expect(ephemerals()[0].text).toMatch(/expired/);
+      expect(client.chat.update).not.toHaveBeenCalled();
+    });
+
+    it("names who to ask when the member can't edit the room sheet", async () => {
+      const connect = makeConnect("active");
+      adapters.rooms.cancel.mockRejectedValue(Object.assign(new Error("The caller does not have permission"), { code: 403 }));
+      await pressCancel(handler(connect), ROOM_REF);
+      expect(updates()[0].text).toBe(`${SUMMARY}\nYou don't have edit access to the room request sheet. Ask Management to share it with you: https://rooms`);
+    });
+  });
+
   describe("resume after sign-in", () => {
     const pending = (connect, { channel = "CRES", threadTs = MSG_TS, cardTs = CARD_TS } = {}) => connect.authStore.getPending.mockResolvedValue({
       slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel, threadTs,
@@ -222,7 +352,7 @@ describe("reservations with connected accounts", () => {
       expect(adapters.rms.book).not.toHaveBeenCalled();
       const [u] = updates();
       expect(u.blocks[0].text.text).toContain("❌ Taken:");
-      expect(u.blocks[1].elements.map((e) => e.action_id)).toEqual([EDIT_ACTION]);
+      expect(u.blocks[1].elements.map((e) => e.action_id)).toEqual([EDIT_ACTION, CANCEL_ACTION]);
     });
 
     it("does nothing for an unknown or already-used pending id", async () => {

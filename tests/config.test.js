@@ -149,7 +149,7 @@ describe("reservations config", () => {
     GOOGLE_REFRESH_TOKEN: "token",
     ANTHROPIC_API_KEY: "key",
   };
-  const KEYS = ["RESERVATIONS_CHANNEL_ID", "ROOM_REQUESTS_SHEET_ID", "KITCHEN_SHEET_ID", "RESOURCE_CALENDARS", "RMS_BOOKING_ENABLED", "ESCALATION_USER_ID"];
+  const KEYS = ["RESERVATIONS_CHANNEL_ID", "ROOM_REQUESTS_SHEET_ID", "KITCHEN_SHEET_ID", "RESOURCE_CALENDARS", "RMS_BOOKING_ENABLED", "ESCALATION_USER_ID", "AUTH_TABLE"];
   let originalEnv;
 
   beforeEach(() => {
@@ -175,8 +175,16 @@ describe("reservations config", () => {
     expect(loadConfig().reservations).toEqual({
       channelId: "CRES", roomsSheetId: "R1", roomsTab: "Upcoming Room Requests", roomsGid: "1580896517",
       kitchenSheetId: "K1", kitchenTab: "FH-Kitchen-RSVP", kitchenGid: "2109987656",
-      resourceCalendars: { "DMV Tech Equipment-G-Tech Set 1": "t1" }, rmsBookingEnabled: true, escalationUserId: "UOPS",
+      resourceCalendars: { "DMV Tech Equipment-G-Tech Set 1": "t1" }, rmsBookingEnabled: true, escalationUserId: "UOPS", ledgerTable: null,
     });
+  });
+
+  it("reads the booking ledger table from AUTH_TABLE even without the Google connect settings", () => {
+    process.env.RESERVATIONS_CHANNEL_ID = "CRES";
+    process.env.AUTH_TABLE = "T";
+    const config = loadConfig();
+    expect(config.googleConnect).toBeNull();
+    expect(config.reservations.ledgerTable).toBe("T");
   });
 
   it("never throws on a bad calendar map and honours RMS_BOOKING_ENABLED=false", () => {

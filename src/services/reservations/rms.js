@@ -20,30 +20,52 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+// book() writes this line, so it marks an event the bot made.
+const SLACK_MARK = /Slack: <@([A-Z0-9]+)>/;
+
 function holderOf(e) {
   const desc = e.description || "";
-  const userId = desc.match(/Slack: <@([A-Z0-9]+)>/)?.[1] || null;
+  const userId = desc.match(SLACK_MARK)?.[1] || null;
   const name = desc.match(/Requested by: (.+)/)?.[1]?.trim();
   if (e.organizer?.self && name) return { holder: name, holderUserId: userId, holderEmail: null };
   const email = e.organizer?.email || e.creator?.email || null;
   return { holder: e.organizer?.displayName || email || "someone", holderUserId: userId, holderEmail: email };
 }
 
-function toReservation(entry, e) {
+function whenOf(e) {
   const allDay = !e.start?.dateTime;
   const s = allDay ? null : nyParts(e.start.dateTime);
   const en = allDay ? null : nyParts(e.end.dateTime);
   return {
-    category: entry.category,
-    item: entry.label,
     date: allDay ? e.start.date : s.date,
     start: allDay ? null : s.min,
     // An event running past midnight blocks the rest of its first day.
     end: allDay ? null : en.date === s.date ? en.min : 1440,
-    title: e.summary || "",
-    ...holderOf(e),
   };
 }
+
+function toReservation(entry, e) {
+  const when = whenOf(e);
+  const title = e.summary || "";
+  return {
+    category: entry.category,
+    item: entry.label,
+    ...when,
+    title,
+    ...holderOf(e),
+    ref: {
+      backend: "rms",
+      eventId: e.id,
+      organizerEmail: e.organizer?.email || null,
+      organizerSelf: !!e.organizer?.self,
+      resources: [entry.calendarId],
+      ...when,
+      title,
+    },
+  };
+}
+
+const isGone = (err) => [404, 410].includes(err?.code) || [404, 410].includes(err?.response?.status);
 
 export function createRmsAdapter({
   calendarClient, catalog, bookingEnabled = true, botCalendarId = "primary", concurrency = 8,
@@ -118,8 +140,44 @@ export function createRmsAdapter({
       }
       if (resources.every((a) => a.responseStatus === "accepted")) break;
     }
-    return { status: "booked", link: itemLink };
+    const ref = {
+      backend: "rms", eventId, organizerEmail: null, organizerSelf: !clients,
+      resources: items.map((i) => i.calendarId), date, start, end, title: `${title} — ${requesterName}`,
+    };
+    return { status: "booked", link: itemLink, ref };
   }
 
-  return { backend: "rms", link, listReservations, findConflicts, book };
+  // Delete an event the bot made when nobody else is invited; otherwise
+  // (made in Google Calendar, or with guests) only release the booked
+  // resources so the people's event survives.
+  async function cancel(ref, { clients } = {}) {
+    const [cal, calendarId] = ref.organizerSelf ? [calendarClient, botCalendarId] : [clients?.calendarClient, "primary"];
+    if (!cal) throw new Error("member clients required");
+    const itemLink = calendarLink(ref.resources[0]);
+    const eventId = ref.eventId;
+    let e;
+    try {
+      e = (await cal.events.get({ calendarId, eventId })).data;
+    } catch (err) {
+      if (isGone(err)) return { status: "already", link: itemLink };
+      throw err;
+    }
+    if (e.status === "cancelled") return { status: "already", link: itemLink };
+    const now = whenOf(e);
+    if (now.date !== ref.date || now.start !== ref.start) return { status: "changed", link: itemLink };
+    const organizer = e.organizer?.email;
+    const attendees = e.attendees || [];
+    const people = attendees.filter((a) => !a.resource && !a.self && a.email !== organizer);
+    if (people.length === 0 && SLACK_MARK.test(e.description || "")) {
+      await cal.events.delete({ calendarId, eventId, sendUpdates: "all" });
+    } else {
+      await cal.events.patch({
+        calendarId, eventId, sendUpdates: "all",
+        requestBody: { attendees: attendees.filter((a) => !ref.resources.includes(a.email)) },
+      });
+    }
+    return { status: "cancelled", link: itemLink };
+  }
+
+  return { backend: "rms", link, listReservations, findConflicts, book, cancel };
 }

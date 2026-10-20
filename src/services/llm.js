@@ -49,7 +49,7 @@ ${catalogText}
 Kitchen appliance keys: island, whiteCounter, brownCounter, toasterOven, airFryer, microwave (true when wanted); freezer, fridge (number of shelves); largeRiceCooker, smallRiceCooker, instapot (how many).
 
 JSON fields:
-- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), "find" (asks what items exist that fit a description, e.g. "what speakers are there?", "something for a picnic"; put every fitting item name in "items"), or "other" (anything else, including thanks and chatter).
+- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), "find" (asks what items exist that fit a description, e.g. "what speakers are there?", "something for a picnic"; put every fitting item name in "items"), "mine" (asks what they themselves have booked, e.g. "what do I have booked?", "my reservations"), or "other" (anything else, including thanks and chatter).
 - "items": exact item names from the list above.
 - "unmatched": phrases naming things to book that match nothing in the list.
 - "ambiguous": [{"phrase": <what they wrote>, "options": [exact item names]}] when a phrase could mean several items, e.g. "a tech set".
