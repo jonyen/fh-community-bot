@@ -6,6 +6,8 @@
 import { randomBytes } from "node:crypto";
 import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
+import { TRAY_TTL_S } from "../lib/reservation-tray.js";
+import { refKey } from "../lib/reservation-owner.js";
 
 export const PENDING_TTL_S = 1800;
 export const STATE_TTL_S = 600;
@@ -113,26 +115,98 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     }
   }
 
-  // Remembers a booking the bot made for this member so "what do I have
-  // booked?" and Cancel can find it later. Past refs are pruned on each write.
-  // The row expires two days after the latest ref date (a day of slack).
-  async function recordBooking(slackUserId, ref, { today }) {
-    const pk = `bookings#${slackUserId}`;
-    const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk } }));
-    const kept = (live(Item) ? Item.refs : []).filter((r) => r.date >= today);
-    const refs = [...kept, ref].slice(-MAX_BOOKING_REFS);
-    const latest = refs.reduce((max, r) => (r.date > max ? r.date : max), refs[0].date);
-    await ddb.send(new PutCommand({
-      TableName: tableName,
-      Item: { pk, refs, expiresAt: Date.parse(`${latest}T00:00:00Z`) / 1000 + 2 * 86400 },
+  // The ledger row holds single refs and booked series side by side. Each
+  // write sets only its own attribute so it cannot clobber the other, and
+  // expiresAt covers the latest date of either list plus two days (a day of slack).
+  const ledgerExpiry = (refs, series) => {
+    const dates = [...refs, ...series.flatMap((s) => s.refs)].map((r) => r.date);
+    const latest = dates.reduce((max, d) => (d > max ? d : max), dates[0]);
+    return Date.parse(`${latest}T00:00:00Z`) / 1000 + 2 * 86400;
+  };
+
+  async function readLedger(slackUserId) {
+    const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk: `bookings#${slackUserId}` } }));
+    return live(Item) ? { refs: Item.refs || [], series: Item.series || [] } : { refs: [], series: [] };
+  }
+
+  async function writeLedger(slackUserId, attr, value, refs, series) {
+    await ddb.send(new UpdateCommand({
+      TableName: tableName, Key: { pk: `bookings#${slackUserId}` },
+      UpdateExpression: "SET #a = :v, expiresAt = :e", ExpressionAttributeNames: { "#a": attr },
+      ExpressionAttributeValues: { ":v": value, ":e": ledgerExpiry(refs, series) },
     }));
   }
 
-  async function bookingsFor(slackUserId, { today }) {
-    const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk: `bookings#${slackUserId}` } }));
-    if (!live(Item)) return [];
-    return Item.refs.filter((r) => r.date >= today);
+  // Remembers a booking the bot made for this member so "what do I have
+  // booked?" and Cancel can find it later. Past refs are pruned on each write.
+  async function recordBooking(slackUserId, ref, { today }) {
+    const { refs: old, series } = await readLedger(slackUserId);
+    const refs = [...old.filter((r) => r.date >= today), ref].slice(-MAX_BOOKING_REFS);
+    await writeLedger(slackUserId, "refs", refs, refs, series);
   }
 
-  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking, recordBooking, bookingsFor };
+  // A booked series is kept whole so Cancel can offer it; series whose refs
+  // have all ended are pruned on each write.
+  async function recordSeries(slackUserId, series, { today }) {
+    const { refs, series: old } = await readLedger(slackUserId);
+    const all = [...old.filter((s) => s.refs.some((r) => r.date >= today)), series];
+    await writeLedger(slackUserId, "series", all, refs, all);
+  }
+
+  async function seriesFor(slackUserId, { today }) {
+    const { series } = await readLedger(slackUserId);
+    return series
+      .map((s) => ({ ...s, refs: s.refs.filter((r) => r.date >= today) }))
+      .filter((s) => s.refs.length);
+  }
+
+  async function dropSeriesRefs(slackUserId, id, keys) {
+    const { refs, series } = await readLedger(slackUserId);
+    if (!series.some((s) => s.id === id)) return;
+    const next = series
+      .map((s) => (s.id === id ? { ...s, refs: s.refs.filter((r) => !keys.includes(refKey(r))) } : s))
+      .filter((s) => s.refs.length);
+    if (!next.length && !refs.length) {
+      await ddb.send(new DeleteCommand({ TableName: tableName, Key: { pk: `bookings#${slackUserId}` } }));
+      return;
+    }
+    await writeLedger(slackUserId, "series", next, refs, next);
+  }
+
+  async function bookingsFor(slackUserId, { today }) {
+    const { refs, series } = await readLedger(slackUserId);
+    return [...refs, ...series.flatMap((s) => s.refs)].filter((r) => r.date >= today);
+  }
+
+  async function getTray(slackUserId) {
+    const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk: `tray#${slackUserId}` } }));
+    if (!live(Item)) return null;
+    const { pk, expiresAt, ...tray } = Item;
+    return tray;
+  }
+
+  // Version-checked so two quick button presses cannot both win. Version 0
+  // means "no tray yet": an expired row counts as absent, since TTL lags.
+  async function putTray(slackUserId, tray, { expectVersion }) {
+    try {
+      await ddb.send(new PutCommand({
+        TableName: tableName,
+        Item: { ...tray, pk: `tray#${slackUserId}`, version: expectVersion + 1, expiresAt: nowS() + TRAY_TTL_S },
+        ConditionExpression: expectVersion === 0 ? "attribute_not_exists(pk) OR expiresAt <= :now" : "#v = :v",
+        ...(expectVersion === 0
+          ? { ExpressionAttributeValues: { ":now": nowS() } }
+          : { ExpressionAttributeNames: { "#v": "version" }, ExpressionAttributeValues: { ":v": expectVersion } }),
+      }));
+      return true;
+    } catch (error) {
+      if (error.name === "ConditionalCheckFailedException") return false;
+      throw error;
+    }
+  }
+
+  async function deleteTray(slackUserId) {
+    await ddb.send(new DeleteCommand({ TableName: tableName, Key: { pk: `tray#${slackUserId}` } }));
+  }
+
+  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking, recordBooking, recordSeries, seriesFor, dropSeriesRefs, bookingsFor, getTray, putTray, deleteTray };
 }
