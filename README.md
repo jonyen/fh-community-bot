@@ -253,7 +253,8 @@ with a search, such as `list speakers to reserve`.
 - **Search and filter.** Type in the search box and press Enter. The bot first
   matches your words against item names, room nicknames and categories. If
   nothing matches, it asks the model which items fit. The category menu
-  narrows the list further. The list shows 8 items per page.
+  narrows the list further. The list shows 8 items per page. **Close** removes
+  the card; your tray is kept.
 - **The tray.** **+ Add** puts an item in your tray and opens its form on the
   same card: date, start, end and title (kitchen appliances also ask for the
   equipment). A new line starts with the details of the line before it. The

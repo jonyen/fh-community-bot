@@ -14,8 +14,10 @@ export const LIST_ADD_ACTION = "reservation_list_add";
 export const LIST_EDIT_ACTION = "reservation_list_edit";
 export const TRAY_RESERVE_ACTION = "reservation_tray_reserve";
 export const TRAY_CLEAR_ACTION = "reservation_tray_clear";
+export const LIST_CLOSE_ACTION = "reservation_list_close";
 export const LISTING_ACTIONS = new Set([
   LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION,
+  LIST_CLOSE_ACTION,
 ]);
 
 export const PAGE_SIZE = 8;
@@ -74,17 +76,21 @@ export function listingMessage({ items, total, view, categories, tray, lineStatu
   });
   blocks.push({ type: "actions", block_id: "list_category", elements: [categorySelect(categories, view.c || "all")] });
 
+  // Close sits with the paging buttons so every page has a way to dismiss the card.
+  const close = button(LIST_CLOSE_ACTION, "Close", "close");
   if (items.length === 0) {
     const overview = categoryCounts(catalog);
     const none = q ? `Nothing matches "${esc(q)}".` : `Nothing to reserve in ${CATEGORY_NAMES[view.c] || "this category"}.`;
     blocks.push(section(`${none}${overview ? `\n${overview}` : ""}`));
+    blocks.push({ type: "actions", block_id: "list_nav", elements: [close] });
   } else {
     for (const e of items.slice(0, PAGE_SIZE)) blocks.push(itemSection(e, tray));
     const nav = [
       ...(p > 0 ? [button(LIST_PAGE_ACTION, "◀ Prev", String(p - 1))] : []),
       ...(p < pages - 1 ? [button(LIST_PAGE_ACTION, "Next ▶", String(p + 1))] : []),
+      close,
     ];
-    if (nav.length) blocks.push({ type: "actions", block_id: "list_nav", elements: nav });
+    blocks.push({ type: "actions", block_id: "list_nav", elements: nav });
     blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Page ${p + 1} of ${pages}` }] });
   }
 
