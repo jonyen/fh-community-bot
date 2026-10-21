@@ -211,9 +211,11 @@ stays silent on anything it reads as chatter. If real requests get no reply:
   pressed request (already booked, or edited since). Look for
   `stale reservation card press` in the worker logs.
 
-Slack app clean-up after the move from DMs: the `/reserve` slash command, the
-`message.im` event and the `im:history` scope are no longer used and can be
-removed.
+Slack app clean-up after the move from DMs: the `message.im` event and the
+`im:history` scope are no longer used and can be removed. Keep the `/reserve`
+slash command: it is how members ask privately in #reservations. Its request
+URL must be the receiver's Function URL. If `/reserve` gives "dispatch_failed"
+or nothing at all, check that URL and look for the command in the receiver logs.
 
 ## A cancel says "I couldn't find that booking as it was"
 

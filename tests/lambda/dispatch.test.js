@@ -407,11 +407,13 @@ describe("dispatch for connected accounts", () => {
 describe("dispatch reservation cards", () => {
   const makeHandler = () => ({ channelId: "CRES", handleMessage: vi.fn(), handleCardAction: vi.fn().mockResolvedValue(), handleModalSubmit: vi.fn().mockResolvedValue(), resume: vi.fn(), disconnect: vi.fn() });
 
-  it("no longer routes /reserve", async () => {
+  it("routes /reserve to the private question handler", async () => {
     const reservationsHandler = { ...makeHandler(), handleCommand: vi.fn() };
-    const envelope = { type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "C1", text: "the MPR sat", response_url: "https://r" };
-    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), reservationsHandler, client: makeClient() });
-    expect(reservationsHandler.handleCommand).not.toHaveBeenCalled();
+    const client = makeClient();
+    const envelope = { type: "slash_command", command: "/reserve", user_id: "U9", channel_id: "CRES", text: "what are my reservations", response_url: "https://r" };
+    await dispatchSlackEvent({ slackEnvelope: envelope, handler: vi.fn(), reservationsHandler, client });
+    expect(reservationsHandler.handleCommand).toHaveBeenCalledWith({ userId: "U9", channel: "CRES", text: "what are my reservations", client, responseUrl: "https://r" });
+    expect(reservationsHandler.disconnect).not.toHaveBeenCalled();
   });
 
   it("hands block_actions to the card handler too", async () => {

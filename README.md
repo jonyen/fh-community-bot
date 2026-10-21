@@ -243,6 +243,20 @@ there without the bot joining in.
   Calendar** link instead of Cancel.
 - Only the member who asked can press Book, Edit, Cancel or Cancel booking.
 
+### Asking privately with /reserve
+
+A plain message in #reservations is seen by everyone. To ask without that, type
+`/reserve` and the question in #reservations, for example
+`/reserve what are my reservations` or `/reserve is the MPR free Saturday 2-4`.
+Nobody else sees the command, and every answer is visible only to you.
+
+- `/reserve` alone, or `/reserve what can I reserve`, opens the listing card.
+- `/reserve what do I have booked?` shows your bookings, with Cancel.
+- Questions (is it free, who has it, what's booked) are answered privately.
+- A booking request is not booked. The reply says to post it in the channel
+  or add it from the listing card.
+- Used in any other channel, `/reserve` says to use it in #reservations.
+
 ### Browsing and reserving several things at once
 
 Post `list items to reserve` (or `what can I reserve?`) in #reservations. The
@@ -319,8 +333,8 @@ One-time setup:
    `OAuthRedirectUri` as an authorized redirect URI.
 3. Save its id and secret as GitHub secrets `GOOGLE_WEB_CLIENT_ID` and
    `GOOGLE_WEB_CLIENT_SECRET`, and redeploy.
-4. In the Slack app, add the slash command `/reservations-disconnect` with the
-   receiver's Function URL as its request URL.
+4. In the Slack app, add the slash commands `/reservations-disconnect` and
+   `/reserve` with the receiver's Function URL as their request URL.
 
 Repo variables: `RESERVATIONS_CHANNEL_ID`, `ROOM_REQUESTS_SHEET_ID`,
 `KITCHEN_SHEET_ID`, `RESOURCE_CALENDARS` (bundled as

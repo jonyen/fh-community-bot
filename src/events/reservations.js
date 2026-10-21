@@ -30,6 +30,8 @@ import { TRAY_RESERVE_ACTION } from "../lib/reservation-listing.js";
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
 const ENDED_TEXT = "That booking has already ended.";
+const COMMAND_HELP = "Ask me privately, for example `/reserve what are my reservations`, `/reserve what can I reserve`, `/reserve is the MPR free Saturday 2-4` or `/reserve who has the Transit`.";
+const COMMAND_BOOK_TEXT = "To book, post it in the channel without /reserve, or open `/reserve what can I reserve` and add it there.";
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
@@ -656,12 +658,30 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       return;
     }
     const say = threadSay(client, event.channel, event.ts);
+    return answer({ text, user: event.user, channel: event.channel, say, client, threadTs: event.ts });
+  }
+
+  // /reserve: the same questions as chatting in the channel, but nobody else
+  // sees them and every answer is private. Booking itself stays in the
+  // channel (a public card) or on the listing card.
+  async function handleCommand({ userId, channel, text, client, responseUrl }) {
+    const tell = (t) => tellPrivately({ userId, channel, client, responseUrl, text: t });
+    if (channel !== channelId) return tell(`Use /reserve in <#${channelId}>.`);
+    const asked = String(text || "").trim();
+    if (!asked) return listing.post({ channel, user: userId, search: null, client });
+    const say = privateSay(client, { channel, user: userId, responseUrl });
+    return answer({ text: asked, user: userId, channel, say, client, threadTs: null });
+  }
+
+  // threadTs is the member's message for a chat; null for /reserve, which
+  // answers questions only.
+  async function answer({ text, user, channel, say, client, threadTs }) {
     const raw = await parse(text);
     if (!raw) return say.done("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
-    if (req.intent === "other") return;
-    if (req.intent === "mine") return postMine({ channel: event.channel, user: event.user, client });
-    if (req.intent === "browse") return listing.post({ channel: event.channel, user: event.user, search: req.search, client });
+    if (req.intent === "other") return threadTs ? undefined : say.done(COMMAND_HELP);
+    if (req.intent === "mine") return postMine({ channel, user, client });
+    if (req.intent === "browse") return listing.post({ channel, user, search: req.search, client });
     // "Sat 2-4" is afternoon. The model is told so, but a small-hours time
     // nobody wrote "am" for is asked about rather than booked at 2 AM.
     if (req.start != null && req.start < 7 * 60 && !/\d\s*(am|a\.m\.)|morning|sunrise/i.test(text)) {
@@ -680,9 +700,10 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       }
       return handleQuery(req, say, client);
     }
+    if (!threadTs) return say.done(COMMAND_BOOK_TEXT);
 
     const assessment = await assess(req, client);
-    await client.chat.postMessage({ channel: event.channel, thread_ts: event.ts, ...BOT_PERSONA, ...cardMessage({ user: event.user, req, assessment }) });
+    await client.chat.postMessage({ channel, thread_ts: threadTs, ...BOT_PERSONA, ...cardMessage({ user, req, assessment }) });
   }
 
   // Book, Cancel or Cancel booking on a card, or anyone but the requester
@@ -769,5 +790,5 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     await updateCard(client, { channel, cardTs, user, req, assessment });
   }
 
-  return { channelId, handleMessage, handleCardAction, handleModalSubmit, resume, disconnect };
+  return { channelId, handleMessage, handleCommand, handleCardAction, handleModalSubmit, resume, disconnect };
 }
