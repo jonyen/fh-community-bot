@@ -99,9 +99,20 @@ export function createRmsAdapter({
     return { reservations: results.flatMap((r) => r.ok || []), errors };
   }
 
+  // One calendar read per item over the whole span, however many dates.
+  async function checkDates({ dates, start, end, items }) {
+    if (dates.length === 0) return {};
+    const sorted = [...dates].sort();
+    const lists = await mapLimit(items, concurrency, (entry) => eventsFor(entry, sorted[0], sorted.at(-1)));
+    const all = lists.flat();
+    return Object.fromEntries(dates.map((date) => [date, {
+      conflicts: all.filter((r) => r.date === date && overlaps(start, end, r.start, r.end)),
+      unavailable: null,
+    }]));
+  }
+
   async function findConflicts({ date, start, end, items }) {
-    const lists = await mapLimit(items, concurrency, (entry) => eventsFor(entry, date, date));
-    return lists.flat().filter((r) => r.date === date && overlaps(start, end, r.start, r.end));
+    return (await checkDates({ dates: [date], start, end, items }))[date].conflicts;
   }
 
   async function book({ date, start, end, items, title, requesterName, requesterUserId }, { clients } = {}) {
@@ -179,5 +190,5 @@ export function createRmsAdapter({
     return { status: "cancelled", link: itemLink };
   }
 
-  return { backend: "rms", link, listReservations, findConflicts, book, cancel };
+  return { backend: "rms", link, listReservations, checkDates, findConflicts, book, cancel };
 }

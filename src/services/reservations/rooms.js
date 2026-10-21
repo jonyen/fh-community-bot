@@ -54,11 +54,20 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
     return { reservations: rows.map(toReservation), errors: [] };
   }
 
-  async function findConflicts({ date, start, end, items }) {
+  // One read of the sheet answers every date, so a weekly repeat costs the same as one day.
+  async function checkDates({ dates, start, end, items }) {
     const wanted = items.map((i) => i.label);
-    return (await readRows())
-      .filter((r) => r.date === date && overlaps(start, end, r.start, r.end) && roomsConflict(wanted, r.rooms))
-      .map(toReservation);
+    const rows = await readRows();
+    return Object.fromEntries(dates.map((date) => [date, {
+      conflicts: rows
+        .filter((r) => r.date === date && overlaps(start, end, r.start, r.end) && roomsConflict(wanted, r.rooms))
+        .map(toReservation),
+      unavailable: null,
+    }]));
+  }
+
+  async function findConflicts({ date, start, end, items }) {
+    return (await checkDates({ dates: [date], start, end, items }))[date].conflicts;
   }
 
   async function book({ date, start, end, items, title, ministry, requesterName }, { clients } = {}) {
@@ -98,5 +107,5 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
     return { status: "cancelled", link };
   }
 
-  return { backend: "rooms", link, listReservations, findConflicts, book, cancel };
+  return { backend: "rooms", link, listReservations, checkDates, findConflicts, book, cancel };
 }

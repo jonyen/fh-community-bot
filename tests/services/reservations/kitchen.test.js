@@ -63,6 +63,17 @@ describe("kitchen adapter", () => {
     expect(hits.map((h) => h.title)).toEqual(["A", "B", "C"]);
   });
 
+  it("checks many dates with one read, flagging a date the sheet has no rows for", async () => {
+    const res = await adapter.checkDates({
+      dates: ["2026-10-17", "2026-10-18", "2026-10-30"], start: 1080, end: 1140, items: [],
+    });
+    expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+    expect(res["2026-10-17"]).toEqual({ conflicts: [], unavailable: null });
+    expect(res["2026-10-18"].conflicts.map((c) => c.title)).toEqual(["A", "B", "C"]);
+    expect(res["2026-10-18"].unavailable).toBeNull();
+    expect(res["2026-10-30"]).toEqual({ conflicts: [], unavailable: "The kitchen sheet is not open yet for that date." });
+  });
+
   it("fills the first empty row for the date, only touching requested appliances", async () => {
     const res = await adapter.book({
       date: "2026-10-17", start: 1020, end: 1080, requesterName: "Jina Kim", phone: "555-0100",

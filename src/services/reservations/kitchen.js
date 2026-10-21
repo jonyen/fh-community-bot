@@ -57,9 +57,21 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     return { reservations: rows.map(toReservation), errors: [] };
   }
 
+  // One read of the sheet answers every date. A date with no rows at all is
+  // one Arie has not rolled forward yet, which is not the same as a free day.
+  async function checkDates({ dates, start, end }) {
+    const rows = await readRows();
+    return Object.fromEntries(dates.map((date) => {
+      if (!rows.some((r) => r.date === date)) {
+        return [date, { conflicts: [], unavailable: "The kitchen sheet is not open yet for that date." }];
+      }
+      const hits = rows.filter((r) => r.name && r.date === date && overlaps(start, end, r.start, r.end));
+      return [date, { conflicts: hits.length >= maxGroups ? hits.map(toReservation) : [], unavailable: null }];
+    }));
+  }
+
   async function findConflicts({ date, start, end }) {
-    const hits = (await readRows()).filter((r) => r.name && r.date === date && overlaps(start, end, r.start, r.end));
-    return hits.length >= maxGroups ? hits.map(toReservation) : [];
+    return (await checkDates({ dates: [date], start, end }))[date].conflicts;
   }
 
   async function book({ date, start, end, requesterName, phone, appliances = {} }, { clients } = {}) {
@@ -99,5 +111,5 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     return { status: "cancelled", link };
   }
 
-  return { backend: "kitchen", link, listReservations, findConflicts, book, cancel };
+  return { backend: "kitchen", link, listReservations, checkDates, findConflicts, book, cancel };
 }

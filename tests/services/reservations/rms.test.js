@@ -86,6 +86,25 @@ describe("rms adapter", () => {
     expect(hits.map((h) => h.title)).toEqual(["A"]);
   });
 
+  it("checks many dates with one calendar read per item over the whole span", async () => {
+    cal.events.list.mockImplementation(async ({ calendarId }) => ({
+      data: { items: calendarId === SET2.calendarId ? [
+        ev("Youth night", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { id: "EV1" }),
+        ev("Elsewhere", "2026-10-20T14:00:00-04:00", "2026-10-20T16:00:00-04:00", { id: "EV2" }),
+      ] : [] },
+    }));
+    const res = await adapter.checkDates({
+      dates: ["2026-10-24", "2026-10-17"], start: 900, end: 960, items: [SET2, POOL],
+    });
+    expect(cal.events.list).toHaveBeenCalledTimes(2);
+    expect(cal.events.list).toHaveBeenCalledWith(expect.objectContaining({
+      calendarId: SET2.calendarId, timeMin: "2026-10-17T00:00:00-04:00", timeMax: "2026-10-25T00:00:00-04:00",
+    }));
+    expect(res["2026-10-17"].conflicts.map((c) => c.title)).toEqual(["Youth night"]);
+    expect(res["2026-10-17"].unavailable).toBeNull();
+    expect(res["2026-10-24"]).toEqual({ conflicts: [], unavailable: null });
+  });
+
   it("books by inviting the resource and returns booked once accepted", async () => {
     const res = await adapter.book({
       date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night",

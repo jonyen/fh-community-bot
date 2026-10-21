@@ -76,6 +76,17 @@ describe("rooms adapter", () => {
     expect(hits.map((h) => h.title)).toEqual(["Whole building"]);
   });
 
+  it("checks many dates with one read of the sheet", async () => {
+    const res = await adapter.checkDates({
+      dates: ["2026-10-24", "2026-10-31"], start: 840, end: 900, items: [{ label: "Parking Lot" }],
+    });
+    expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+    expect(Object.keys(res)).toEqual(["2026-10-24", "2026-10-31"]);
+    expect(res["2026-10-24"].conflicts.map((c) => c.title)).toEqual(["Rally"]);
+    expect(res["2026-10-24"].unavailable).toBeNull();
+    expect(res["2026-10-31"]).toEqual({ conflicts: [], unavailable: null });
+  });
+
   it("appends a row with blank status", async () => {
     const res = await adapter.book({
       date: "2026-10-28", start: 1140, end: 1260, items: [{ label: "MPR" }, { label: "Parking Lot" }],
