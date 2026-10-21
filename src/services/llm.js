@@ -49,7 +49,8 @@ ${catalogText}
 Kitchen appliance keys: island, whiteCounter, brownCounter, toasterOven, airFryer, microwave (true when wanted); freezer, fridge (number of shelves); largeRiceCooker, smallRiceCooker, instapot (how many).
 
 JSON fields:
-- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), "find" (asks what items exist that fit a description, e.g. "what speakers are there?", "something for a picnic"; put every fitting item name in "items"), "mine" (asks what they themselves have booked, e.g. "what do I have booked?", "my reservations"), or "other" (anything else, including thanks and chatter).
+- "intent": "book" (wants to reserve), "check" (asks if something is free), "list" (asks what is booked or who has something), "find" (asks what items exist that fit a description, e.g. "what speakers are there?", "something for a picnic"; put every fitting item name in "items"), "mine" (asks what they themselves have booked, e.g. "what do I have booked?", "my reservations"), "browse" (asks to see the things that can be reserved, e.g. "list items to reserve", "what can I reserve?", "list reservations" when no day or item is named; keep "list" for requests naming a day or item), or "other" (anything else, including thanks and chatter).
+- "search": for browse only, the words describing what they want to see (e.g. "speakers" in "list speakers to reserve"), else null.
 - "items": exact item names from the list above.
 - "unmatched": phrases naming things to book that match nothing in the list.
 - "ambiguous": [{"phrase": <what they wrote>, "options": [exact item names]}] when a phrase could mean several items, e.g. "a tech set".
@@ -185,10 +186,31 @@ export function createLlmService(client, { model = DEFAULT_MODEL } = {}) {
     }
   }
 
+  // Picks the bookable items that fit a member's search words. Returns the
+  // exact names the model listed, or null when the call fails or the reply
+  // isn't a JSON array; the caller checks each name against the catalog.
+  async function matchItems(query, { catalogText }) {
+    try {
+      const system = `Given the bookable items below, output ONLY a JSON array of the exact item names that fit the member's search words. Output [] if none fit.
+
+Bookable items, by category:
+${catalogText}`;
+      const raw = await complete("matchItems", system, query, 1024);
+      const jsonStart = raw.indexOf("[");
+      const jsonEnd = raw.lastIndexOf("]");
+      if (jsonStart === -1 || jsonEnd === -1) return null;
+      const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+      return Array.isArray(parsed) ? parsed.filter((n) => typeof n === "string") : null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     checkDuplicate,
     classifyIssueReport,
     writeLandlordTicket,
     parseReservationRequest,
+    matchItems,
   };
 }

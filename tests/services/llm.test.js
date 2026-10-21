@@ -274,3 +274,30 @@ describe("reservation prompt periods", () => {
   });
 });
 
+
+describe("matchItems and the browse prompt", () => {
+  function svcWith(content) {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: "text", text: content }] });
+    return { svc: createLlmService({ messages: { create } }), create };
+  }
+
+  it("matchItems returns the names the model lists", async () => {
+    const { svc, create } = svcWith('Here: ["Tech Set 1","Tech Set 2", 3]');
+    await expect(svc.matchItems("speaker", { catalogText: "Tech: Tech Set 1, Tech Set 2" })).resolves.toEqual(["Tech Set 1", "Tech Set 2"]);
+    expect(create.mock.calls[0][0].system).toContain("Tech: Tech Set 1, Tech Set 2");
+  });
+
+  it("matchItems returns null on a non-array reply or a failed call", async () => {
+    await expect(svcWith("no idea").svc.matchItems("x", { catalogText: "" })).resolves.toBeNull();
+    const svc = createLlmService({ messages: { create: vi.fn().mockRejectedValue(new Error("boom")) } });
+    await expect(svc.matchItems("x", { catalogText: "" })).resolves.toBeNull();
+  });
+
+  it("the reservation prompt describes browse and search", async () => {
+    const { svc, create } = svcWith('{"intent":"browse","search":"speakers"}');
+    await svc.parseReservationRequest("Member: list speakers to reserve", { catalogText: "", today: "2026-10-20", weekday: "Tuesday" });
+    const { system } = create.mock.calls[0][0];
+    expect(system).toContain('"browse"');
+    expect(system).toContain('"search"');
+  });
+});
