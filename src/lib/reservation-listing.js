@@ -93,7 +93,8 @@ export function listingMessage({ items, total, view, categories, tray, lineStatu
     blocks.push(section(`*Your tray (${tray.length})*`));
     for (const line of tray) {
       const status = lineStatus[line.id];
-      blocks.push(section(esc(lineSummary(line)) + (status ? ` · ${esc(status)}` : ""), button(LIST_EDIT_ACTION, "Edit", line.id)));
+      // status is mrkdwn built by the caller (mentions included), already escaped.
+      blocks.push(section(esc(lineSummary(line)) + (status ? ` · ${status}` : ""), button(LIST_EDIT_ACTION, "Edit", line.id)));
     }
     blocks.push({
       type: "actions", block_id: "tray_actions",

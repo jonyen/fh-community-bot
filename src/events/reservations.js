@@ -21,6 +21,7 @@ import { readEditModal, MODAL_CALLBACK } from "../lib/reservation-modal.js";
 import { mineMessage, MINE_CANCEL_ACTION } from "../lib/reservation-mine.js";
 import { isMine, refKey } from "../lib/reservation-owner.js";
 import { calendarLink } from "../lib/rms-catalog.js";
+import { createListingFlow } from "./reservations-listing.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
@@ -29,7 +30,7 @@ const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BO
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
 
-export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null }) {
+export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null, trayStore = null }) {
   const catalogText = catalogPromptText(catalog);
 
   async function withMentions(client, reservations) {
@@ -43,6 +44,9 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       }
     }));
   }
+
+  // The private listing card and tray ("list items to reserve").
+  const listing = createListingFlow({ catalog, adapters, llm, catalogText, trayStore, now, withMentions });
 
   // Replies in the thread under the member's message.
   function threadSay(client, channel, threadTs) {
@@ -559,6 +563,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const req = normalizeRequest(raw, catalog);
     if (req.intent === "other") return;
     if (req.intent === "mine") return postMine({ channel: event.channel, user: event.user, client });
+    if (req.intent === "browse") return listing.post({ channel: event.channel, user: event.user, search: req.search, client });
     // "Sat 2-4" is afternoon. The model is told so, but a small-hours time
     // nobody wrote "am" for is asked about rather than booked at 2 AM.
     if (req.start != null && req.start < 7 * 60 && !/\d\s*(am|a\.m\.)|morning|sunrise/i.test(text)) {
@@ -586,6 +591,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   // pressing a card button. The requester's Edit is opened by the receiver,
   // which has the trigger_id.
   async function handleCardAction({ payload, client }) {
+    const listed = (payload.actions || []).find((a) => listing.ACTIONS.has(a.action_id));
+    if (listed) return listing.handleAction({ payload, action: listed, client });
     const action = (payload.actions || []).find((a) => CARD_ACTIONS.has(a.action_id));
     if (!action) return;
     if (action.action_id === MINE_CANCEL_ACTION) return cancelFromList({ payload, action, client });

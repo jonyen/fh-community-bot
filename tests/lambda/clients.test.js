@@ -26,6 +26,7 @@ describe("getDeps reservations wiring", () => {
     expect(deps.connect).toBeNull();
     expect(typeof deps.ledger.recordBooking).toBe("function");
     expect(typeof deps.ledger.bookingsFor).toBe("function");
+    expect(deps.trayStore).toBe(deps.ledger);
   });
 
   it("has no ledger when no table is configured", () => {
@@ -35,5 +36,6 @@ describe("getDeps reservations wiring", () => {
     });
     getDeps();
     expect(createReservationsHandler.mock.calls[0][0].ledger).toBeNull();
+    expect(createReservationsHandler.mock.calls[0][0].trayStore).toBeNull();
   });
 });
