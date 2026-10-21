@@ -15,6 +15,11 @@ export const COMBINED_EVENT_TYPE = "reservation_combined";
 const VALUE_MAX = 2000;
 const OPTIONS_MAX = 100;
 const SECTION_MAX = 3000;
+const BLOCK_ID_MAX = 255;
+// Skips beyond this many collapse to "…and N more", each cut to SKIP_TEXT_MAX,
+// so the message stays under Slack's 50 blocks.
+const SKIPS_MAX = 40;
+const SKIP_TEXT_MAX = 200;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const plain = (t) => ({ type: "plain_text", text: t });
 const section = (text, accessory) => ({ type: "section", text: { type: "mrkdwn", text: fitSection(text) }, ...(accessory ? { accessory } : {}) });
@@ -62,10 +67,13 @@ export function combinedMessage({ user, booked, skipped = [] }) {
     ...booked.map((entry, index) => section(`• ${esc(entry.summary)}`, cancelButton({ user, entry, index }))),
   ];
   if (skipped.length) {
-    blocks.push(...chunked("⚠️ Not booked, already claimed or unavailable:", skipped.map((s) => `• ${esc(s.text)}`)));
+    const lines = skipped.slice(0, SKIPS_MAX).map((s) => `• ${esc(String(s.text).slice(0, SKIP_TEXT_MAX))}`);
+    if (skipped.length > SKIPS_MAX) lines.push(`…and ${skipped.length - SKIPS_MAX} more.`);
+    blocks.push(...chunked("⚠️ Not booked, already claimed or unavailable:", lines));
   }
   return {
-    text: `✅ Reserved: ${booked.map((b) => b.summary).join("; ")}`.slice(0, SECTION_MAX),
+    // Slack reads the fallback text as mrkdwn too, so member text is escaped here as well.
+    text: `✅ Reserved: ${booked.map((b) => esc(b.summary)).join("; ")}`.slice(0, SECTION_MAX),
     blocks,
     metadata: { event_type: COMBINED_EVENT_TYPE, event_payload: { user } },
   };
@@ -87,6 +95,8 @@ export function markLineCancelled(message, index, text) {
 // today in New York) sets which dates are "remaining": those not yet past.
 export function seriesChooser({ user, series, postTs, channel, today = nyToday() }) {
   const ctx = { u: user, s: series.id, pt: postTs, c: channel };
+  const blockId = JSON.stringify(ctx);
+  if (blockId.length > BLOCK_ID_MAX) throw new Error(`seriesChooser: block_id is ${blockId.length} chars, Slack allows ${BLOCK_ID_MAX}`);
   const dates = [...new Set(series.refs.map((r) => r.date).filter((d) => d >= today))].sort();
   const when = series.start != null && series.end != null ? ` · ${fmtRange(series.start, series.end)}` : "";
   const head = `Cancel *${esc(series.item)}* · ${repeatText(series.repeat)}${when}`;
@@ -106,6 +116,6 @@ export function seriesChooser({ user, series, postTs, channel, today = nyToday()
   }
   return {
     text: head,
-    blocks: [section(head), { type: "actions", block_id: JSON.stringify(ctx), elements }],
+    blocks: [section(head), { type: "actions", block_id: blockId, elements }],
   };
 }

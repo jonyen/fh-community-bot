@@ -31,14 +31,14 @@ describe("combinedMessage", () => {
   });
 
   it("renders skips under the warning header, chunked under 3,000 chars", () => {
-    const skipped = Array.from({ length: 100 }, (_, i) => ({ text: `Room ${i} ${"x".repeat(60)}` }));
+    const skipped = Array.from({ length: 40 }, (_, i) => ({ text: `Room ${i} ${"x".repeat(150)}` }));
     const s = combinedMessage({ user: "U1", booked, skipped });
     const at = s.blocks.findIndex((b) => b.text?.text.startsWith("⚠️ Not booked, already claimed or unavailable:"));
     expect(at).toBeGreaterThan(0);
     const sections = s.blocks.slice(at);
     expect(sections.length).toBeGreaterThan(1);
     for (const b of sections) expect(b.text.text.length).toBeLessThanOrEqual(3000);
-    expect(sections.map((b) => b.text.text).join("\n").match(/• Room/g)).toHaveLength(100);
+    expect(sections.map((b) => b.text.text).join("\n").match(/• Room/g)).toHaveLength(40);
     expect(s.blocks.length).toBeLessThanOrEqual(50);
   });
 
@@ -47,6 +47,20 @@ describe("combinedMessage", () => {
     expect(e.blocks[0].text.text).toContain("<@U1>");
     expect(e.blocks[1].text.text).toBe("• A &lt;b&gt; &amp; c");
     expect(JSON.stringify(e.blocks)).toContain("&lt;!channel&gt;");
+  });
+
+  it("escapes the fallback text so a title cannot broadcast", () => {
+    const e = combinedMessage({ user: "U1", booked: [{ summary: "<!channel> & x", seriesId: "s", count: 2 }], skipped: [] });
+    expect(e.text).toContain("&lt;!channel&gt; &amp; x");
+    expect(e.text).not.toContain("<!channel>");
+  });
+
+  it("caps skips at 40 lines then says how many more", () => {
+    const skipped = Array.from({ length: 60 }, (_, i) => ({ text: `Room ${i}` }));
+    const s = combinedMessage({ user: "U1", booked, skipped });
+    const all = s.blocks.map((b) => b.text.text).join("\n");
+    expect(all.match(/• Room/g)).toHaveLength(40);
+    expect(all).toContain("…and 20 more.");
   });
 
   it("drops the Cancel when the value is too big", () => {
@@ -92,9 +106,13 @@ describe("seriesChooser", () => {
     expect(actions.block_id.length).toBeLessThanOrEqual(255);
   });
 
+  it("throws when the block_id would pass 255 chars", () => {
+    expect(() => seriesChooser({ user: "U1", series, postTs: "1.2", channel: "C".repeat(300), today: "2026-10-20" })).toThrow(/block_id/);
+  });
+
   it("caps options at 100", () => {
     const refs = Array.from({ length: 150 }, (_, i) => ref(`2027-${String(1 + Math.floor(i / 28)).padStart(2, "0")}-${String(1 + (i % 28)).padStart(2, "0")}`));
     const big = seriesChooser({ user: "U1", series: { ...series, refs }, postTs: "1.2", channel: "C1", today: "2026-10-20" });
-    expect(big.blocks.find((b) => b.type === "actions").elements.find((e) => e.action_id === SERIES_ONE_ACTION).options).toHaveLength(100);
+    expect(big.blocks.find((b) => b.type === "actions").elements.find((e) => e.action_id === SERIES_ONE_ACTION).options).toHaveLength(40);
   });
 });
