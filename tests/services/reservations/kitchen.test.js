@@ -176,20 +176,20 @@ describe("kitchen adapter", () => {
     it("makes every booked result an error when the write fails", async () => {
       sheets.spreadsheets.values.batchUpdate.mockRejectedValue(new Error("quota"));
       const res = await adapter.bookMany([mk("2026-10-17", "C"), mk("2026-12-01", "A")]);
-      expect(res[0]).toEqual({ status: "error", error: "quota" });
+      expect(res[0]).toEqual({ status: "error", error: expect.objectContaining({ message: "quota" }) });
       expect(res[1].status).toBe("unavailable");
     });
 
     it("turns a failed read into errors, and writes nothing when no row is free", async () => {
       sheets.spreadsheets.values.get.mockRejectedValue(new Error("down"));
-      expect(await adapter.bookMany([mk("2026-10-17", "C")])).toEqual([{ status: "error", error: "down" }]);
+      expect(await adapter.bookMany([mk("2026-10-17", "C")])).toEqual([{ status: "error", error: expect.objectContaining({ message: "down" }) }]);
       expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
     });
 
     it("turns a malformed booking into an error and still books the others", async () => {
       const res = await adapter.bookMany([mk("2026-10-17", undefined), mk("2026-10-17", "C")]);
       expect(res[0].status).toBe("error");
-      expect(typeof res[0].error).toBe("string");
+      expect(res[0].error).toBeInstanceOf(Error);
       expect(res[1].status).toBe("booked");
       expect(res[1].ref.row).toBe(9);
       const { data } = sheets.spreadsheets.values.batchUpdate.mock.calls[0][0].requestBody;

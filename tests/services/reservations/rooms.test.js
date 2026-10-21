@@ -154,7 +154,15 @@ describe("rooms adapter", () => {
     it("makes every result an error when the append fails", async () => {
       sheets.spreadsheets.values.append.mockRejectedValue(new Error("quota"));
       const res = await adapter.bookMany([mk("2026-10-28", "A"), mk("2026-11-04", "B"), mk("2026-11-11", "C")]);
-      expect(res).toEqual(Array(3).fill({ status: "error", error: "quota" }));
+      expect(res).toEqual(Array(3).fill({ status: "error", error: expect.objectContaining({ message: "quota" }) }));
+    });
+
+    it("keeps the error object, so a 403 can be told from other failures", async () => {
+      sheets.spreadsheets.values.append.mockRejectedValue(Object.assign(new Error("The caller does not have permission"), { code: 403 }));
+      const [res] = await adapter.bookMany([mk("2026-10-28", "A")]);
+      expect(res.status).toBe("error");
+      expect(res.error).toBeInstanceOf(Error);
+      expect(res.error.code).toBe(403);
     });
 
     it("returns errors instead of throwing on a malformed booking", async () => {

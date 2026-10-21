@@ -83,7 +83,6 @@ const line = (id, o = {}) => ({
   repeat: null, onlyDates: null, progress: {}, ...o,
 });
 const mprRepeat = (o = {}) => line("L1", { item: "MPR", start: 840, end: 960, title: "MBS", repeat: { days: [6], until: "2026-11-14" }, ...o });
-const MPR_DATES = ["2026-10-24", "2026-10-31", "2026-11-07", "2026-11-14"];
 const trayRow = (o = {}) => ({ version: 3, lines: [], view: { q: "", c: "all", p: 0 }, editing: null, running: null, ...o });
 const press = (actionTs = "1700000000.123") => ({
   type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
@@ -220,11 +219,12 @@ describe("Reserve all", () => {
     expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
   });
 
-  it("a redelivered run with the same runId skips done dates and reports started ones", async () => {
+  it("a redelivered run with the same runId skips done dates, reports started ones and takes them out of the tray", async () => {
     trayStore.rows.set("U9", trayRow({
       running: { runId: RUN, at: NOW.getTime() - 60_000 },
       lines: [mprRepeat({
         progress: { "2026-10-24": "done", "2026-10-31": "started" },
+        claims: { "2026-10-24": RUN, "2026-10-31": RUN },
         booked: { "2026-10-24": { backend: "rooms", date: "2026-10-24", id: "rooms-2026-10-24" } },
       })],
     }));
@@ -236,7 +236,9 @@ describe("Reserve all", () => {
     expect(text).toContain("MPR · every Sat 10/24 – 11/14 (3 dates)");
     expect(text).toContain("MPR · Sat 10/31 · may already be booked, please check before booking again");
     expect(ledger.recordSeries.mock.calls[0][1].refs.map((r) => r.date)).toEqual(["2026-10-24", "2026-11-07", "2026-11-14"]);
-    expect(stored().lines[0]).toMatchObject({ onlyDates: ["2026-10-31"], progress: {} });
+    // Ruling P2: a date that may already be booked is never tried again.
+    expect(stored().lines).toEqual([]);
+    expect(stored().running).toBeNull();
   });
 
   it("marks dates started before writing and done after", async () => {
@@ -269,6 +271,170 @@ describe("Reserve all", () => {
     await reserve();
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("two overlapping runs post and record every booking exactly once and write nothing twice", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2"), line("L3", { item: "MPR" })] }));
+    let entered;
+    const inBook = new Promise((r) => { entered = r; });
+    let open;
+    const gate = new Promise((r) => { open = r; });
+    adapters.rms.bookMany.mockImplementation(async (bookings) => {
+      entered();
+      await gate;
+      return bookings.map((b) => ({ status: "booked", link: "x", ref: { backend: "rms", date: b.date, id: "rms-A" } }));
+    });
+    const h = handler();
+    const runA = reserve(h, "A");
+    await inBook;
+    // A is still writing, but its hold on the tray looks stale; B takes over.
+    trayStore.rows.get("U9").running.at = NOW.getTime() - 16 * 60_000;
+    await reserve(h, "B");
+    open();
+    await runA;
+
+    expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
+    expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
+    const posted = publicPosts().map((p) => sections(p).filter((t) => t.startsWith("• ")).join("\n"));
+    expect(posted).toHaveLength(2);
+    expect(posted.filter((t) => t.includes("Tech Set 2 · Sat 10/24"))).toHaveLength(1);
+    expect(posted.filter((t) => t.includes("MPR · Sat 10/24"))).toHaveLength(1);
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(2);
+    expect(ledger.recordBooking.mock.calls.map((c) => c[1].backend).sort()).toEqual(["rms", "rooms"]);
+    expect(stored().lines).toEqual([]);
+    expect(stored().running).toBeNull();
+    expect(stored().posts ?? null).toBeNull();
+  });
+
+  it("a store error before the second backend stops there: what was booked is posted, the rest reported", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L3", { item: "MPR" }), line("L2")] }));
+    const real = trayStore.putTray.getMockImplementation();
+    let calls = 0;
+    trayStore.putTray.mockImplementation(async (u, tray, opts) => {
+      calls++;
+      // 1 take the run, 2 claim rooms, 3 rooms done, 4 claim rms.
+      if (calls === 4) throw new Error("ddb down");
+      return real(u, tray, opts);
+    });
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    await expect(reserve()).resolves.toBeUndefined();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("MPR · Sat 10/24");
+    expect(text).toContain("Tech Set 2 · Sat 10/24 · not booked, please press Reserve all again");
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(1);
+    expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
+    expect(stored().lines[0].progress).toEqual({});
+    expect(stored().running).toBeNull();
+    errSpy.mockRestore();
+  });
+
+  it("losing every race to the member's own edits stops booking, posts what's done and lets go of the tray", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L3", { item: "MPR" }), line("L2")] }));
+    const real = trayStore.putTray.getMockImplementation();
+    let calls = 0;
+    trayStore.putTray.mockImplementation(async (u, tray, opts) => {
+      calls++;
+      // Each claim for rms meets a page turn on the listing card.
+      if (calls >= 4 && calls <= 6) trayStore.rows.get(u).version += 1;
+      return real(u, tray, opts);
+    });
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    await reserve();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(sections(publicPosts()[0]).join("\n")).toContain("MPR · Sat 10/24");
+    expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · not booked, please press Reserve all again");
+    expect(stored().running).toBeNull();
+    expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
+    errSpy.mockRestore();
+  });
+
+  it("a line edited while reserving is not written and is reported", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    const real = trayStore.putTray.getMockImplementation();
+    let calls = 0;
+    trayStore.putTray.mockImplementation(async (u, tray, opts) => {
+      calls++;
+      if (calls === 2) {
+        const row = trayStore.rows.get(u);
+        row.lines[0].title = "Changed";
+        row.version += 1;
+      }
+      return real(u, tray, opts);
+    });
+    await reserve();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · changed while reserving");
+    expect(stored().lines[0].title).toBe("Changed");
+    expect(stored().running).toBeNull();
+  });
+
+  it.each([
+    ["the member's profile", (c) => c.users.info.mockRejectedValue(new Error("users down")), "users down"],
+    ["the member's Google account", (c, k) => k.memberGoogle.clientsFor.mockRejectedValue(new Error("kms down")), "kms down"],
+  ])("can't read %s: tells the member privately and lets go of the tray", async (_, breakIt, message) => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    breakIt(client, connect);
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    await expect(reserve()).resolves.toBeUndefined();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(ephemerals().at(-1)).toMatchObject({ channel: "CRES", user: "U9", text: `⚠️ I couldn't reserve your tray (${message}). Please try again.` });
+    expect(stored().running).toBeNull();
+    errSpy.mockRestore();
+  });
+
+  it("when the final tray save fails, a redelivery neither posts again nor records twice", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    const real = trayStore.putTray.getMockImplementation();
+    let failFinish = true;
+    trayStore.putTray.mockImplementation(async (u, tray, opts) => {
+      if (failFinish && tray.running === null) throw new Error("ddb down");
+      return real(u, tray, opts);
+    });
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    await reserve();
+    expect(publicPosts()).toHaveLength(1);
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(1);
+    expect(stored().posts[RUN]).toMatchObject({ ts: POST_TS, ledger: true });
+    failFinish = false;
+    await reserve();
+    expect(publicPosts()).toHaveLength(1);
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(1);
+    expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
+    expect(stored().lines).toEqual([]);
+    expect(stored().running).toBeNull();
+    expect(stored().posts).toBeNull();
+    errSpy.mockRestore();
+  });
+
+  it.each([
+    [false, 1],
+    [true, 0],
+  ])("a redelivery after a crash past the post (ledger written: %s) posts nothing and records only what's missing", async (ledgerDone, writes) => {
+    const ref = { backend: "rms", date: "2026-10-24", id: "rms-2026-10-24" };
+    trayStore.rows.set("U9", trayRow({
+      running: { runId: RUN, at: NOW.getTime() - 60_000 },
+      lines: [line("L2", { progress: { "2026-10-24": "done" }, claims: { "2026-10-24": RUN }, booked: { "2026-10-24": ref } })],
+      posts: { [RUN]: { ts: POST_TS, ledger: ledgerDone, entries: [{ lineId: "L2", item: "Tech Set 2", start: 600, end: 720, title: "Youth night", repeat: null, refs: [["2026-10-24", ref]] }] } },
+    }));
+    await reserve();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(writes);
+    expect(stored().lines).toEqual([]);
+    expect(stored().posts).toBeNull();
+    expect(stored().running).toBeNull();
+    expect(sections(sent())[0]).toContain("✅ Reserved 1 booking.");
+  });
+
+  it("a press with no action_ts runs under its trigger_id", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    const payload = press();
+    delete payload.actions[0].action_ts;
+    payload.trigger_id = "trig.1";
+    await handler().handleCardAction({ payload, client });
+    expect(trayStore.putTray.mock.calls[0][1].running.runId).toBe("trig.1");
+    expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
   });
 
   describe("connecting Google", () => {
@@ -345,22 +511,35 @@ describe("Reserve all", () => {
         line("L3", { item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dinner" }),
       ],
     }));
-    adapters.rooms.bookMany.mockImplementation(async (bookings) => bookings.map(() => ({ status: "error", error: "The caller does not have permission" })));
+    const denied = Object.assign(new Error("The caller does not have permission"), { code: 403 });
+    adapters.rooms.bookMany.mockImplementation(async (bookings) => bookings.map(() => ({ status: "error", error: denied })));
     await reserve();
     expect(adapters.kitchen.bookMany).toHaveBeenCalledTimes(1);
     const text = sections(publicPosts()[0]).join("\n");
     expect(text).toContain("Kitchen · Thu 10/22");
     expect(text).toContain("You don't have edit access to the room request sheet.");
+    // Refused before writing, so the dates stay bookable.
     expect(stored().lines.map((l) => l.id)).toEqual(["L1"]);
+    expect(stored().lines[0]).toMatchObject({ progress: {}, claims: {} });
     expect(connect.authStore.markRevoked).not.toHaveBeenCalled();
   });
 
-  it("a write error skips that date with its message", async () => {
+  it("a write error may have written: reported as maybe booked and taken out of the tray", async () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
-    adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: "boom" }]);
+    adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: new Error("boom") }]);
     await reserve();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
-    expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · couldn't save (boom)");
+    expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · couldn't save (boom), may already be booked, please check before booking again");
+    expect(stored().lines).toEqual([]);
+  });
+
+  it("the public post names a write error without its raw text", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2"), line("L3", { item: "MPR" })] }));
+    adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: new Error("socket hang up") }]);
+    await reserve();
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("Tech Set 2 · Sat 10/24 · couldn't be saved, may already be booked, please check before booking again");
+    expect(text).not.toContain("socket hang up");
   });
 
   it("an unavailable result is skipped with its reason", async () => {

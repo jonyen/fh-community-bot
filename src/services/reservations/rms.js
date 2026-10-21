@@ -185,7 +185,7 @@ export function createRmsAdapter({
       try {
         return await book(b, { clients });
       } catch (err) {
-        return { status: "error", error: err.message };
+        return { status: "error", error: err };
       }
     });
   }

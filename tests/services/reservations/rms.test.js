@@ -202,7 +202,7 @@ describe("rms adapter", () => {
       const res = await adapter.bookMany(Array.from({ length: 10 }, (_, i) => mk(i)));
       expect(peak).toBe(4);
       expect(res).toHaveLength(10);
-      expect(res[3]).toEqual({ status: "error", error: "boom" });
+      expect(res[3]).toEqual({ status: "error", error: expect.objectContaining({ message: "boom" }) });
       expect(res.filter((r) => r.status === "booked")).toHaveLength(9);
       expect(res[0].ref.title).toBe("T0 — D");
     });

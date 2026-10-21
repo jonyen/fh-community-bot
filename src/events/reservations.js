@@ -7,6 +7,7 @@
 // refused card is replaced by its outcome; a booked one keeps a Cancel booking
 // button, whose value says where the booking lives. "What do I have
 // booked?" gets a private list, each line with its own Cancel.
+import { randomBytes } from "node:crypto";
 import { log, metric } from "../lib/logger.js";
 import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
 import { catalogPromptText, categoryCounts, CATEGORY_NAMES, CATEGORY_OWNERS, ownerFor } from "../lib/reservation-catalog.js";
@@ -31,15 +32,13 @@ const ENDED_TEXT = "That booking has already ended.";
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
-// bookMany reports a write error by its message only, so a 403 is told by its words.
-const FORBIDDEN_MESSAGE = /caller does not have permission|\bforbidden\b|writer access/i;
-
 // What a failed write as the member means: their grant is gone, their account
-// may not write there, or something else went wrong.
+// may not write there, or something else went wrong. A bare message (no
+// status code) can still be told revoked by its words, never forbidden.
 export function classifyWriteError(error) {
   const err = typeof error === "string" ? { message: error } : error;
   if (isInvalidGrant(err) || isScopeMissing(err)) return "revoked";
-  if (isForbidden(err) || (typeof error === "string" && FORBIDDEN_MESSAGE.test(error))) return "forbidden";
+  if (isForbidden(err)) return "forbidden";
   return "error";
 }
 
@@ -639,7 +638,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       // The press's action_ts names the run: an SQS redelivery of this press carries the same one.
       return reserveAll.run({
         user: payload.user?.id, channel: payload.channel?.id || payload.container?.channel_id, client,
-        runId: String(reserve.action_ts || ""), responseUrl: payload.response_url ?? null,
+        runId: String(reserve.action_ts || payload.trigger_id || `gen-${randomBytes(8).toString("hex")}`), responseUrl: payload.response_url ?? null,
       });
     }
     const listed = (payload.actions || []).find((a) => listing.ACTIONS.has(a.action_id));

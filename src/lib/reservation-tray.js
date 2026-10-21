@@ -8,10 +8,12 @@
 //            repeat: null | { days: number[] /* 0 = Sun */, until: ISO|null },
 //            onlyDates: ISO[]|null /* repeat dates still wanted */,
 //            progress: { [ISO]: "started"|"done" },
+//            claims?: { [ISO]: runId } /* the Reserve all run that marked it */,
 //            booked?: { [ISO]: ref } /* refs of "done" dates, until posted */ }
 //   Tray = { version, lines: Line[], view: { q, c /* "all" or category id */, p },
 //            editing: Line|null /* the draft being edited */,
-//            running: { runId, at } | null }
+//            running: { runId, at } | null,
+//            posts?: { [runId]: { ts, entries, ledger } } /* posted, not yet tidied */ }
 import { randomBytes } from "node:crypto";
 import { findItem } from "./reservation-catalog.js";
 import { addDaysIso, fmtDay, fmtRange } from "./reservation-time.js";

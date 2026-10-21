@@ -102,7 +102,7 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
       await append(writer, bookings.map(rowOf));
       return bookings.map((b) => ({ status: "booked", link, ref: bookedRef(b) }));
     } catch (err) {
-      return bookings.map(() => ({ status: "error", error: err.message }));
+      return bookings.map(() => ({ status: "error", error: err }));
     }
   }
 

@@ -3,10 +3,19 @@
 // tray, through the same adapters, account rules, ledger and digest as a
 // card's Book, then posts one combined message in the channel.
 //
-// Nothing may be written twice. The press's run id is stored in the tray
-// while it runs, and each date is marked "started" in the stored tray
-// (version-checked) before it is written and "done" (with its ref) after, so
-// a redelivered or later run skips what was written and still posts it.
+// Nothing may be written twice, and nothing written may go unposted:
+// - The run holds the tray (`running`) while it books. A press made while
+//   another run holds it is told to wait.
+// - Before a backend's dates are written they are marked "started", with the
+//   run's id in `claims`, in the stored tray (version-checked); after, "done"
+//   with the booking's ref. Only the run that claimed a date posts it, records
+//   it and tidies it away; other runs leave it alone.
+// - Right after the public post the run saves a `posts[runId]` record, so a
+//   redelivery of the same press finishes the ledger and tray without posting
+//   again.
+// - A date whose write may or may not have happened (an error, or a crash
+//   while "started") is never written again: it is reported as "may already
+//   be booked" and taken out of the tray.
 import { log, metric } from "../lib/logger.js";
 import { nyToday, nyParts, fmtDay, fmtRange, periodCovering } from "../lib/reservation-time.js";
 import { findItem } from "../lib/reservation-catalog.js";
@@ -24,14 +33,49 @@ const BUSY_TEXT = "Already reserving your tray. One moment.";
 const EMPTY_TEXT = "Your tray is empty. Add something to reserve first.";
 const CONNECT_TEXT = "To book as you, connect your Google account once. I'll reserve your tray as soon as you approve.";
 const RECONNECT_TEXT = "Your Google connection has expired. Connect again and I'll reserve the rest of your tray as soon as you approve.";
+const MAYBE_TEXT = "may already be booked, please check before booking again";
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // What a booking is made from; a line whose fields changed mid-run is not written.
 const bookingFields = (l) => JSON.stringify([l.item, l.date, l.start, l.end, l.title, l.repeat ?? null, l.onlyDates ?? null, l.appliances ?? {}]);
 const errorText = (error) => (typeof error === "string" ? error : error?.message) || "unknown error";
+const daysText = (dates) => (dates.length <= 3 ? dates.map(fmtDay).join(", ") : `${dates.length} dates`);
 // "10/24": the repeat's weekdays are already named before the span.
 const monthDay = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
-const daysText = (dates) => (dates.length <= 3 ? dates.map(fmtDay).join(", ") : `${dates.length} dates`);
+const keyOf = (lineId, date) => `${lineId}|${date}`;
+// text goes in the public post; detail (if any) replaces it in the private result.
+const skip = (item, date, text, detail) => ({
+  text: `${item} · ${fmtDay(date)} · ${text}`, ...(detail ? { detail: `${item} · ${fmtDay(date)} · ${detail}` } : {}),
+});
+const entryDates = (e) => e.refs.map(([d]) => d);
+
+// Drops the Reserve all bookkeeping for one date of a stored line.
+function forgetDate(line, date) {
+  for (const field of ["progress", "claims", "booked"]) {
+    if (line[field]?.[date] !== undefined) {
+      const { [date]: _, ...rest } = line[field];
+      line[field] = rest;
+    }
+  }
+}
+
+// Takes `gone` dates out of the stored tray's lines; a line left with no
+// dates goes, a repeat keeps the rest as onlyDates. Other dates are untouched.
+function removeDates(tray, gone) {
+  tray.lines = tray.lines.flatMap((l) => {
+    const dates = expandDates(l);
+    const out = dates.filter((d) => gone.has(keyOf(l.id, d)));
+    if (!out.length) return [l];
+    const left = dates.filter((d) => !gone.has(keyOf(l.id, d)));
+    if (!left.length) return [];
+    const next = { ...l };
+    for (const d of out) forgetDate(next, d);
+    if (next.repeat) next.onlyDates = left;
+    return [next];
+  });
+}
+
+const ownsSomething = (tray, runId) => !!tray.posts?.[runId] || tray.lines.some((l) => Object.values(l.claims || {}).includes(runId));
 
 export function createReserveAll({
   adapters, catalog, connect = null, ledger = null, trayStore = null, livingDigest = null, now = () => new Date(),
@@ -81,9 +125,10 @@ export function createReserveAll({
 
   // Saves a change that must survive a press elsewhere (a page turn, an
   // edit): a lost race reloads the tray and re-applies it. change edits a
-  // tray in place by line id, so applying it again is harmless. Never throws.
+  // tray in place by line id and date, so applying it again is harmless.
+  // Never throws.
   async function persist(state, user, change, what) {
-    let tray = state.tray;
+    let tray = structuredClone(state.tray);
     change(tray);
     for (let attempt = 0; attempt < SAVE_TRIES; attempt++) {
       try {
@@ -105,32 +150,43 @@ export function createReserveAll({
     return false;
   }
 
-  // Marks a backend's dates "started" before anything is written. Returns
-  // the dates this run may write, or null when another run owns the tray (or
-  // another delivery already started these dates): then nothing is written.
+  // Marks a backend's dates "started" before anything is written.
+  // { ok, changed, taken }: the dates this run may write, those whose line was
+  // edited or removed meanwhile, those another run marked meanwhile.
+  // { notOwner }: another run holds the tray. { failed }: the store failed or
+  // kept losing races to the member's own edits. Nothing is written on either.
   async function claimGroup(state, user, runId, want) {
-    let tray = state.tray;
-    for (let attempt = 0; attempt < SAVE_TRIES; attempt++) {
-      if (!tray || tray.running?.runId !== runId) return null;
-      const lines = new Map(tray.lines.map((l) => [l.id, l]));
-      if (want.some(({ w, date }) => lines.get(w.line.id)?.progress?.[date])) return null;
-      // A line edited or removed since the run began is left as it now is.
-      const ok = want.filter(({ w }) => {
-        const l = lines.get(w.line.id);
-        return l && bookingFields(l) === bookingFields(w.line);
-      });
-      for (const { w, date } of ok) {
-        const l = lines.get(w.line.id);
-        l.progress = { ...(l.progress || {}), [date]: "started" };
+    let tray = structuredClone(state.tray);
+    try {
+      for (let attempt = 0; attempt < SAVE_TRIES; attempt++) {
+        if (!tray || tray.running?.runId !== runId) return { notOwner: true };
+        const lines = new Map(tray.lines.map((l) => [l.id, l]));
+        const ok = [];
+        const changed = [];
+        const taken = [];
+        for (const pick of want) {
+          const l = lines.get(pick.w.line.id);
+          if (!l || bookingFields(l) !== bookingFields(pick.w.line)) changed.push(pick);
+          else if (l.progress?.[pick.date]) taken.push(pick);
+          else ok.push(pick);
+        }
+        if (!ok.length) return { ok, changed, taken };
+        for (const { w, date } of ok) {
+          const l = lines.get(w.line.id);
+          l.progress = { ...(l.progress || {}), [date]: "started" };
+          l.claims = { ...(l.claims || {}), [date]: runId };
+        }
+        const expectVersion = tray.version;
+        if (await trayStore.putTray(user, tray, { expectVersion })) {
+          state.tray = { ...tray, version: expectVersion + 1 };
+          return { ok, changed, taken };
+        }
+        tray = await trayStore.getTray(user);
       }
-      const expectVersion = tray.version;
-      if (await trayStore.putTray(user, tray, { expectVersion })) {
-        state.tray = { ...tray, version: expectVersion + 1 };
-        return ok;
-      }
-      tray = await trayStore.getTray(user);
+    } catch (error) {
+      log.error("claiming tray dates failed", { error });
     }
-    return null;
+    return { failed: true };
   }
 
   function bookingFor(w, date, requester) {
@@ -153,23 +209,31 @@ export function createReserveAll({
     });
   }
 
-  // The line's dates that are already written (by an earlier delivery), still
-  // to check, or uncertain; then the ones to check are re-checked.
-  async function prepareLine(line) {
+  // Sorts the line's dates: this run's own done (to post) and started (to
+  // report and drop), another run's (left alone), and the rest, which are
+  // re-checked when this run may book.
+  async function prepareLine(line, runId, canBook) {
     const skipped = [];
+    const drop = [];
     const entry = findItem(catalog, line.item);
     const adapter = entry && adapters[entry.backend];
-    if (!adapter?.bookMany) return { skipped: [{ text: `${line.item} can no longer be booked.` }] };
+    if (!adapter?.bookMany) return { skipped: canBook ? [{ text: `${line.item} can no longer be booked.` }] : [], drop };
     const w = { line, entry, adapter, booked: new Map(), free: [] };
-    const progress = line.progress || {};
-    const prior = line.booked || {};
     const dates = [];
     for (const d of expandDates(line)) {
-      if (progress[d] === "done" && prior[d]) w.booked.set(d, prior[d]);
-      else if (progress[d]) skipped.push({ text: `${line.item} · ${fmtDay(d)} · may already be booked, please check before booking again` });
-      else dates.push(d);
+      const progress = line.progress?.[d];
+      if (!progress) {
+        dates.push(d);
+      } else if (line.claims?.[d] !== runId) {
+        if (canBook) skipped.push(skip(line.item, d, "still being reserved by an earlier press"));
+      } else if (progress === "done" && line.booked?.[d]) {
+        w.booked.set(d, line.booked[d]);
+      } else {
+        skipped.push(skip(line.item, d, MAYBE_TEXT));
+        drop.push(keyOf(line.id, d));
+      }
     }
-    if (!dates.length) return { w, skipped };
+    if (!canBook || !dates.length) return { w, skipped, drop };
     let result;
     try {
       result = await adapter.checkDates({ dates, start: line.start, end: line.end, items: [entry] });
@@ -179,26 +243,53 @@ export function createReserveAll({
     }
     for (const d of dates) {
       const r = result?.[d];
-      if (!r) skipped.push({ text: `${line.item} · ${fmtDay(d)} · couldn't check it, please try again` });
-      else if (r.unavailable) skipped.push({ text: `${line.item} · ${fmtDay(d)} · ${r.unavailable}` });
+      if (!r) skipped.push(skip(line.item, d, "couldn't check it, please try again"));
+      else if (r.unavailable) skipped.push(skip(line.item, d, r.unavailable));
       else if (r.conflicts?.length) {
         const who = r.conflicts.map((c) => [c.holder || "someone", c.title].filter(Boolean).join(" · ")).join("; ");
-        skipped.push({ text: `${line.item} · ${fmtDay(d)} · ${fmtRange(line.start, line.end)} (${who})` });
+        skipped.push(skip(line.item, d, `${fmtRange(line.start, line.end)} (${who})`));
       } else w.free.push(d);
     }
-    return { w, skipped };
+    return { w, skipped, drop };
   }
 
-  function summaryOf(w, runId) {
+  // What gets posted and recorded for one tray line: plain data, kept in the
+  // posts record so a redelivery can finish the ledger without the line.
+  function entryOf(w) {
     const { line } = w;
-    const dates = [...w.booked.keys()].sort();
-    const range = fmtRange(line.start, line.end);
-    if (!line.repeat) return { summary: `${line.item} · ${fmtDay(dates[0])} · ${range} · ${line.title}`, ref: w.booked.get(dates[0]) ?? undefined, count: 1 };
-    const every = repeatText({ ...line.repeat, until: null });
     return {
-      summary: `${line.item} · ${every} ${monthDay(dates[0])} – ${monthDay(dates.at(-1))} (${dates.length} dates) · ${range} · ${line.title}`,
-      seriesId: `${line.id}-${runId}`, count: dates.length,
+      lineId: line.id, item: line.item, start: line.start, end: line.end, title: line.title, repeat: line.repeat ?? null,
+      refs: [...w.booked.entries()].sort(([a], [b]) => a.localeCompare(b)),
     };
+  }
+
+  function summaryOf(e, runId) {
+    const dates = entryDates(e);
+    const range = fmtRange(e.start, e.end);
+    if (!e.repeat) return { summary: `${e.item} · ${fmtDay(dates[0])} · ${range} · ${e.title}`, ref: e.refs[0][1] ?? undefined, count: 1 };
+    const every = repeatText({ ...e.repeat, until: null });
+    return {
+      summary: `${e.item} · ${every} ${monthDay(dates[0])} – ${monthDay(dates.at(-1))} (${dates.length} dates) · ${range} · ${e.title}`,
+      seriesId: `${e.lineId}-${runId}`, count: dates.length,
+    };
+  }
+
+  async function writeLedger(user, channel, runId, record, today) {
+    for (const e of record.entries) {
+      const refs = e.refs.map(([, ref]) => ref).filter(Boolean);
+      try {
+        if (e.repeat) {
+          await ledger?.recordSeries(user, {
+            id: `${e.lineId}-${runId}`, item: e.item, start: e.start, end: e.end, title: e.title,
+            repeat: e.repeat, channel, postTs: record.ts, refs,
+          }, { today });
+        } else {
+          for (const ref of refs) await ledger?.recordBooking(user, ref, { today });
+        }
+      } catch (error) {
+        log.error("booking ledger write failed", { error });
+      }
+    }
   }
 
   async function run({ user, channel, client, runId, responseUrl = null }) {
@@ -207,185 +298,254 @@ export function createReserveAll({
     const ctx = context();
 
     // 1–2. Load the tray, refuse what can't be reserved yet, take the run.
+    // A run with its own unfinished bookings (a redelivery) always finishes
+    // them, holding the tray or not.
     const state = { tray: null };
+    let owner = false;
     for (let attempt = 0; attempt < 2 && !state.tray; attempt++) {
       const stored = await trayStore.getTray(user);
-      if (!stored?.lines?.length) return replyCard(client, where, await cardWith(stored ?? emptyTray(), EMPTY_TEXT, client));
-      // A line whose item left the catalog is skipped, not refused.
-      const problems = trayProblems({ ...stored, lines: stored.lines.filter((l) => findItem(catalog, l.item)) }, ctx);
-      if (problems.length) {
-        return replyCard(client, where, await cardWith(stored, `Can't reserve yet:\n${problems.map((p) => `• ${esc(p)}`).join("\n")}`, client));
+      if (!stored?.lines?.length && !stored?.posts?.[runId]) {
+        return replyCard(client, where, await cardWith(stored ?? emptyTray(), EMPTY_TEXT, client));
+      }
+      const mine = ownsSomething(stored, runId);
+      if (!mine) {
+        // A line whose item left the catalog is skipped, not refused.
+        const problems = trayProblems({ ...stored, lines: stored.lines.filter((l) => findItem(catalog, l.item)) }, ctx);
+        if (problems.length) {
+          return replyCard(client, where, await cardWith(stored, `Can't reserve yet:\n${problems.map((p) => `• ${esc(p)}`).join("\n")}`, client));
+        }
       }
       const at = now().getTime();
       const { running } = stored;
       if (running && running.runId !== runId && at - Number(running.at) < RUN_STALE_MS) {
-        return postPrivately(client, where, { text: BUSY_TEXT });
+        if (!mine) return postPrivately(client, where, { text: BUSY_TEXT });
+        state.tray = stored;
+        break;
       }
       const tray = { ...stored, running: { runId, at } };
-      if (await trayStore.putTray(user, tray, { expectVersion: stored.version })) state.tray = { ...tray, version: stored.version + 1 };
+      if (await trayStore.putTray(user, tray, { expectVersion: stored.version })) {
+        state.tray = { ...tray, version: stored.version + 1 };
+        owner = true;
+      }
     }
     // Lost twice: someone else is changing the tray, so nothing is written.
     if (!state.tray) return;
+
+    // Every way out lets go of the tray, unless another run has taken it.
+    let released = !owner;
     const release = (t) => {
-      if (t.running?.runId === runId) t.running = null;
+      if (owner && t.running?.runId === runId) t.running = null;
     };
-
-    // 3. Whose account writes.
-    const requester = await requesterFor(client, user);
-    const member = await memberClients(user);
-    if (member.status === "none" || member.status === "revoked") {
-      try {
-        await promptTray({ client, channel, user, requester, revoked: member.status === "revoked" });
-      } finally {
-        await persist(state, user, release, "release");
-      }
-      return;
+    try {
+      await reserve({ user, channel, client, runId, where, ctx, state, owner, release, onReleased: () => { released = true; } });
+    } finally {
+      if (!released) await persist(state, user, release, "release");
     }
-    const clients = member.clients ?? null;
+  }
 
-    // 4. Re-check every date still to write.
-    const prepared = await Promise.all(structuredClone(state.tray.lines).map(prepareLine));
-    const work = prepared.map((p) => p.w).filter(Boolean);
-    const skipped = prepared.flatMap((p) => p.skipped);
-
-    // 5–6. Write each backend's free dates in one go.
+  async function reserve({ user, channel, client, runId, where, ctx, state, owner, release, onReleased }) {
+    const skipped = [];
+    const drop = new Set(); // this run's uncertain dates: reported and taken out
+    const clear = new Set(); // this run's claims that turned out bookable again
     let revoked = false;
-    let unsaved = false;
-    const backends = [...new Set(work.filter((w) => w.free.length).map((w) => w.entry.backend))];
-    for (const backend of backends) {
-      if (revoked) break;
-      const group = work.filter((w) => w.entry.backend === backend && w.free.length);
-      const want = group.flatMap((w) => w.free.map((date) => ({ w, date })));
-      const claimed = await claimGroup(state, user, runId, want);
-      if (!claimed) {
-        // Another run owns the tray. It posts what this run saved as done;
-        // only bookings that never reached the tray are posted from here.
-        if (!unsaved) return;
-        break;
-      }
-      if (!claimed.length) continue;
-      const adapter = adapters[backend];
-      const bookings = claimed.map(({ w, date }) => bookingFor(w, date, requester));
-      let results;
-      try {
-        results = await adapter.bookMany(bookings, clients ? { clients } : {});
-      } catch (error) {
-        results = bookings.map(() => ({ status: "error", error }));
-      }
-      const forbidden = new Map();
-      claimed.forEach(({ w, date }, i) => {
-        const r = results?.[i];
-        if (r?.status === "booked") {
-          w.booked.set(date, r.ref ?? null);
-          return;
-        }
-        if (r?.status === "unavailable") {
-          skipped.push({ text: `${w.line.item} · ${fmtDay(date)} · ${r.reason}` });
-          return;
-        }
-        const kind = clients ? classifyWriteError(r?.error) : "error";
-        if (kind === "revoked") {
-          // Left in the tray; Reserve all carries on with it after connecting.
-          revoked = true;
-        } else if (kind === "forbidden") {
-          forbidden.set(w, [...(forbidden.get(w) || []), date]);
-        } else {
-          metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend, stage: "reserve_all" } });
-          log.error("reserve all write failed", { backend, error: errorText(r?.error) });
-          skipped.push({ text: `${w.line.item} · ${fmtDay(date)} · couldn't save (${errorText(r?.error)})` });
-        }
-      });
-      for (const [w, dates] of forbidden) {
-        skipped.push({ text: `${w.line.item} · ${daysText(dates)} · ${forbiddenText(adapter, { items: [w.entry] })}` });
-      }
-      const outcome = new Map(claimed.map(({ w, date }) => [`${w.line.id}|${date}`, w.booked.has(date) ? w.booked.get(date) : undefined]));
-      let lost = false;
-      const saved = await persist(state, user, (t) => {
-        for (const { w, date } of claimed) {
-          const l = t.lines.find((x) => x.id === w.line.id);
-          if (!l) {
-            lost = true;
-            continue;
-          }
-          const ref = outcome.get(`${w.line.id}|${date}`);
-          const progress = { ...(l.progress || {}) };
-          if (ref !== undefined) {
-            progress[date] = "done";
-            l.booked = { ...(l.booked || {}), [date]: ref };
-          } else {
-            delete progress[date];
-          }
-          l.progress = progress;
-        }
-      }, "progress");
-      if (!saved || lost) unsaved = true;
-      if (revoked) {
+    let connectFirst = null; // "none" | "revoked": the member must connect before booking
+    let requester = null;
+    let record = state.tray.posts?.[runId] ?? null;
+
+    if (!record) {
+      // 3. Whose account writes.
+      let member = { status: "none" };
+      if (owner) {
         try {
-          await connect.authStore.markRevoked(user);
-          connect.memberGoogle.forget(user);
+          requester = await requesterFor(client, user);
+          member = await memberClients(user);
         } catch (error) {
-          log.error("marking a revoked grant failed", { error });
+          log.error("reserve all could not start", { error });
+          return postPrivately(client, where, { text: `⚠️ I couldn't reserve your tray (${esc(errorText(error))}). Please try again.` });
+        }
+        if (member.status === "none" || member.status === "revoked") {
+          connectFirst = member.status;
+          // Nothing of this run's to finish: just ask, the tray stays as it is.
+          if (!ownsSomething(state.tray, runId)) {
+            await promptTray({ client, channel, user, requester, revoked: connectFirst === "revoked" });
+            return;
+          }
         }
       }
-    }
+      const canBook = owner && !connectFirst;
+      const clients = member.clients ?? null;
 
-    // From here everything is written: failures are logged, never thrown, so
-    // an SQS retry can't run the writes again.
-    const entries = work.filter((w) => w.booked.size);
-    const total = entries.reduce((n, w) => n + w.booked.size, 0);
-    if (total) metric("ReservationBooked", total, { dimensions: { Flow: "reservations" }, fields: { reserveAll: true, asMember: !!clients } });
+      // 4. Sort and re-check every date.
+      const prepared = await Promise.all(structuredClone(state.tray.lines).map((l) => prepareLine(l, runId, canBook)));
+      const work = prepared.map((p) => p.w).filter(Boolean);
+      for (const p of prepared) {
+        skipped.push(...p.skipped);
+        for (const k of p.drop) drop.add(k);
+      }
 
-    // 8. One public post.
-    let postTs = null;
-    if (entries.length) {
-      try {
-        const booked = entries.map((w) => summaryOf(w, runId));
-        const message = combinedMessage({ user, booked, skipped });
-        booked.forEach((b, i) => {
-          if (!message.blocks[i + 1]?.accessory) log.warn("booked line has no Cancel button: its ref is too big", { summary: b.summary });
+      // 5–6. Write each backend's free dates in one go.
+      let stop = null; // "notOwner": another run holds the tray; "failed": the store failed
+      const backends = canBook ? [...new Set(work.filter((w) => w.free.length).map((w) => w.entry.backend))] : [];
+      for (const backend of backends) {
+        if (revoked || stop === "notOwner") break;
+        const group = work.filter((w) => w.entry.backend === backend && w.free.length);
+        const want = group.flatMap((w) => w.free.map((date) => ({ w, date })));
+        const claim = stop ? { failed: true } : await claimGroup(state, user, runId, want);
+        if (claim.notOwner) {
+          // The run holding the tray books the rest; this one only finishes its own.
+          stop = "notOwner";
+          break;
+        }
+        if (claim.failed) {
+          stop = "failed";
+          for (const { w, date } of want) skipped.push(skip(w.line.item, date, "not booked, please press Reserve all again"));
+          continue;
+        }
+        for (const { w, date } of claim.changed) skipped.push(skip(w.line.item, date, "changed while reserving"));
+        for (const { w, date } of claim.taken) skipped.push(skip(w.line.item, date, "still being reserved by an earlier press"));
+        if (!claim.ok.length) continue;
+        const adapter = adapters[backend];
+        const bookings = claim.ok.map(({ w, date }) => bookingFor(w, date, requester));
+        let results;
+        try {
+          results = await adapter.bookMany(bookings, clients ? { clients } : {});
+        } catch (error) {
+          results = bookings.map(() => ({ status: "error", error }));
+        }
+        const forbidden = new Map();
+        claim.ok.forEach(({ w, date }, i) => {
+          const r = results?.[i];
+          const key = keyOf(w.line.id, date);
+          if (r?.status === "booked") {
+            w.booked.set(date, r.ref ?? null);
+            return;
+          }
+          if (r?.status === "unavailable") {
+            clear.add(key);
+            skipped.push(skip(w.line.item, date, r.reason));
+            return;
+          }
+          const kind = clients ? classifyWriteError(r?.error) : "error";
+          if (kind === "revoked") {
+            // Refused before writing: stays in the tray for after connecting.
+            clear.add(key);
+            revoked = true;
+          } else if (kind === "forbidden") {
+            clear.add(key);
+            forbidden.set(w, [...(forbidden.get(w) || []), date]);
+          } else {
+            // It may have been written: never written again, so it leaves the tray.
+            drop.add(key);
+            metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend, stage: "reserve_all" } });
+            log.error("reserve all write failed", { backend, error: r?.error });
+            skipped.push(skip(w.line.item, date, `couldn't be saved, ${MAYBE_TEXT}`, `couldn't save (${errorText(r?.error)}), ${MAYBE_TEXT}`));
+          }
         });
-        const res = await client.chat.postMessage({ channel, ...BOT_PERSONA, ...message });
-        postTs = res?.ts ?? null;
-      } catch (error) {
-        log.error("reserve all post failed", { error });
+        for (const [w, dates] of forbidden) {
+          skipped.push({ text: `${w.line.item} · ${daysText(dates)} · ${forbiddenText(adapter, { items: [w.entry] })}` });
+        }
+        const outcome = new Map(claim.ok.map(({ w, date }) => [keyOf(w.line.id, date), w.booked.get(date)]));
+        await persist(state, user, (t) => {
+          for (const l of t.lines) {
+            for (const d of Object.keys(l.claims || {})) {
+              const key = keyOf(l.id, d);
+              if (l.claims[d] !== runId || !outcome.has(key)) continue;
+              if (outcome.get(key) !== undefined) {
+                l.progress = { ...l.progress, [d]: "done" };
+                l.booked = { ...(l.booked || {}), [d]: outcome.get(key) };
+              } else if (clear.has(key)) {
+                forgetDate(l, d);
+              }
+            }
+          }
+        }, "progress");
+        if (revoked) {
+          try {
+            await connect.authStore.markRevoked(user);
+            connect.memberGoogle.forget(user);
+          } catch (error) {
+            log.error("marking a revoked grant failed", { error });
+          }
+        }
+      }
+
+      // From here things are written: failures are logged, never thrown,
+      // so an SQS retry can't run the writes again.
+      const entries = work.filter((w) => w.booked.size).map(entryOf);
+      if (stop === "notOwner" && !entries.length && !drop.size) return;
+      const total = entries.reduce((n, e) => n + e.refs.length, 0);
+      if (total) metric("ReservationBooked", total, { dimensions: { Flow: "reservations" }, fields: { reserveAll: true, asMember: !!clients } });
+
+      // 8. One public post, remembered at once so it is never posted twice.
+      if (entries.length) {
+        let ts = null;
+        try {
+          const booked = entries.map((e) => summaryOf(e, runId));
+          const message = combinedMessage({ user, booked, skipped: skipped.map((s) => ({ text: s.text })) });
+          booked.forEach((b, i) => {
+            if (!message.blocks[i + 1]?.accessory) log.warn("booked line has no Cancel button: its ref is too big", { summary: b.summary });
+          });
+          const res = await client.chat.postMessage({ channel, ...BOT_PERSONA, ...message });
+          ts = res?.ts ?? null;
+        } catch (error) {
+          log.error("reserve all post failed", { error });
+        }
+        const posted = { ts, entries, ledger: false };
+        record = posted;
+        await persist(state, user, (t) => {
+          t.posts = { ...(t.posts || {}), [runId]: posted };
+        }, "posted");
+      }
+    } else {
+      // A redelivery of a run that already posted: its own unfinished dates
+      // are reported and dropped; nothing is booked or posted again.
+      for (const l of state.tray.lines) {
+        for (const [d, by] of Object.entries(l.claims || {})) {
+          if (by === runId && l.progress?.[d] === "started") {
+            drop.add(keyOf(l.id, d));
+            skipped.push(skip(l.item, d, MAYBE_TEXT));
+          }
+        }
       }
     }
 
     // 7. The ledger, so "mine" and Cancel find these bookings.
-    for (const w of entries) {
-      const refs = [...w.booked.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, ref]) => ref).filter(Boolean);
-      try {
-        if (w.line.repeat) {
-          await ledger?.recordSeries(user, {
-            id: `${w.line.id}-${runId}`, item: w.line.item, start: w.line.start, end: w.line.end, title: w.line.title,
-            repeat: w.line.repeat, channel, postTs, refs,
-          }, { today: ctx.today });
-        } else {
-          for (const ref of refs) await ledger?.recordBooking(user, ref, { today: ctx.today });
-        }
-      } catch (error) {
-        log.error("booking ledger write failed", { error });
-      }
+    if (record && !record.ledger) {
+      await writeLedger(user, channel, runId, record, ctx.today);
+      await persist(state, user, (t) => {
+        if (t.posts?.[runId]) t.posts[runId] = { ...t.posts[runId], ledger: true };
+      }, "ledger");
     }
 
-    // 9. The tray keeps only what wasn't booked.
-    const bookedDates = new Map(work.map((w) => [w.line.id, new Set(w.booked.keys())]));
-    await persist(state, user, (t) => {
-      t.lines = t.lines.flatMap((l) => {
-        const done = bookedDates.get(l.id);
-        const { booked, ...rest } = l;
-        if (!done?.size) return [{ ...rest, progress: {} }];
-        const left = expandDates(l).filter((d) => !done.has(d));
-        if (!left.length) return [];
-        return [{ ...rest, progress: {}, ...(l.repeat ? { onlyDates: left } : {}) }];
-      });
+    // 9. The tray keeps only what wasn't booked. Only this run's dates are
+    // touched, plus other runs' dates that were already posted and recorded.
+    const mineGone = new Set((record?.entries || []).flatMap((e) => entryDates(e).map((d) => keyOf(e.lineId, d))));
+    for (const k of drop) mineGone.add(k);
+    const finished = await persist(state, user, (t) => {
+      const gone = new Set(mineGone);
+      for (const [id, r] of Object.entries(t.posts || {})) {
+        if (id === runId || !(r.ts && r.ledger)) continue;
+        for (const e of r.entries || []) for (const d of entryDates(e)) gone.add(keyOf(e.lineId, d));
+      }
+      for (const l of t.lines) {
+        for (const d of Object.keys(l.claims || {})) {
+          if (l.claims[d] === runId && clear.has(keyOf(l.id, d))) forgetDate(l, d);
+        }
+      }
+      removeDates(t, gone);
+      if (t.posts) {
+        const left = Object.fromEntries(Object.entries(t.posts).filter(([id, r]) => id !== runId && !(r.ts && r.ledger)));
+        t.posts = Object.keys(left).length ? left : null;
+      }
       release(t);
     }, "finish");
+    if (finished) onReleased();
 
     // 10. The private result, with the tray as it is now.
+    const total = (record?.entries || []).reduce((n, e) => n + e.refs.length, 0);
     try {
       const head = total ? `✅ Reserved ${total} booking${total === 1 ? "" : "s"}. It's posted in the channel.` : "Nothing could be booked.";
-      const lines = skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.text).slice(0, NOTICE_SKIP_MAX))}`);
+      const lines = skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.detail ?? s.text).slice(0, NOTICE_SKIP_MAX))}`);
       if (skipped.length > NOTICE_SKIPS) lines.push(`…and ${skipped.length - NOTICE_SKIPS} more.`);
       await replyCard(client, where, await cardWith(state.tray, [head, ...lines].join("\n"), client));
     } catch (error) {
@@ -394,8 +554,8 @@ export function createReserveAll({
 
     // 11. Each affected digest period once.
     const periods = new Map();
-    for (const w of entries) {
-      for (const d of w.booked.keys()) {
+    for (const e of record?.entries || []) {
+      for (const d of entryDates(e)) {
         const { from } = periodCovering(d);
         if (!periods.has(from)) periods.set(from, d);
       }
@@ -408,10 +568,10 @@ export function createReserveAll({
       }
     }
 
-    // 12. A grant revoked partway: connect, then the rest is reserved.
-    if (revoked) {
+    // 12. Connect (again), then the rest is reserved.
+    if (revoked || connectFirst) {
       try {
-        await promptTray({ client, channel, user, requester, revoked: true });
+        await promptTray({ client, channel, user, requester, revoked: revoked || connectFirst === "revoked" });
       } catch (error) {
         log.error("reserve all connect prompt failed", { error });
       }

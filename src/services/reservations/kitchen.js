@@ -115,7 +115,7 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     try {
       rows = await readRows();
     } catch (err) {
-      return bookings.map(() => ({ status: "error", error: err.message }));
+      return bookings.map(() => ({ status: "error", error: err }));
     }
     const taken = new Set();
     const data = [];
@@ -131,14 +131,14 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
         data.push(...writes);
         return { status: "booked", link, ref };
       } catch (err) {
-        return { status: "error", error: err.message };
+        return { status: "error", error: err };
       }
     });
     if (data.length === 0) return results;
     try {
       await writeAll(clients?.sheetsClient || sheetsClient, data);
     } catch (err) {
-      return results.map((r) => (r.status === "booked" ? { status: "error", error: err.message } : r));
+      return results.map((r) => (r.status === "booked" ? { status: "error", error: err } : r));
     }
     return results;
   }
