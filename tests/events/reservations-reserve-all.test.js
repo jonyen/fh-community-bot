@@ -5,6 +5,7 @@ import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { TRAY_RESERVE_ACTION } from "../../src/lib/reservation-listing.js";
 import { COMBINED_EVENT_TYPE } from "../../src/lib/reservation-combined.js";
 import { log } from "../../src/lib/logger.js";
+import { createRmsAdapter } from "../../src/services/reservations/rms.js";
 
 const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
 const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: [SET2] });
@@ -271,6 +272,8 @@ describe("Reserve all", () => {
     await reserve();
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
+    // Take the run, one claim that loses; no needless save after.
+    expect(trayStore.putTray).toHaveBeenCalledTimes(2);
   });
 
   it("two overlapping runs post and record every booking exactly once and write nothing twice", async () => {
@@ -435,6 +438,91 @@ describe("Reserve all", () => {
     await handler().handleCardAction({ payload, client });
     expect(trayStore.putTray.mock.calls[0][1].running.runId).toBe("trig.1");
     expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a calendar failure after the event was made is maybe booked: reported, taken out, never booked again", async () => {
+    const cal = {
+      events: {
+        list: vi.fn().mockResolvedValue({ data: { items: [] } }),
+        insert: vi.fn().mockResolvedValue({ data: { id: "E1" } }),
+        get: vi.fn().mockRejectedValue(Object.assign(new Error("Rate Limit Exceeded"), { code: 403 })),
+        delete: vi.fn(),
+      },
+    };
+    adapters.rms = createRmsAdapter({ calendarClient: cal, catalog: [SET2], sleep: async () => {} });
+    connect.memberGoogle.clientsFor.mockResolvedValue({ status: "active", clients: { calendarClient: cal, sheetsClient: {} } });
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    await reserve();
+    expect(cal.events.insert).toHaveBeenCalledTimes(1);
+    expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · couldn't save (the calendar event was made but its answer couldn't be read (Rate Limit Exceeded)), may already be booked, please check before booking again");
+    expect(stored().lines).toEqual([]);
+    expect(errSpy).toHaveBeenCalledWith("calendar booking failed after its event was made", expect.objectContaining({ eventId: "E1" }));
+    await reserve(handler(), "second press");
+    expect(cal.events.insert).toHaveBeenCalledTimes(1);
+    errSpy.mockRestore();
+  });
+
+  it("a dead run's leftovers go to the next press: its done dates are posted once, its started ones dropped", async () => {
+    const ref = { backend: "rooms", date: "2026-10-24", id: "rooms-2026-10-24-dead" };
+    trayStore.rows.set("U9", trayRow({
+      running: { runId: "dead", at: NOW.getTime() - 20 * 60_000 },
+      lines: [
+        mprRepeat({
+          progress: { "2026-10-24": "done", "2026-10-31": "started" },
+          claims: { "2026-10-24": "dead", "2026-10-31": "dead" },
+          booked: { "2026-10-24": ref },
+        }),
+        line("L2"),
+      ],
+    }));
+    await reserve();
+    expect(adapters.rooms.bookMany.mock.calls[0][0].map((b) => b.date)).toEqual(["2026-11-07", "2026-11-14"]);
+    expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
+    expect(publicPosts()).toHaveLength(1);
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("MPR · every Sat 10/24 – 11/14 (3 dates)");
+    expect(text).toContain("Tech Set 2 · Sat 10/24");
+    expect(text).toContain("MPR · Sat 10/31 · may already be booked, please check before booking again");
+    expect(ledger.recordSeries.mock.calls[0][1].refs).toContainEqual(ref);
+    expect(stored().lines).toEqual([]);
+    expect(stored().running).toBeNull();
+
+    await reserve(handler(), "again");
+    expect(publicPosts()).toHaveLength(1);
+    expect(ledger.recordSeries).toHaveBeenCalledTimes(1);
+  });
+
+  it("a dead run's posted but unrecorded bookings are recorded once and tidied, never posted again", async () => {
+    const ref = { backend: "rms", date: "2026-10-24", id: "rms-dead" };
+    trayStore.rows.set("U9", trayRow({
+      running: null,
+      lines: [
+        line("L2", { progress: { "2026-10-24": "done" }, claims: { "2026-10-24": "dead" }, booked: { "2026-10-24": ref } }),
+        line("L3", { item: "MPR" }),
+      ],
+      posts: { dead: { ts: "400.1", ledger: false, entries: [{ lineId: "L2", item: "Tech Set 2", start: 600, end: 720, title: "Youth night", repeat: null, refs: [["2026-10-24", ref]] }] } },
+    }));
+    await reserve();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(ledger.recordBooking).toHaveBeenCalledWith("U9", ref, { today: "2026-10-20" });
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(2); // the dead run's, and this run's MPR
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("MPR · Sat 10/24");
+    expect(text).not.toContain("Tech Set 2");
+    expect(stored().lines).toEqual([]);
+    expect(stored().posts).toBeNull();
+  });
+
+  it("when the public post fails, the private result doesn't claim it was posted", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    client.chat.postMessage.mockRejectedValue(new Error("slack down"));
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    await reserve();
+    const head = sections(sent())[0];
+    expect(head).toContain("✅ Reserved 1 booking, but I couldn't post them in the channel.");
+    expect(head).not.toContain("It's posted");
+    errSpy.mockRestore();
   });
 
   describe("connecting Google", () => {

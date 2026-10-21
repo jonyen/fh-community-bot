@@ -37,6 +37,8 @@ const MINE_CAP = 20;
 // status code) can still be told revoked by its words, never forbidden.
 export function classifyWriteError(error) {
   const err = typeof error === "string" ? { message: error } : error;
+  // Failed after the write went out: it may exist, so never "try again later".
+  if (err?.maybeWritten) return "error";
   if (isInvalidGrant(err) || isScopeMissing(err)) return "revoked";
   if (isForbidden(err)) return "forbidden";
   return "error";

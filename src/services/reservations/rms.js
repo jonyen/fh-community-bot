@@ -10,6 +10,18 @@ import { log } from "../../lib/logger.js";
 
 const MAX_PAGES = 20;
 
+// The event was inserted, then something failed (reading the resource's
+// answer, or removing a declined event). The booking may exist, so this must
+// never be taken for a refusal (403, revoked grant) that leaves the date free
+// to book again.
+export function maybeWritten(err, eventId) {
+  const wrapped = new Error(`the calendar event was made but its answer couldn't be read (${err?.message || err})`);
+  wrapped.maybeWritten = true;
+  wrapped.eventId = eventId;
+  wrapped.cause = err;
+  return wrapped;
+}
+
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
@@ -158,18 +170,23 @@ export function createRmsAdapter({
       },
     });
     const eventId = res.data.id;
-    // Resources answer the invite a few seconds after it is sent (about 6 s
-    // in a live test), so allow up to 12 s.
-    for (let attempt = 0; attempt < 8; attempt++) {
-      await sleep(1500);
-      const got = await cal.events.get({ calendarId: botCalendarId, eventId });
-      const resources = (got.data.attendees || []).filter((a) => a.resource);
-      const declined = resources.filter((a) => a.responseStatus === "declined");
-      if (declined.length > 0) {
-        await cal.events.delete({ calendarId: botCalendarId, eventId, sendUpdates: "none" });
-        return { status: "unavailable", reason: "The calendar declined the booking (it may already be taken).", link: itemLink };
+    try {
+      // Resources answer the invite a few seconds after it is sent (about 6 s
+      // in a live test), so allow up to 12 s.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await sleep(1500);
+        const got = await cal.events.get({ calendarId: botCalendarId, eventId });
+        const resources = (got.data.attendees || []).filter((a) => a.resource);
+        const declined = resources.filter((a) => a.responseStatus === "declined");
+        if (declined.length > 0) {
+          await cal.events.delete({ calendarId: botCalendarId, eventId, sendUpdates: "none" });
+          return { status: "unavailable", reason: "The calendar declined the booking (it may already be taken).", link: itemLink };
+        }
+        if (resources.every((a) => a.responseStatus === "accepted")) break;
       }
-      if (resources.every((a) => a.responseStatus === "accepted")) break;
+    } catch (err) {
+      log.error("calendar booking failed after its event was made", { eventId, error: err });
+      throw maybeWritten(err, eventId);
     }
     const ref = {
       backend: "rms", eventId, organizerEmail: null, organizerSelf: !clients,

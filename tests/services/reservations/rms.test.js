@@ -185,6 +185,30 @@ describe("rms adapter", () => {
     expect(cal.events.delete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1", sendUpdates: "none" });
   });
 
+  it.each([
+    ["a 403 reading the answer", "get", Object.assign(new Error("Rate Limit Exceeded"), { code: 403 })],
+    ["a revoked grant reading the answer", "get", Object.assign(new Error("invalid_grant"), { response: { data: { error: "invalid_grant" } } })],
+    ["a failure deleting a declined event", "delete", Object.assign(new Error("Forbidden"), { code: 403 })],
+  ])("after the event is made, %s comes back as maybe written, with the event id", async (_, call, err) => {
+    if (call === "delete") cal.events.get.mockResolvedValue({ data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "declined" }] } });
+    cal.events[call].mockRejectedValue(err);
+    const book = { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" };
+    const error = await adapter.book(book).catch((e) => e);
+    expect(error.maybeWritten).toBe(true);
+    expect(error.eventId).toBe("E1");
+    expect(error.code).toBeUndefined();
+    expect(error.response).toBeUndefined();
+    const [res] = await adapter.bookMany([book]);
+    expect(res).toEqual({ status: "error", error: expect.objectContaining({ maybeWritten: true, eventId: "E1" }) });
+  });
+
+  it("a failed insert is passed on as it is, so a refusal can be told apart", async () => {
+    const denied = Object.assign(new Error("Forbidden"), { code: 403 });
+    cal.events.insert.mockRejectedValue(denied);
+    const [res] = await adapter.bookMany([{ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" }]);
+    expect(res).toEqual({ status: "error", error: denied });
+  });
+
   describe("bookMany", () => {
     const mk = (n) => ({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: `T${n}`, requesterName: "D", requesterUserId: "U9" });
 

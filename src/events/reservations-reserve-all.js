@@ -76,6 +76,12 @@ function removeDates(tray, gone) {
 }
 
 const ownsSomething = (tray, runId) => !!tray.posts?.[runId] || tray.lines.some((l) => Object.values(l.claims || {}).includes(runId));
+// Another run's leftovers: claims or a posts record. A run that takes the
+// tray took it from no one or from a run gone quiet for 15 minutes (runs
+// last at most 5), so every other run's leftovers are abandoned to it.
+const othersLeftovers = (tray, runId) => Object.keys(tray.posts || {}).some((id) => id !== runId)
+  || tray.lines.some((l) => Object.values(l.claims || {}).some((by) => by !== runId));
+const keysOf = (record) => (record.entries || []).flatMap((e) => entryDates(e).map((d) => keyOf(e.lineId, d)));
 
 export function createReserveAll({
   adapters, catalog, connect = null, ledger = null, trayStore = null, livingDigest = null, now = () => new Date(),
@@ -209,10 +215,11 @@ export function createReserveAll({
     });
   }
 
-  // Sorts the line's dates: this run's own done (to post) and started (to
-  // report and drop), another run's (left alone), and the rest, which are
-  // re-checked when this run may book.
-  async function prepareLine(line, runId, canBook) {
+  // Sorts the line's dates: this run's own (or adopted) done (to post) and
+  // started (to report and drop), another live run's (left alone), dates a
+  // posts record already covers, and the rest, which are re-checked when this
+  // run may book.
+  async function prepareLine(line, runId, canBook, adopt, postedKeys) {
     const skipped = [];
     const drop = [];
     const entry = findItem(catalog, line.item);
@@ -224,7 +231,9 @@ export function createReserveAll({
       const progress = line.progress?.[d];
       if (!progress) {
         dates.push(d);
-      } else if (line.claims?.[d] !== runId) {
+      } else if (postedKeys.has(keyOf(line.id, d))) {
+        // Posted by its run; tidied away with that run's record.
+      } else if (line.claims?.[d] !== runId && !adopt) {
         if (canBook) skipped.push(skip(line.item, d, "still being reserved by an earlier press"));
       } else if (progress === "done" && line.booked?.[d]) {
         w.booked.set(d, line.booked[d]);
@@ -351,6 +360,11 @@ export function createReserveAll({
     let connectFirst = null; // "none" | "revoked": the member must connect before booking
     let requester = null;
     let record = state.tray.posts?.[runId] ?? null;
+    // Posts records of abandoned runs: recorded in the ledger if they weren't,
+    // then tidied away with their dates.
+    const adopted = owner && !record
+      ? Object.entries(state.tray.posts || {}).filter(([id]) => id !== runId)
+      : [];
 
     if (!record) {
       // 3. Whose account writes.
@@ -366,7 +380,7 @@ export function createReserveAll({
         if (member.status === "none" || member.status === "revoked") {
           connectFirst = member.status;
           // Nothing of this run's to finish: just ask, the tray stays as it is.
-          if (!ownsSomething(state.tray, runId)) {
+          if (!ownsSomething(state.tray, runId) && !othersLeftovers(state.tray, runId)) {
             await promptTray({ client, channel, user, requester, revoked: connectFirst === "revoked" });
             return;
           }
@@ -376,7 +390,8 @@ export function createReserveAll({
       const clients = member.clients ?? null;
 
       // 4. Sort and re-check every date.
-      const prepared = await Promise.all(structuredClone(state.tray.lines).map((l) => prepareLine(l, runId, canBook)));
+      const postedKeys = new Set(Object.values(state.tray.posts || {}).flatMap(keysOf));
+      const prepared = await Promise.all(structuredClone(state.tray.lines).map((l) => prepareLine(l, runId, canBook, owner, postedKeys)));
       const work = prepared.map((p) => p.w).filter(Boolean);
       for (const p of prepared) {
         skipped.push(...p.skipped);
@@ -472,7 +487,11 @@ export function createReserveAll({
       // From here things are written: failures are logged, never thrown,
       // so an SQS retry can't run the writes again.
       const entries = work.filter((w) => w.booked.size).map(entryOf);
-      if (stop === "notOwner" && !entries.length && !drop.size) return;
+      if (stop === "notOwner" && !entries.length && !drop.size) {
+        // Nothing of this run's to finish, and the tray is another run's.
+        onReleased();
+        return;
+      }
       const total = entries.reduce((n, e) => n + e.refs.length, 0);
       if (total) metric("ReservationBooked", total, { dimensions: { Flow: "reservations" }, fields: { reserveAll: true, asMember: !!clients } });
 
@@ -510,6 +529,13 @@ export function createReserveAll({
     }
 
     // 7. The ledger, so "mine" and Cancel find these bookings.
+    for (const [id, r] of adopted) {
+      if (r.ledger) continue;
+      await writeLedger(user, channel, id, r, ctx.today);
+      await persist(state, user, (t) => {
+        if (t.posts?.[id]) t.posts[id] = { ...t.posts[id], ledger: true };
+      }, "ledger");
+    }
     if (record && !record.ledger) {
       await writeLedger(user, channel, runId, record, ctx.today);
       await persist(state, user, (t) => {
@@ -519,12 +545,12 @@ export function createReserveAll({
 
     // 9. The tray keeps only what wasn't booked. Only this run's dates are
     // touched, plus other runs' dates that were already posted and recorded.
-    const mineGone = new Set((record?.entries || []).flatMap((e) => entryDates(e).map((d) => keyOf(e.lineId, d))));
-    for (const k of drop) mineGone.add(k);
+    const mineGone = new Set([...(record ? keysOf(record) : []), ...adopted.flatMap(([, r]) => keysOf(r)), ...drop]);
+    const adoptedIds = new Set(adopted.map(([id]) => id));
     const finished = await persist(state, user, (t) => {
       const gone = new Set(mineGone);
       for (const [id, r] of Object.entries(t.posts || {})) {
-        if (id === runId || !(r.ts && r.ledger)) continue;
+        if (id === runId || adoptedIds.has(id) || !(r.ts && r.ledger)) continue;
         for (const e of r.entries || []) for (const d of entryDates(e)) gone.add(keyOf(e.lineId, d));
       }
       for (const l of t.lines) {
@@ -534,7 +560,7 @@ export function createReserveAll({
       }
       removeDates(t, gone);
       if (t.posts) {
-        const left = Object.fromEntries(Object.entries(t.posts).filter(([id, r]) => id !== runId && !(r.ts && r.ledger)));
+        const left = Object.fromEntries(Object.entries(t.posts).filter(([id, r]) => id !== runId && !adoptedIds.has(id) && !(r.ts && r.ledger)));
         t.posts = Object.keys(left).length ? left : null;
       }
       release(t);
@@ -544,7 +570,10 @@ export function createReserveAll({
     // 10. The private result, with the tray as it is now.
     const total = (record?.entries || []).reduce((n, e) => n + e.refs.length, 0);
     try {
-      const head = total ? `✅ Reserved ${total} booking${total === 1 ? "" : "s"}. It's posted in the channel.` : "Nothing could be booked.";
+      const n = `${total} booking${total === 1 ? "" : "s"}`;
+      const head = !total ? "Nothing could be booked."
+        : record.ts ? `✅ Reserved ${n}. It's posted in the channel.`
+          : `✅ Reserved ${n}, but I couldn't post them in the channel.`;
       const lines = skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.detail ?? s.text).slice(0, NOTICE_SKIP_MAX))}`);
       if (skipped.length > NOTICE_SKIPS) lines.push(`…and ${skipped.length - NOTICE_SKIPS} more.`);
       await replyCard(client, where, await cardWith(state.tray, [head, ...lines].join("\n"), client));
