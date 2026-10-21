@@ -264,11 +264,6 @@ describe("listing flow", () => {
       expect(sections(sent())[0]).toBe("Tray cleared.");
     });
 
-    it("Reserve all is not wired yet", async () => {
-      await act({ action_id: TRAY_RESERVE_ACTION, value: "all" });
-      expect(sections(sent())[0]).toBe("Reserve all is coming next.");
-      expect(stored().lines).toHaveLength(1);
-    });
   });
 
   it("a press on an expired tray shows a fresh listing with the expiry notice", async () => {

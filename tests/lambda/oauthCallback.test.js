@@ -51,6 +51,14 @@ describe("OAuth callback", () => {
     expect(page.body).not.toContain("being made");
   });
 
+  it("says the reservations are being made on a tray resume", async () => {
+    const { cb } = setup({ pending: { slackUserId: "U9", request: { kind: "tray", user: "U9", channel: "CRES" } } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain("Your reservations are being made now.");
+    expect(page.body).not.toContain("Your booking");
+  });
+
   it("rejects a reused or unknown link without touching Google", async () => {
     const { cb, oauth2Client, enqueue } = setup({ state: null });
     const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });

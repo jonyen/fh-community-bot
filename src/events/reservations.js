@@ -22,6 +22,8 @@ import { mineMessage, MINE_CANCEL_ACTION } from "../lib/reservation-mine.js";
 import { isMine, refKey } from "../lib/reservation-owner.js";
 import { calendarLink } from "../lib/rms-catalog.js";
 import { createListingFlow } from "./reservations-listing.js";
+import { createReserveAll } from "./reservations-reserve-all.js";
+import { TRAY_RESERVE_ACTION } from "../lib/reservation-listing.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
@@ -29,6 +31,17 @@ const ENDED_TEXT = "That booking has already ended.";
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
+// bookMany reports a write error by its message only, so a 403 is told by its words.
+const FORBIDDEN_MESSAGE = /caller does not have permission|\bforbidden\b|writer access/i;
+
+// What a failed write as the member means: their grant is gone, their account
+// may not write there, or something else went wrong.
+export function classifyWriteError(error) {
+  const err = typeof error === "string" ? { message: error } : error;
+  if (isInvalidGrant(err) || isScopeMissing(err)) return "revoked";
+  if (isForbidden(err) || (typeof error === "string" && FORBIDDEN_MESSAGE.test(error))) return "forbidden";
+  return "error";
+}
 
 export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null, trayStore = null }) {
   const catalogText = catalogPromptText(catalog);
@@ -157,15 +170,21 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     });
   }
 
+  // Whose Google account a write uses: the bot's when connect isn't set up,
+  // otherwise the member's, who may first need to connect (again).
+  async function memberClients(user) {
+    if (!connect) return { status: "bot" };
+    const member = await connect.memberGoogle.clientsFor(user);
+    if (member.status === "active") return { status: "active", clients: member.clients };
+    return { status: member.status === "revoked" ? "revoked" : "none" };
+  }
+
   async function finishBooking({ req, adapter, requester, say, bookingKey = null }) {
-    let clients;
-    if (connect) {
-      const member = await connect.memberGoogle.clientsFor(requester.requesterUserId);
-      if (member.status !== "active") {
-        return promptBookConnect({ req, adapter, requester, say, revoked: member.status === "revoked" });
-      }
-      clients = member.clients;
+    const member = await memberClients(requester.requesterUserId);
+    if (member.status === "none" || member.status === "revoked") {
+      return promptBookConnect({ req, adapter, requester, say, revoked: member.status === "revoked" });
     }
+    const { clients } = member;
     const booking = {
       date: req.date, start: req.start, end: req.end, items: req.items, title: req.title, ministry: req.ministry,
       requesterName: requester.requesterName, requesterUserId: requester.requesterUserId, phone: requester.phone,
@@ -181,12 +200,13 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     try {
       result = clients ? await adapter.book(booking, { clients }) : await adapter.book(booking);
     } catch (error) {
-      if (clients && (isInvalidGrant(error) || isScopeMissing(error))) {
+      const kind = clients ? classifyWriteError(error) : "error";
+      if (kind === "revoked") {
         await connect.authStore.markRevoked(requester.requesterUserId);
         connect.memberGoogle.forget(requester.requesterUserId);
         return promptBookConnect({ req, adapter, requester, say, revoked: true });
       }
-      if (clients && isForbidden(error)) return say.done(forbiddenText(adapter, req));
+      if (kind === "forbidden") return say.done(forbiddenText(adapter, req));
       metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
       log.error("reservation write failed", { backend: adapter.backend, error });
       return say.done(`⚠️ I couldn't save that booking (${error.message}). Please book it directly: ${adapter.link}`);
@@ -406,6 +426,12 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return cancelBooking({ ref: picked.ref, user: userId, say, client });
   }
 
+  // Reserve all: books the member's whole tray in one press.
+  const reserveAll = createReserveAll({
+    adapters, catalog, connect, ledger, trayStore, livingDigest, now, requesterFor, promptConnect, withMentions,
+    memberClients, classifyWriteError, forbiddenText, renderListing: listing.listingFor,
+  });
+
   async function resume({ pendingId, client }) {
     if (!connect) return;
     const pending = await connect.authStore.getPending(pendingId);
@@ -414,6 +440,23 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     // can never book twice.
     await connect.authStore.deletePending(pendingId);
     if (pending.request.kind === "cancel") return resumeCancel(pending, client);
+    if (pending.request.kind === "tray") {
+      try {
+        return await reserveAll.resume({ ...pending, pendingId }, client);
+      } catch (error) {
+        // The pending row is gone; a rethrow would retry into nothing.
+        log.error("resuming reserve all failed", { error });
+        try {
+          await client.chat.postEphemeral({
+            channel: pending.request.channel || pending.channel, user: pending.request.user || pending.slackUserId, ...BOT_PERSONA,
+            text: `⚠️ I couldn't reserve your tray after you connected (${error.message}). Please press Reserve all again.`,
+          });
+        } catch (replyError) {
+          log.error("resume failure reply failed", { error: replyError });
+        }
+        return;
+      }
+    }
     const { req, requester, backend, cardTs } = pending.request;
     const adapter = adapters[backend];
     if (!adapter) return;
@@ -591,6 +634,14 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   // pressing a card button. The requester's Edit is opened by the receiver,
   // which has the trigger_id.
   async function handleCardAction({ payload, client }) {
+    const reserve = (payload.actions || []).find((a) => a.action_id === TRAY_RESERVE_ACTION);
+    if (reserve) {
+      // The press's action_ts names the run: an SQS redelivery of this press carries the same one.
+      return reserveAll.run({
+        user: payload.user?.id, channel: payload.channel?.id || payload.container?.channel_id, client,
+        runId: String(reserve.action_ts || ""), responseUrl: payload.response_url ?? null,
+      });
+    }
     const listed = (payload.actions || []).find((a) => listing.ACTIONS.has(a.action_id));
     if (listed) return listing.handleAction({ payload, action: listed, client });
     const action = (payload.actions || []).find((a) => CARD_ACTIONS.has(a.action_id));

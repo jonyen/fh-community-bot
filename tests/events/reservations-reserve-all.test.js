@@ -1,0 +1,414 @@
+// tests/events/reservations-reserve-all.test.js
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createReservationsHandler } from "../../src/events/reservations.js";
+import { buildCatalog } from "../../src/lib/reservation-catalog.js";
+import { TRAY_RESERVE_ACTION } from "../../src/lib/reservation-listing.js";
+import { COMBINED_EVENT_TYPE } from "../../src/lib/reservation-combined.js";
+import { log } from "../../src/lib/logger.js";
+
+const SET2 = { label: "Tech Set 2", category: "tech", backend: "rms", calendarId: "t2" };
+const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: [SET2] });
+const NOW = new Date("2026-10-20T16:00:00Z"); // Tue 10/20, noon in New York
+const URL = "https://hooks.slack/actions/r1";
+const MEMBER_CLIENTS = { sheetsClient: { kind: "member-sheets" }, calendarClient: { kind: "member-cal" } };
+const POST_TS = "500.1";
+
+const free = (dates) => Object.fromEntries(dates.map((d) => [d, { conflicts: [], unavailable: null }]));
+
+function makeAdapter(backend) {
+  return {
+    backend, link: `https://${backend}`,
+    findConflicts: vi.fn().mockResolvedValue([]),
+    listReservations: vi.fn().mockResolvedValue({ reservations: [], errors: [] }),
+    checkDates: vi.fn(async ({ dates }) => free(dates)),
+    bookMany: vi.fn(async (bookings) => bookings.map((b) => ({
+      status: "booked", link: `https://${backend}/x`, ref: { backend, date: b.date, id: `${backend}-${b.date}` },
+    }))),
+    book: vi.fn(), cancel: vi.fn(),
+  };
+}
+
+function makeClient() {
+  return {
+    chat: {
+      postMessage: vi.fn().mockResolvedValue({ ok: true, ts: POST_TS }),
+      postEphemeral: vi.fn().mockResolvedValue({ ok: true }),
+      update: vi.fn(),
+    },
+    conversations: { replies: vi.fn().mockResolvedValue({ messages: [] }) },
+    users: {
+      info: vi.fn().mockResolvedValue({ user: { real_name: "Deandra Shim", profile: { display_name: "Deandra", phone: "555", email: "deandra@acts2.network" } } }),
+      lookupByEmail: vi.fn().mockRejectedValue(new Error("users_not_found")),
+    },
+  };
+}
+
+function makeTrayStore() {
+  const rows = new Map();
+  return {
+    rows,
+    getTray: vi.fn(async (u) => (rows.has(u) ? structuredClone(rows.get(u)) : null)),
+    putTray: vi.fn(async (u, tray, { expectVersion }) => {
+      if ((rows.get(u)?.version ?? 0) !== expectVersion) return false;
+      rows.set(u, structuredClone({ ...tray, version: expectVersion + 1 }));
+      return true;
+    }),
+    deleteTray: vi.fn(async (u) => rows.delete(u)),
+  };
+}
+
+function makeLedger() {
+  return { recordBooking: vi.fn().mockResolvedValue(), recordSeries: vi.fn().mockResolvedValue(), bookingsFor: vi.fn().mockResolvedValue([]) };
+}
+
+function makeConnect(status = "active") {
+  return {
+    authStore: {
+      createPending: vi.fn().mockResolvedValue({ pendingId: "P1", nonce: "NONCE" }),
+      getPending: vi.fn(),
+      deletePending: vi.fn().mockResolvedValue(),
+      markRevoked: vi.fn().mockResolvedValue(),
+    },
+    memberGoogle: {
+      clientsFor: vi.fn().mockResolvedValue(status === "active" ? { status, clients: MEMBER_CLIENTS } : { status }),
+      forget: vi.fn(),
+      revoke: vi.fn(),
+    },
+    consentUrl: vi.fn(({ state }) => `https://accounts.google.com/auth?state=${state}`),
+  };
+}
+
+const line = (id, o = {}) => ({
+  id, item: "Tech Set 2", date: "2026-10-24", start: 600, end: 720, title: "Youth night", appliances: {},
+  repeat: null, onlyDates: null, progress: {}, ...o,
+});
+const mprRepeat = (o = {}) => line("L1", { item: "MPR", start: 840, end: 960, title: "MBS", repeat: { days: [6], until: "2026-11-14" }, ...o });
+const MPR_DATES = ["2026-10-24", "2026-10-31", "2026-11-07", "2026-11-14"];
+const trayRow = (o = {}) => ({ version: 3, lines: [], view: { q: "", c: "all", p: 0 }, editing: null, running: null, ...o });
+const press = (actionTs = "1700000000.123") => ({
+  type: "block_actions", user: { id: "U9" }, channel: { id: "CRES" },
+  container: { type: "message", message_ts: "300.1", channel_id: "CRES", is_ephemeral: true },
+  response_url: URL, actions: [{ action_id: TRAY_RESERVE_ACTION, value: "all", action_ts: actionTs }], state: { values: {} },
+});
+const sections = (m) => m.blocks.filter((b) => b.type === "section").map((b) => b.text.text);
+const RUN = "1700000000.123";
+
+describe("Reserve all", () => {
+  let adapters, client, trayStore, ledger, livingDigest, connect, fetchSpy;
+  beforeEach(() => {
+    adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
+    client = makeClient();
+    trayStore = makeTrayStore();
+    ledger = makeLedger();
+    livingDigest = { refresh: vi.fn().mockResolvedValue(true) };
+    connect = makeConnect("active");
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    return () => fetchSpy.mockRestore();
+  });
+  const handler = (o = {}) => createReservationsHandler({
+    llm: { parseReservationRequest: vi.fn(), matchItems: vi.fn().mockResolvedValue(null) },
+    adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, connect, livingDigest, ledger, trayStore, ...o,
+  });
+  const reserve = (h = handler(), actionTs) => h.handleCardAction({ payload: press(actionTs), client });
+  const sent = () => JSON.parse(fetchSpy.mock.calls.at(-1)[1].body);
+  const stored = () => trayStore.rows.get("U9");
+  const publicPosts = () => client.chat.postMessage.mock.calls.map((c) => c[0]);
+  const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
+
+  it("books a mixed tray once per backend, posts one combined message, records the ledger and keeps only the taken date", async () => {
+    trayStore.rows.set("U9", trayRow({
+      lines: [
+        mprRepeat(),
+        line("L2"),
+        line("L3", { item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dinner", appliances: { oven: true } }),
+      ],
+    }));
+    adapters.rooms.checkDates.mockImplementation(async ({ dates }) => ({
+      ...free(dates),
+      "2026-10-31": { conflicts: [{ holder: "Alan", title: "Fall rally", date: "2026-10-31", start: 840, end: 960 }], unavailable: null },
+    }));
+    await reserve();
+
+    for (const a of Object.values(adapters)) expect(a.bookMany).toHaveBeenCalledTimes(1);
+    const rooms = adapters.rooms.bookMany.mock.calls[0];
+    expect(rooms[0].map((b) => b.date)).toEqual(["2026-10-24", "2026-11-07", "2026-11-14"]);
+    expect(rooms[0][0]).toMatchObject({
+      start: 840, end: 960, title: "MBS", items: [CATALOG.find((e) => e.label === "MPR")],
+      requesterName: "Deandra", requesterUserId: "U9", phone: "555",
+    });
+    expect(rooms[1]).toEqual({ clients: MEMBER_CLIENTS });
+    expect(adapters.rms.bookMany.mock.calls[0][0]).toEqual([expect.objectContaining({ date: "2026-10-24", items: [SET2] })]);
+    expect(adapters.kitchen.bookMany.mock.calls[0][0]).toEqual([expect.objectContaining({ date: "2026-10-22", appliances: { oven: true } })]);
+
+    expect(publicPosts()).toHaveLength(1);
+    const post = publicPosts()[0];
+    expect(post).toMatchObject({ channel: "CRES", username: "Reservations" });
+    expect(post.thread_ts).toBeUndefined();
+    expect(post.metadata.event_type).toBe(COMBINED_EVENT_TYPE);
+    const text = sections(post).join("\n");
+    expect(text).toContain("MPR · every Sat 10/24 – 11/14 (3 dates) · 2:00–4:00 PM · MBS");
+    expect(text).toContain("Tech Set 2 · Sat 10/24 · 10:00 AM–12:00 PM · Youth night");
+    expect(text).toContain("Kitchen · Thu 10/22 · 5:00–7:00 PM · Dinner");
+    expect(text).toContain("Not booked");
+    expect(text).toContain("MPR · Sat 10/31 · 2:00–4:00 PM (Alan · Fall rally)");
+
+    expect(ledger.recordSeries).toHaveBeenCalledTimes(1);
+    expect(ledger.recordSeries).toHaveBeenCalledWith("U9", expect.objectContaining({
+      id: `L1-${RUN}`, item: "MPR", start: 840, end: 960, title: "MBS", repeat: { days: [6], until: "2026-11-14" },
+      channel: "CRES", postTs: POST_TS, refs: ["2026-10-24", "2026-11-07", "2026-11-14"].map((d) => ({ backend: "rooms", date: d, id: `rooms-${d}` })),
+    }), { today: "2026-10-20" });
+    expect(ledger.recordBooking).toHaveBeenCalledTimes(2);
+    expect(ledger.recordBooking).toHaveBeenCalledWith("U9", { backend: "rms", date: "2026-10-24", id: "rms-2026-10-24" }, { today: "2026-10-20" });
+    expect(ledger.recordBooking).toHaveBeenCalledWith("U9", { backend: "kitchen", date: "2026-10-22", id: "kitchen-2026-10-22" }, { today: "2026-10-20" });
+
+    // Periods: Mon 10/19 (kitchen), weekends of 10/23, 11/6 and 11/13.
+    expect(livingDigest.refresh).toHaveBeenCalledTimes(4);
+
+    const tray = stored();
+    expect(tray.running).toBeNull();
+    expect(tray.lines).toHaveLength(1);
+    expect(tray.lines[0]).toMatchObject({ id: "L1", onlyDates: ["2026-10-31"], progress: {} });
+
+    const card = sent();
+    expect(card.replace_original).toBe(true);
+    expect(sections(card)[0]).toContain("✅ Reserved 5 bookings. It's posted in the channel.");
+    expect(sections(card)[0]).toContain("MPR · Sat 10/31 · 2:00–4:00 PM (Alan · Fall rally)");
+  });
+
+  it("posts nothing publicly when nothing is free", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    adapters.rms.checkDates.mockResolvedValue({ "2026-10-24": { conflicts: [{ holder: "Alan", title: "Rally" }], unavailable: null } });
+    await reserve();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(sections(sent())[0]).toContain("Nothing could be booked.");
+    expect(livingDigest.refresh).not.toHaveBeenCalled();
+    expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
+    expect(stored().running).toBeNull();
+  });
+
+  it("refuses an incomplete tray, naming the line, and books nothing", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2", { title: null }), line("L3", { item: "MPR" })] }));
+    await reserve();
+    expect(sections(sent())[0]).toBe("Can't reserve yet:\n• Tech Set 2: Add what it's for.");
+    for (const a of Object.values(adapters)) expect(a.bookMany).not.toHaveBeenCalled();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(stored().running).toBeNull();
+  });
+
+  it("skips a line whose item left the catalog and books the rest", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2", { item: "Old Bus" }), line("L3", { item: "MPR" })] }));
+    await reserve();
+    expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("MPR · Sat 10/24");
+    expect(text).toContain("Old Bus can no longer be booked.");
+    expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
+  });
+
+  it("a second press while the first is running says it's already reserving", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")], running: { runId: "other", at: NOW.getTime() - 60_000 } }));
+    await reserve();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(ephemerals().at(-1)).toMatchObject({ channel: "CRES", user: "U9", text: "Already reserving your tray. One moment." });
+    expect(stored().running.runId).toBe("other");
+  });
+
+  it("takes over a run that started more than 15 minutes ago", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")], running: { runId: "other", at: NOW.getTime() - 16 * 60_000 } }));
+    await reserve();
+    expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a redelivered run with the same runId skips done dates and reports started ones", async () => {
+    trayStore.rows.set("U9", trayRow({
+      running: { runId: RUN, at: NOW.getTime() - 60_000 },
+      lines: [mprRepeat({
+        progress: { "2026-10-24": "done", "2026-10-31": "started" },
+        booked: { "2026-10-24": { backend: "rooms", date: "2026-10-24", id: "rooms-2026-10-24" } },
+      })],
+    }));
+    await reserve();
+    expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
+    expect(adapters.rooms.bookMany.mock.calls[0][0].map((b) => b.date)).toEqual(["2026-11-07", "2026-11-14"]);
+    const text = sections(publicPosts()[0]).join("\n");
+    // The crashed run's booking is posted by whichever run finishes.
+    expect(text).toContain("MPR · every Sat 10/24 – 11/14 (3 dates)");
+    expect(text).toContain("MPR · Sat 10/31 · may already be booked, please check before booking again");
+    expect(ledger.recordSeries.mock.calls[0][1].refs.map((r) => r.date)).toEqual(["2026-10-24", "2026-11-07", "2026-11-14"]);
+    expect(stored().lines[0]).toMatchObject({ onlyDates: ["2026-10-31"], progress: {} });
+  });
+
+  it("marks dates started before writing and done after", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    adapters.rms.bookMany.mockImplementation(async (bookings) => {
+      expect(trayStore.rows.get("U9").lines[0].progress).toEqual({ "2026-10-24": "started" });
+      return bookings.map((b) => ({ status: "booked", link: "x", ref: { backend: "rms", date: b.date } }));
+    });
+    const puts = [];
+    trayStore.putTray.mockImplementation(async (u, tray, { expectVersion }) => {
+      puts.push(structuredClone(tray));
+      if ((trayStore.rows.get(u)?.version ?? 0) !== expectVersion) return false;
+      trayStore.rows.set(u, structuredClone({ ...tray, version: expectVersion + 1 }));
+      return true;
+    });
+    await reserve();
+    expect(puts.some((t) => t.lines[0]?.progress?.["2026-10-24"] === "done")).toBe(true);
+  });
+
+  it("stops without writing when another run took the tray before a write", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    let calls = 0;
+    const real = trayStore.putTray.getMockImplementation();
+    trayStore.putTray.mockImplementation(async (u, tray, opts) => {
+      calls++;
+      // After this run claims the tray, another run takes it over.
+      if (calls === 2) trayStore.rows.set(u, { ...trayStore.rows.get(u), version: 99, running: { runId: "other", at: NOW.getTime() } });
+      return real(u, tray, opts);
+    });
+    await reserve();
+    expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  describe("connecting Google", () => {
+    it("asks a member who isn't connected to connect, books nothing, and keeps the tray", async () => {
+      connect = makeConnect("none");
+      trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+      await reserve();
+      expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+      expect(connect.authStore.createPending).toHaveBeenCalledWith(expect.objectContaining({
+        slackUserId: "U9", request: { kind: "tray", user: "U9", channel: "CRES" }, channel: "CRES",
+      }));
+      const prompt = ephemerals().at(-1);
+      expect(prompt).toMatchObject({ channel: "CRES", user: "U9" });
+      expect(prompt.thread_ts).toBeUndefined();
+      expect(prompt.text).toBe("To book as you, connect your Google account once. I'll reserve your tray as soon as you approve.");
+      expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
+      expect(stored().running).toBeNull();
+    });
+
+    it("after connecting, resume books, posts publicly and replies privately", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+      connect.authStore.getPending.mockResolvedValue({ slackUserId: "U9", request: { kind: "tray", user: "U9", channel: "CRES" }, channel: "CRES", threadTs: null });
+      await handler().resume({ pendingId: "P1", client });
+      expect(connect.authStore.deletePending).toHaveBeenCalledWith("P1");
+      expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
+      expect(publicPosts()).toHaveLength(1);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const reply = ephemerals().at(-1);
+      expect(reply).toMatchObject({ channel: "CRES", user: "U9" });
+      expect(sections(reply)[0]).toContain("✅ Reserved 1 booking. It's posted in the channel.");
+      expect(stored().running).toBeNull();
+      expect(stored().lines).toEqual([]);
+    });
+
+    it("a resume that fails before booking tells the member privately, never throws", async () => {
+      connect.authStore.getPending.mockResolvedValue({ slackUserId: "U9", request: { kind: "tray", user: "U9", channel: "CRES" }, channel: "CRES" });
+      trayStore.getTray.mockRejectedValue(new Error("ddb down"));
+      const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+      await expect(handler().resume({ pendingId: "P1", client })).resolves.toBeUndefined();
+      expect(ephemerals().at(-1)).toMatchObject({ channel: "CRES", user: "U9" });
+      expect(ephemerals().at(-1).text).toMatch(/couldn't reserve your tray after you connected \(ddb down\)/);
+      errSpy.mockRestore();
+    });
+
+    it("a revoked grant partway posts what was booked, marks the member revoked and prompts", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [line("L3", { item: "MPR" }), line("L2")] }));
+      adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: "invalid_grant" }]);
+      await reserve();
+      expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
+      expect(publicPosts()).toHaveLength(1);
+      expect(sections(publicPosts()[0]).join("\n")).toContain("MPR · Sat 10/24");
+      expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
+      expect(connect.memberGoogle.forget).toHaveBeenCalledWith("U9");
+      expect(connect.authStore.createPending).toHaveBeenCalledWith(expect.objectContaining({ request: { kind: "tray", user: "U9", channel: "CRES" } }));
+      expect(ephemerals().at(-1).text).toMatch(/Connect again/);
+      expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
+      expect(stored().lines[0].progress).toEqual({});
+    });
+
+    it("stops booking further backends once the grant is revoked", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [line("L3", { item: "MPR" }), line("L2")] }));
+      adapters.rooms.bookMany.mockResolvedValue([{ status: "error", error: Object.assign(new Error("invalid_grant"), { response: { data: { error: "invalid_grant" } } }) }]);
+      await reserve();
+      expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(stored().lines.map((l) => l.id)).toEqual(["L3", "L2"]);
+    });
+  });
+
+  it("forbidden on rooms skips the rooms dates with the access text; the kitchen still books", async () => {
+    trayStore.rows.set("U9", trayRow({
+      lines: [
+        mprRepeat({ repeat: { days: [6], until: "2026-10-31" } }),
+        line("L3", { item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dinner" }),
+      ],
+    }));
+    adapters.rooms.bookMany.mockImplementation(async (bookings) => bookings.map(() => ({ status: "error", error: "The caller does not have permission" })));
+    await reserve();
+    expect(adapters.kitchen.bookMany).toHaveBeenCalledTimes(1);
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("Kitchen · Thu 10/22");
+    expect(text).toContain("You don't have edit access to the room request sheet.");
+    expect(stored().lines.map((l) => l.id)).toEqual(["L1"]);
+    expect(connect.authStore.markRevoked).not.toHaveBeenCalled();
+  });
+
+  it("a write error skips that date with its message", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: "boom" }]);
+    await reserve();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · couldn't save (boom)");
+  });
+
+  it("an unavailable result is skipped with its reason", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L3", { item: "Kitchen", date: "2026-10-22" })] }));
+    adapters.kitchen.checkDates.mockResolvedValue({ "2026-10-22": { conflicts: [], unavailable: "The kitchen sheet is not open yet for that date." } });
+    await reserve();
+    expect(adapters.kitchen.bookMany).not.toHaveBeenCalled();
+    expect(sections(sent())[0]).toContain("Kitchen · Thu 10/22 · The kitchen sheet is not open yet for that date.");
+  });
+
+  it("an expired response_url falls back to postEphemeral without throwing", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    fetchSpy.mockResolvedValue({ ok: false, status: 404 });
+    await expect(reserve()).resolves.toBeUndefined();
+    const reply = ephemerals().at(-1);
+    expect(reply).toMatchObject({ channel: "CRES", user: "U9" });
+    expect(reply.thread_ts).toBeUndefined();
+    expect(sections(reply)[0]).toContain("✅ Reserved 1 booking.");
+  });
+
+  it("failures after a write are logged, never thrown", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+    client.chat.postMessage.mockRejectedValue(new Error("slack down"));
+    ledger.recordBooking.mockRejectedValue(new Error("ddb down"));
+    livingDigest.refresh.mockRejectedValue(new Error("digest down"));
+    fetchSpy.mockRejectedValue(new Error("net"));
+    client.chat.postEphemeral.mockRejectedValue(new Error("slack down"));
+    await expect(reserve()).resolves.toBeUndefined();
+    expect(errSpy).toHaveBeenCalled();
+    expect(stored().lines).toEqual([]);
+    errSpy.mockRestore();
+  });
+
+  it("logs a warning when a booked ref is too big for its Cancel button", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    adapters.rms.bookMany.mockResolvedValue([{ status: "booked", link: "x", ref: { backend: "rms", date: "2026-10-24", pad: "x".repeat(2100) } }]);
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    await reserve();
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/cancel/i), expect.anything());
+    warn.mockRestore();
+  });
+
+  it("books as the bot when connect isn't configured", async () => {
+    connect = null;
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    await reserve(handler({ connect: null }));
+    expect(adapters.rms.bookMany).toHaveBeenCalledWith([expect.objectContaining({ date: "2026-10-24" })], {});
+    expect(publicPosts()).toHaveLength(1);
+  });
+});

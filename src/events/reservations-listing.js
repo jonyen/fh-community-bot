@@ -11,7 +11,7 @@ import { BOT_PERSONA } from "../lib/reservation-format.js";
 import { emptyTray, newLine, expandDates, lineProblems, MAX_LINES } from "../lib/reservation-tray.js";
 import {
   listingMessage, filterCatalog, PAGE_SIZE, LISTING_ACTIONS,
-  LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION,
+  LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_CLEAR_ACTION,
 } from "../lib/reservation-listing.js";
 import {
   lineFormMessage, readLineForm, FORM_ACTIONS,
@@ -186,9 +186,6 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
       tray.editing = null;
       return listing("Tray cleared.");
     }
-    // Task 10 wires Reserve all.
-    if (id === TRAY_RESERVE_ACTION) return listing("Reserve all is coming next.");
-
     // The form's buttons and pickers act on the draft; a press on a form
     // whose draft is gone (saved, or left, elsewhere) shows the list.
     if (!tray.editing) return listing();
@@ -248,5 +245,7 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     return reply(responseUrl, message);
   }
 
-  return { post, handleAction, lineCheck, ACTIONS: new Set([...LISTING_ACTIONS, ...FORM_ACTIONS]) };
+  // Reserve all is handled by reservations-reserve-all.js, which draws its
+  // result with listingFor.
+  return { post, handleAction, lineCheck, listingFor, ACTIONS: new Set([...LISTING_ACTIONS, ...FORM_ACTIONS]) };
 }

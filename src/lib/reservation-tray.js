@@ -7,7 +7,8 @@
 //            end: number|null, title: string|null, appliances: object,
 //            repeat: null | { days: number[] /* 0 = Sun */, until: ISO|null },
 //            onlyDates: ISO[]|null /* repeat dates still wanted */,
-//            progress: { [ISO]: "started"|"done" } }
+//            progress: { [ISO]: "started"|"done" },
+//            booked?: { [ISO]: ref } /* refs of "done" dates, until posted */ }
 //   Tray = { version, lines: Line[], view: { q, c /* "all" or category id */, p },
 //            editing: Line|null /* the draft being edited */,
 //            running: { runId, at } | null }
