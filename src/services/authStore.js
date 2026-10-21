@@ -15,6 +15,9 @@ export const STATE_TTL_S = 600;
 export const BOOKING_CLAIM_TTL_S = 7 * 86400;
 export const MAX_BOOKING_REFS = 50;
 
+// The real document client rejects undefined values unless told to drop them.
+const defined = (v) => JSON.parse(JSON.stringify(v));
+
 export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.now() }) {
   const nowS = () => Math.floor(now() / 1000);
   const live = (item) => item && (item.expiresAt == null || item.expiresAt > nowS());
@@ -120,6 +123,7 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
   // expiresAt covers the latest date of either list plus two days (a day of slack).
   const ledgerExpiry = (refs, series) => {
     const dates = [...refs, ...series.flatMap((s) => s.refs)].map((r) => r.date);
+    if (!dates.length) return nowS() + 2 * 86400;
     const latest = dates.reduce((max, d) => (d > max ? d : max), dates[0]);
     return Date.parse(`${latest}T00:00:00Z`) / 1000 + 2 * 86400;
   };
@@ -133,7 +137,7 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     await ddb.send(new UpdateCommand({
       TableName: tableName, Key: { pk: `bookings#${slackUserId}` },
       UpdateExpression: "SET #a = :v, expiresAt = :e", ExpressionAttributeNames: { "#a": attr },
-      ExpressionAttributeValues: { ":v": value, ":e": ledgerExpiry(refs, series) },
+      ExpressionAttributeValues: { ":v": defined(value), ":e": ledgerExpiry(refs, series) },
     }));
   }
 
@@ -148,6 +152,7 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
   // A booked series is kept whole so Cancel can offer it; series whose refs
   // have all ended are pruned on each write.
   async function recordSeries(slackUserId, series, { today }) {
+    if (!series.refs.some((r) => r.date >= today)) return;
     const { refs, series: old } = await readLedger(slackUserId);
     const all = [...old.filter((s) => s.refs.some((r) => r.date >= today)), series];
     await writeLedger(slackUserId, "series", all, refs, all);
@@ -191,7 +196,7 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     try {
       await ddb.send(new PutCommand({
         TableName: tableName,
-        Item: { ...tray, pk: `tray#${slackUserId}`, version: expectVersion + 1, expiresAt: nowS() + TRAY_TTL_S },
+        Item: { ...defined(tray), pk: `tray#${slackUserId}`, version: expectVersion + 1, expiresAt: nowS() + TRAY_TTL_S },
         ConditionExpression: expectVersion === 0 ? "attribute_not_exists(pk) OR expiresAt <= :now" : "#v = :v",
         ...(expectVersion === 0
           ? { ExpressionAttributeValues: { ":now": nowS() } }

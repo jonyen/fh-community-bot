@@ -15,10 +15,17 @@ function conditionHolds(i, old) {
   });
 }
 
+// Real marshalling throws on undefined (the client has no removeUndefinedValues).
+function rejectUndefined(v, nested = false) {
+  if (v === undefined && nested) throw new Error("Pass options.removeUndefinedValues=true to remove undefined values");
+  if (v && typeof v === "object") Object.values(v).forEach((x) => rejectUndefined(x, true));
+}
+
 function fakeDdb() {
   const items = new Map();
   const send = vi.fn(async (cmd) => {
     const i = cmd.input;
+    rejectUndefined(i.Item); rejectUndefined(i.ExpressionAttributeValues);
     switch (cmd.constructor.name) {
       case "PutCommand": {
         if (i.ConditionExpression && !conditionHolds(i, items.get(i.Item.pk))) {
@@ -281,5 +288,38 @@ describe("tray and series", () => {
     expect((await store.seriesFor("U1", { today: "2026-10-20" }))[0].refs).toEqual([rms("2026-10-28", 8)]);
     await store.dropSeriesRefs("U1", "s1", ["rms:8"]);
     expect(await store.seriesFor("U1", { today: "2026-10-20" })).toEqual([]);
+  });
+
+  it("drops undefined fields before writing", async () => {
+    expect(await store.putTray("U1", { step: "pick", note: undefined, nested: { a: undefined, b: 1 } }, { expectVersion: 0 })).toBe(true);
+    expect(await store.getTray("U1")).toEqual({ step: "pick", nested: { b: 1 }, version: 1 });
+    await store.recordSeries("U1", series([{ ...ref("2026-10-21", 1), holder: undefined }]), { today: "2026-10-20" });
+    expect((await store.seriesFor("U1", { today: "2026-10-20" }))[0].refs).toEqual([ref("2026-10-21", 1)]);
+  });
+
+  it("ignores a series with no live refs", async () => {
+    await store.recordSeries("U1", series([]), { today: "2026-10-20" });
+    await store.recordSeries("U1", series([ref("2026-10-19", 1)]), { today: "2026-10-20" });
+    expect(ddb.items.has("bookings#U1")).toBe(false);
+  });
+
+  it("falls back to a two day expiry when nothing has a date", async () => {
+    await store.recordSeries("U1", series([ref("2026-10-21", 1)]), { today: "2026-10-20" });
+    await store.dropSeriesRefs("U1", "s1", ["nope"]);
+    await store.recordBooking("U1", ref("2026-10-21", 2), { today: "2026-10-20" });
+    expect(Number.isFinite(ddb.items.get("bookings#U1").expiresAt)).toBe(true);
+  });
+
+  it("deletes the row when the last refs are dropped and no singles remain", async () => {
+    await store.recordSeries("U1", series([rms("2026-10-21", 7)]), { today: "2026-10-20" });
+    await store.dropSeriesRefs("U1", "s1", ["rms:7"]);
+    expect(ddb.items.has("bookings#U1")).toBe(false);
+  });
+
+  it("leaves the row unchanged for an unknown series id", async () => {
+    await store.recordSeries("U1", series([rms("2026-10-21", 7)]), { today: "2026-10-20" });
+    const before = structuredClone(ddb.items.get("bookings#U1"));
+    await store.dropSeriesRefs("U1", "nope", ["rms:7"]);
+    expect(ddb.items.get("bookings#U1")).toEqual(before);
   });
 });
