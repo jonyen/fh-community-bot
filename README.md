@@ -243,6 +243,43 @@ there without the bot joining in.
   Calendar** link instead of Cancel.
 - Only the member who asked can press Book, Edit, Cancel or Cancel booking.
 
+### Browsing and reserving several things at once
+
+Post `list items to reserve` (or `what can I reserve?`) in #reservations. The
+bot replies with a private card, visible only to you, listing everything that
+can be reserved: rooms, the kitchen, equipment and vehicles. Add words to start
+with a search, such as `list speakers to reserve`.
+
+- **Search and filter.** Type in the search box and press Enter. The bot first
+  matches your words against item names, room nicknames and categories. If
+  nothing matches, it asks the model which items fit. The category menu
+  narrows the list further. The list shows 8 items per page.
+- **The tray.** **+ Add** puts an item in your tray and opens its form on the
+  same card: date, start, end and title (kitchen appliances also ask for the
+  equipment). A new line starts with the details of the line before it. The
+  form tells you right away whether the item is free, or who has it on which
+  dates. **Save** keeps the line, **Remove** drops it, **Back** leaves without
+  saving.
+- **Repeats.** Choose **Weekly**, pick the days, and set an end date. The
+  first date is the line's date, and a repeat can run up to 6 months.
+- **Limits.** The tray holds up to 10 lines and up to 60 dates in one Reserve
+  all. It is kept for 24 hours; if you leave it untouched longer, it clears.
+  Asking for the list again shows your existing tray.
+- **Reserve all.** The bot books every date that is still free, across the
+  rooms sheet, the kitchen sheet and the calendars, and posts one combined
+  message in the channel. The message lists what was booked and, under
+  "Not booked", what wasn't and why (already claimed by someone, kitchen sheet
+  not open for that date yet, a calendar that declined, and so on). Dates that
+  weren't booked stay in your tray so you can change them and try again. A date
+  marked "may already be booked, please check" is removed from the tray: look
+  at the sheet or calendar before booking it again.
+- **Cancelling.** Each booked line in the combined post has its own **Cancel**.
+  For a repeat, the bot asks whether to cancel the whole series or one date.
+  "What do I have booked?" shows a series as one line with the same choice.
+
+Typed requests still work as before. The bot now posts in #reservations as
+"Reservations".
+
 The request rides in the card's buttons, so the bot stores nothing. A second
 press, or a press on a card that was edited since, does nothing. Bookings are
 first come, first served, with no approver. Members who want to book privately

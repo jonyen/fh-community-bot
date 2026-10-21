@@ -238,3 +238,37 @@ Two digest posts, both at 08:00 New York time:
 After each booking the bot makes, it edits the matching post. Bookings made
 directly in the sheets or calendars show up on the next edit or the next post,
 not before.
+
+## Reserve all, the tray and repeat series
+
+A member's tray is one row in the auth table, `tray#<slack user id>`, with the
+fields `version`, `lines`, `view`, `editing`, `running`, `claims`, `posts` and
+`ended`. It expires 24 hours after the last change (TTL on `expiresAt`). A repeat
+series is stored in the member's ledger row, `bookings#<slack user id>`, in its
+`series` field (one entry per series).
+
+Reserve all runs in the worker, whose timeout is 300 s (`Timeout` in
+`template.yaml`). The event queue's `VisibilityTimeout` is 1800 s, at least 6
+times the timeout. A slow run can be retried; this is safe, because the tray
+records progress per date as it writes:
+
+- A date is marked `started` before it is written and `done` after. A retry
+  skips `done` dates and picks up from the first date not yet written.
+- `claims` holds the id of the run that marked each date. `running` is the run
+  now in progress, and `ended` lists runs that finished or were taken over, so a
+  redelivered event stops. `posts` holds a public post not yet tidied up.
+
+**"May already be booked, please check"** means a run marked a date `started` and
+never marked it `done` (the worker was cut off mid-write). The bot does not
+write it again, because it can't tell whether the write landed. It tells the
+member and drops the date from the tray. To check, open the sheet (rooms or
+kitchen) and look for the row on that date, or open the resource calendar and
+look for the event. If it is there, nothing to do. If not, the member can book
+it again.
+
+To inspect a tray, read the row `tray#<U>` in the table. Do not edit it by hand
+while a run is in progress.
+
+The digest is found by paging back through the channel history, so it is still
+found after many top-level posts. The bot posts as "Reservations" (maintenance
+replies still use "FH Maintenance"); old messages keep the old name.
