@@ -105,6 +105,15 @@ describe("mineMessage", () => {
     expect(sections(one)[1].text.text).toContain(" · 1 date left · ");
   });
 
+  it("escapes member text in series and single lines", () => {
+    const nasty = "<!channel> & <http://x|y>";
+    const series = { series: true, seriesId: "S", item: nasty, repeat: { days: [6], until: "2026-11-07" }, count: 2, start: 840, end: 960, title: nasty };
+    const m = mineMessage({ user: "U9", entries: [series, { ...RMS, item: nasty, title: nasty }], more: 0, links: LINKS });
+    const safe = "&lt;!channel&gt; &amp; &lt;http://x|y&gt;";
+    expect(sections(m)[1].text.text).toBe(`📅 *${safe}* · every Sat until Sat 11/7 · 2 dates left · 2:00–4:00 PM · ${safe}`);
+    expect(sections(m)[2].text.text).toBe(`📅 *${safe}* · Wed 10/21 · 2:00–4:00 PM · ${safe}`);
+  });
+
   it("stays under 50 blocks at the cap", () => {
     const m = mineMessage({ user: "U9", entries: Array(20).fill(RMS), more: 5, links: LINKS, partial: true, notice: "🚫 x" });
     expect(m.blocks.length).toBeLessThanOrEqual(50);

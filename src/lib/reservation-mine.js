@@ -16,6 +16,8 @@ const PARTIAL_TEXT = "⚠️ Some bookings couldn't be checked.";
 const VALUE_MAX = 2000;
 const CONFIRM_MAX = 300;
 
+// Slack reads mrkdwn: member text is escaped so it can't ping or link.
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const plain = (text) => ({ type: "plain_text", text });
 const section = (text, accessory) => ({ type: "section", text: { type: "mrkdwn", text: fitSection(text) }, ...(accessory ? { accessory } : {}) });
 
@@ -30,14 +32,14 @@ export function linksLine(links = {}) {
 // A booked repeat series is one line; its Cancel… asks which dates.
 function seriesLine(e) {
   const title = String(e.title ?? "").trim();
-  return `📅 *${e.item}* · ${repeatText(e.repeat)} · ${e.count} date${e.count === 1 ? "" : "s"} left · ${fmtRange(e.start, e.end)}${title ? ` · ${title}` : ""}`;
+  return `📅 *${esc(e.item)}* · ${repeatText(e.repeat)} · ${e.count} date${e.count === 1 ? "" : "s"} left · ${fmtRange(e.start, e.end)}${title ? ` · ${esc(title)}` : ""}`;
 }
 
 function entryLine(e) {
   if (e.series) return seriesLine(e);
   const title = String(e.title ?? "").trim();
   const source = e.matchedBy ? ` · from the ${e.matchedBy} sheet, matched by name` : "";
-  return `📅 *${e.item}* · ${fmtDay(e.date)} · ${fmtRange(e.start, e.end)}${title ? ` · ${title}` : ""}${source}`;
+  return `📅 *${esc(e.item)}* · ${fmtDay(e.date)} · ${fmtRange(e.start, e.end)}${title ? ` · ${esc(title)}` : ""}${source}`;
 }
 
 function confirmText(e) {

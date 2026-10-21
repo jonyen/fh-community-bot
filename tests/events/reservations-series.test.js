@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
-import { combinedMessage, POST_CANCEL_ACTION, SERIES_ALL_ACTION, SERIES_ONE_ACTION } from "../../src/lib/reservation-combined.js";
+import { combinedMessage, SERIES_ALL_ACTION, SERIES_ONE_ACTION } from "../../src/lib/reservation-combined.js";
 import { MINE_SERIES_ACTION } from "../../src/lib/reservation-mine.js";
 import { refKey } from "../../src/lib/reservation-owner.js";
 import { log } from "../../src/lib/logger.js";
@@ -51,11 +51,11 @@ function makeLedger(series = [structuredClone(SERIES)]) {
   return {
     state,
     recordBooking: vi.fn(),
-    bookingsFor: vi.fn(async (u, { today }) => state.series.flatMap((s) => s.refs).filter((r) => r.date >= today)),
+    bookingsFor: vi.fn(async (_u, { today }) => state.series.flatMap((s) => s.refs).filter((r) => r.date >= today)),
     seriesFor: vi.fn(async (u, { today }) => (u !== "U9" ? [] : state.series
       .map((s) => ({ ...s, refs: s.refs.filter((r) => r.date >= today) }))
       .filter((s) => s.refs.length))),
-    dropSeriesRefs: vi.fn(async (u, id, keys) => {
+    dropSeriesRefs: vi.fn(async (_u, id, keys) => {
       state.series = state.series.map((s) => (s.id === id ? { ...s, refs: s.refs.filter((r) => !keys.includes(refKey(r))) } : s)).filter((s) => s.refs.length);
     }),
   };
@@ -243,6 +243,25 @@ describe("cancelling from the combined post", () => {
     expect(ledger.state.series[0].refs.map((r) => r.date)).toEqual(["2026-10-20", "2026-10-31"]);
     expect(updates()[0].blocks[2].text.text).toBe("• MPR · every Sat 10/24 – 11/7 (4 dates) · 2:00–4:00 PM · MBS\n🚫 Series cancelled by <@U9> (2 dates). 1 couldn't be cancelled; check https://rooms/row.");
     spy.mockRestore();
+  });
+
+  it("over 60 remaining dates: cancels 60, keeps the rest and the line's Cancel, and the note says so far", async () => {
+    const many = Array.from({ length: 63 }, (_, i) => roomRef(new Date(Date.UTC(2026, 9, 24 + i)).toISOString().slice(0, 10)));
+    ledger = makeLedger([{ ...structuredClone(SERIES), refs: many }]);
+    const h = make();
+    await h.handleCardAction({ payload: chooserPress(await openChooser(h), SERIES_ALL_ACTION), client });
+    expect(adapters.rooms.cancel).toHaveBeenCalledTimes(60);
+    expect(ledger.state.series[0].refs).toEqual(many.slice(60));
+    const [u] = updates();
+    expect(u.blocks[2].text.text).toBe("• MPR · every Sat 10/24 – 11/7 (4 dates) · 2:00–4:00 PM · MBS\n🚫 60 dates cancelled by <@U9> so far; press Cancel again for the rest.");
+    expect(u.blocks[2].accessory).toEqual(POST.blocks[2].accessory);
+  });
+
+  it("escapes the series' item in the private summary", async () => {
+    ledger = makeLedger([{ ...structuredClone(SERIES), item: "<!channel> & co" }]);
+    const h = make();
+    await h.handleCardAction({ payload: chooserPress(await openChooser(h), SERIES_ALL_ACTION), client });
+    expect(JSON.parse(fetchSpy.mock.calls.at(-1)[1].body).text).toBe("🚫 Cancelled 3 dates of &lt;!channel&gt; &amp; co · every Sat until Sat 11/7.");
   });
 
   it("Just one date cancels only that date, leaves the others and keeps the line's Cancel", async () => {

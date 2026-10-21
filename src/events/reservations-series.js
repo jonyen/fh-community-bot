@@ -34,6 +34,7 @@ const parse = (s) => {
     return null;
   }
 };
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 // The real document client rejects undefined values in the pending row.
 const defined = (v) => JSON.parse(JSON.stringify(v));
@@ -295,14 +296,18 @@ export function createSeriesFlow({
       if (gone.length && index >= 0) {
         await markLine(client, { channel, ts: postTs, post, index, text: `🚫 ${fmtDay(date)} cancelled.`, keep: remaining > 0 });
       }
-      summary = out.status === "cancelled" ? `🚫 ${series.item} · ${fmtDay(date)} cancelled.` : cancelText(out.ref, out, user);
+      summary = out.status === "cancelled" ? `🚫 ${esc(series.item)} · ${fmtDay(date)} cancelled.` : cancelText(out.ref, out, user);
     } else {
       const n = done + gone.length;
       if (n && index >= 0) {
-        await markLine(client, { channel, ts: postTs, post, index, text: `🚫 Series cancelled by <@${user}> (${plural(n, "date")}).${failNote}`, keep: remaining > 0 });
+        // Dates past this run's cap are still booked: the note must not read as complete.
+        const note = left
+          ? `🚫 ${plural(n, "date")} cancelled by <@${user}> so far; press Cancel again for the rest.${failNote}`
+          : `🚫 Series cancelled by <@${user}> (${plural(n, "date")}).${failNote}`;
+        await markLine(client, { channel, ts: postTs, post, index, text: note, keep: remaining > 0 });
       }
       summary = n
-        ? `🚫 Cancelled ${plural(n, "date")} of ${series.item} · ${repeatText(series.repeat)}.${failNote}`
+        ? `🚫 Cancelled ${plural(n, "date")} of ${esc(series.item)} · ${repeatText(series.repeat)}.${failNote}`
         : `⚠️ ${plural(failed.length, "date")} couldn't be cancelled; check ${failed[0].link || adapters[failed[0].ref.backend]?.link}.`;
       if (left) summary += ` ${plural(left, "more date")} left; press Whole series again for them.`;
     }
