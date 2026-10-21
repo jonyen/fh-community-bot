@@ -157,6 +157,17 @@ describe("rooms adapter", () => {
       expect(res).toEqual(Array(3).fill({ status: "error", error: "quota" }));
     });
 
+    it("returns errors instead of throwing on a malformed booking", async () => {
+      const res = await adapter.bookMany([mk("2026-10-28", "A"), { ...mk("2026-11-04", "B"), items: undefined }]);
+      expect(res.map((r) => r.status)).toEqual(["error", "error"]);
+      expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+    });
+
+    it("returns [] without appending when given nothing", async () => {
+      expect(await adapter.bookMany([])).toEqual([]);
+      expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+    });
+
     it("writes with the member's Sheets client when given", async () => {
       const member = { spreadsheets: { values: { append: vi.fn().mockResolvedValue({}) } } };
       await adapter.bookMany([mk("2026-10-28", "A")], { clients: { sheetsClient: member } });

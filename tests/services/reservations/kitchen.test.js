@@ -186,6 +186,16 @@ describe("kitchen adapter", () => {
       expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
     });
 
+    it("turns a malformed booking into an error and still books the others", async () => {
+      const res = await adapter.bookMany([mk("2026-10-17", undefined), mk("2026-10-17", "C")]);
+      expect(res[0].status).toBe("error");
+      expect(typeof res[0].error).toBe("string");
+      expect(res[1].status).toBe("booked");
+      expect(res[1].ref.row).toBe(9);
+      const { data } = sheets.spreadsheets.values.batchUpdate.mock.calls[0][0].requestBody;
+      expect(data.map((d) => d.range)).toEqual(["'FH-Kitchen-RSVP'!B9:E9"]);
+    });
+
     it("writes with the member's Sheets client when given", async () => {
       const member = { spreadsheets: { values: { batchUpdate: vi.fn().mockResolvedValue({}) } } };
       await adapter.bookMany([mk("2026-10-17", "C")], { clients: { sheetsClient: member } });

@@ -123,9 +123,16 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
       const sameDay = rows.filter((r) => r.date === b.date);
       const free = sameDay.find((r) => !r.name && !taken.has(r.row));
       if (!free) return { status: "unavailable", reason: noRowReason(sameDay), link };
-      taken.add(free.row);
-      data.push(...writesFor(free.row, b));
-      return { status: "booked", link, ref: bookedRef(free.row, b) };
+      // A malformed booking is its own error and does not claim a row.
+      try {
+        const writes = writesFor(free.row, b);
+        const ref = bookedRef(free.row, b);
+        taken.add(free.row);
+        data.push(...writes);
+        return { status: "booked", link, ref };
+      } catch (err) {
+        return { status: "error", error: err.message };
+      }
     });
     if (data.length === 0) return results;
     try {

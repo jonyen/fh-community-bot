@@ -96,13 +96,14 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
 
   // Every date in one append, so "reserve all" is one write however many dates.
   async function bookMany(bookings, { clients } = {}) {
+    if (bookings.length === 0) return [];
     const writer = clients?.sheetsClient || sheetsClient;
     try {
       await append(writer, bookings.map(rowOf));
+      return bookings.map((b) => ({ status: "booked", link, ref: bookedRef(b) }));
     } catch (err) {
       return bookings.map(() => ({ status: "error", error: err.message }));
     }
-    return bookings.map((b) => ({ status: "booked", link, ref: bookedRef(b) }));
   }
 
   async function cancel(ref, { clients } = {}) {
