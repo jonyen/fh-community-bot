@@ -133,6 +133,67 @@ describe("kitchen adapter", () => {
     expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
   });
 
+  describe("bookMany", () => {
+    const mk = (date, name, extra = {}) => ({ date, start: 1020, end: 1080, requesterName: name, phone: "", appliances: {}, ...extra });
+    // Sat 10/17 with rows 7 (RPG) and 8, 9 free.
+    const TWO_FREE = [...SHEET.slice(0, 7), ["Sat, 10/17", "", "", "", "", ...F], ["Sat, 10/17", "", "", "", "", ...F], ...SHEET.slice(9)];
+
+    it("gives two groups on one day two rows in a single batchUpdate", async () => {
+      sheets = makeSheets(TWO_FREE);
+      adapter = createKitchenAdapter({
+        sheetsClient: sheets, spreadsheetId: "K1", tab: "FH-Kitchen-RSVP", link: "https://kitchen",
+        now: () => new Date("2026-10-14T12:00:00Z"),
+      });
+      const res = await adapter.bookMany([
+        mk("2026-10-17", "  Jina ", { phone: "555", appliances: { island: true, freezer: 2 } }),
+        mk("2026-10-17", "Sam"),
+      ]);
+      expect(res.map((r) => r.status)).toEqual(["booked", "booked"]);
+      expect(res.map((r) => r.ref.row)).toEqual([8, 9]);
+      expect(res[0].ref).toEqual({ backend: "kitchen", row: 8, date: "2026-10-17", name: "Jina", start: 1020, end: 1080 });
+      expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+      expect(sheets.spreadsheets.values.batchUpdate).toHaveBeenCalledTimes(1);
+      const { data, valueInputOption } = sheets.spreadsheets.values.batchUpdate.mock.calls[0][0].requestBody;
+      expect(valueInputOption).toBe("USER_ENTERED");
+      expect(data).toEqual([
+        { range: "'FH-Kitchen-RSVP'!B8:E8", values: [["  Jina ", "555", "5:00 PM", "6:00 PM"]] },
+        { range: "'FH-Kitchen-RSVP'!F8", values: [["TRUE"]] },
+        { range: "'FH-Kitchen-RSVP'!I8", values: [[2]] },
+        { range: "'FH-Kitchen-RSVP'!B9:E9", values: [["Sam", "", "5:00 PM", "6:00 PM"]] },
+      ]);
+    });
+
+    it("reports a date with no rows as not open yet and a full day as taken, booking the rest", async () => {
+      const res = await adapter.bookMany([mk("2026-12-01", "A"), mk("2026-10-18", "B"), mk("2026-10-17", "C"), mk("2026-10-17", "D")]);
+      expect(res[0]).toEqual({ status: "unavailable", reason: "The kitchen sheet is not open yet for that date.", link: "https://kitchen" });
+      expect(res[1]).toEqual({ status: "unavailable", reason: "All 3 kitchen rows for that day are taken.", link: "https://kitchen" });
+      expect(res[2].status).toBe("booked");
+      expect(res[2].ref.row).toBe(9);
+      expect(res[3]).toEqual({ status: "unavailable", reason: "All 3 kitchen rows for that day are taken.", link: "https://kitchen" });
+      expect(sheets.spreadsheets.values.batchUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("makes every booked result an error when the write fails", async () => {
+      sheets.spreadsheets.values.batchUpdate.mockRejectedValue(new Error("quota"));
+      const res = await adapter.bookMany([mk("2026-10-17", "C"), mk("2026-12-01", "A")]);
+      expect(res[0]).toEqual({ status: "error", error: "quota" });
+      expect(res[1].status).toBe("unavailable");
+    });
+
+    it("turns a failed read into errors, and writes nothing when no row is free", async () => {
+      sheets.spreadsheets.values.get.mockRejectedValue(new Error("down"));
+      expect(await adapter.bookMany([mk("2026-10-17", "C")])).toEqual([{ status: "error", error: "down" }]);
+      expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
+    });
+
+    it("writes with the member's Sheets client when given", async () => {
+      const member = { spreadsheets: { values: { batchUpdate: vi.fn().mockResolvedValue({}) } } };
+      await adapter.bookMany([mk("2026-10-17", "C")], { clients: { sheetsClient: member } });
+      expect(member.spreadsheets.values.batchUpdate).toHaveBeenCalledTimes(1);
+      expect(sheets.spreadsheets.values.batchUpdate).not.toHaveBeenCalled();
+    });
+  });
+
   it("book's ref equals what a later read of that row lists", async () => {
     const res = await adapter.book({ date: "2026-10-17", start: 1020, end: 1080, requesterName: "  Jina Kim ", phone: "", appliances: {} });
     const rows = SHEET.map((r) => [...r]);

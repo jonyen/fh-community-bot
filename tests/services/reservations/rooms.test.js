@@ -131,6 +131,40 @@ describe("rooms adapter", () => {
     expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
   });
 
+  describe("bookMany", () => {
+    const mk = (date, title) => ({
+      date, start: 1140, end: 1260, items: [{ label: "MPR" }], title, ministry: "AYM", requesterName: "Deandra Shim",
+    });
+
+    it("appends every row in one call and returns a ref per booking", async () => {
+      const res = await adapter.bookMany([mk("2026-10-28", "A"), mk("2026-11-04", "B"), mk("2026-11-11", "C")]);
+      expect(sheets.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+      const call = sheets.spreadsheets.values.append.mock.calls[0][0];
+      expect(call.range).toBe("'Upcoming Room Requests'!A:I");
+      expect(call.requestBody.values).toEqual([
+        ["A", "Wed, 10/28/26", "7:00 PM", "9:00 PM", "AYM", "Deandra Shim", "MPR", "", "Booked via #reservations"],
+        ["B", "Wed, 11/4/26", "7:00 PM", "9:00 PM", "AYM", "Deandra Shim", "MPR", "", "Booked via #reservations"],
+        ["C", "Wed, 11/11/26", "7:00 PM", "9:00 PM", "AYM", "Deandra Shim", "MPR", "", "Booked via #reservations"],
+      ]);
+      expect(res.map((r) => r.status)).toEqual(["booked", "booked", "booked"]);
+      expect(res.map((r) => r.ref.date)).toEqual(["2026-10-28", "2026-11-04", "2026-11-11"]);
+      expect(res[0].link).toBe("https://rooms");
+    });
+
+    it("makes every result an error when the append fails", async () => {
+      sheets.spreadsheets.values.append.mockRejectedValue(new Error("quota"));
+      const res = await adapter.bookMany([mk("2026-10-28", "A"), mk("2026-11-04", "B"), mk("2026-11-11", "C")]);
+      expect(res).toEqual(Array(3).fill({ status: "error", error: "quota" }));
+    });
+
+    it("writes with the member's Sheets client when given", async () => {
+      const member = { spreadsheets: { values: { append: vi.fn().mockResolvedValue({}) } } };
+      await adapter.bookMany([mk("2026-10-28", "A")], { clients: { sheetsClient: member } });
+      expect(member.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+      expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+    });
+  });
+
   it("treats Canceled rows as free", async () => {
     const rows = [...ROWS, ["Gone", "Sat, 10/24/26", "5:00:00 PM", "6:00 PM", "X", "Zed", "MPR", "Canceled"]];
     const a = createRoomsAdapter({

@@ -178,6 +178,18 @@ export function createRmsAdapter({
     return { status: "booked", link: itemLink, ref };
   }
 
+  // Each booking waits on its resource's answer (1.5-12 s), so they run four
+  // at a time; one failing never stops the others.
+  function bookMany(bookings, { clients } = {}) {
+    return mapLimit(bookings, 4, async (b) => {
+      try {
+        return await book(b, { clients });
+      } catch (err) {
+        return { status: "error", error: err.message };
+      }
+    });
+  }
+
   // Delete an event the bot made when nobody else is invited; otherwise
   // (made in Google Calendar, or with guests) only release the booked
   // resources so the people's event survives.
@@ -210,5 +222,5 @@ export function createRmsAdapter({
     return { status: "cancelled", link: itemLink };
   }
 
-  return { backend: "rms", link, listReservations, checkDates, findConflicts, book, cancel };
+  return { backend: "rms", link, listReservations, checkDates, findConflicts, book, bookMany, cancel };
 }

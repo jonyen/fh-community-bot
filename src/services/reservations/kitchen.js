@@ -74,29 +74,66 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     return (await checkDates({ dates: [date], start, end }))[date].conflicts;
   }
 
-  async function book({ date, start, end, requesterName, phone, appliances = {} }, { clients } = {}) {
-    const sameDay = (await readRows()).filter((r) => r.date === date);
-    if (sameDay.length === 0) {
-      return { status: "unavailable", reason: "The kitchen sheet is not open yet for that date.", link };
-    }
-    const free = sameDay.find((r) => !r.name);
-    if (!free) {
-      return { status: "unavailable", reason: `All ${sameDay.length} kitchen rows for that day are taken.`, link };
-    }
+  // B-E for the group, then one cell per appliance they asked for.
+  function writesFor(row, { start, end, requesterName, phone, appliances = {} }) {
     const data = [
-      { range: `'${tab}'!B${free.row}:E${free.row}`, values: [[sheetText(requesterName), sheetText(phone || ""), fmtTime(start), fmtTime(end)]] },
+      { range: `'${tab}'!B${row}:E${row}`, values: [[sheetText(requesterName), sheetText(phone || ""), fmtTime(start), fmtTime(end)]] },
     ];
     for (const a of APPLIANCES) {
       const v = appliances[a.key];
       if (v == null || v === false) continue;
-      data.push({ range: `'${tab}'!${a.col}${free.row}`, values: [[a.kind === "bool" ? "TRUE" : Number(v)]] });
+      data.push({ range: `'${tab}'!${a.col}${row}`, values: [[a.kind === "bool" ? "TRUE" : Number(v)]] });
     }
+    return data;
+  }
+
+  const writeAll = (writer, data) => writer.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "USER_ENTERED", data },
+  });
+
+  const bookedRef = (row, { date, requesterName, start, end }) =>
+    refOf({ row, date, name: requesterName.trim(), start, end });
+
+  const noRowReason = (sameDay) => sameDay.length === 0
+    ? "The kitchen sheet is not open yet for that date."
+    : `All ${sameDay.length} kitchen rows for that day are taken.`;
+
+  async function book(booking, { clients } = {}) {
+    const sameDay = (await readRows()).filter((r) => r.date === booking.date);
+    const free = sameDay.find((r) => !r.name);
+    if (!free) return { status: "unavailable", reason: noRowReason(sameDay), link };
     const writer = clients?.sheetsClient || sheetsClient;
-    await writer.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: { valueInputOption: "USER_ENTERED", data },
+    await writeAll(writer, writesFor(free.row, booking));
+    return { status: "booked", link, ref: bookedRef(free.row, booking) };
+  }
+
+  // One read and one write for all the dates. Each booking takes its own free
+  // row, so two groups on one day land on two rows.
+  async function bookMany(bookings, { clients } = {}) {
+    let rows;
+    try {
+      rows = await readRows();
+    } catch (err) {
+      return bookings.map(() => ({ status: "error", error: err.message }));
+    }
+    const taken = new Set();
+    const data = [];
+    const results = bookings.map((b) => {
+      const sameDay = rows.filter((r) => r.date === b.date);
+      const free = sameDay.find((r) => !r.name && !taken.has(r.row));
+      if (!free) return { status: "unavailable", reason: noRowReason(sameDay), link };
+      taken.add(free.row);
+      data.push(...writesFor(free.row, b));
+      return { status: "booked", link, ref: bookedRef(free.row, b) };
     });
-    return { status: "booked", link, ref: refOf({ row: free.row, date, name: requesterName.trim(), start, end }) };
+    if (data.length === 0) return results;
+    try {
+      await writeAll(clients?.sheetsClient || sheetsClient, data);
+    } catch (err) {
+      return results.map((r) => (r.status === "booked" ? { status: "error", error: err.message } : r));
+    }
+    return results;
   }
 
   async function cancel(ref, { clients } = {}) {
@@ -111,5 +148,5 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
     return { status: "cancelled", link };
   }
 
-  return { backend: "kitchen", link, listReservations, checkDates, findConflicts, book, cancel };
+  return { backend: "kitchen", link, listReservations, checkDates, findConflicts, book, bookMany, cancel };
 }

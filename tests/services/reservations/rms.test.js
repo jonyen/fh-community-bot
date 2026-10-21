@@ -185,6 +185,29 @@ describe("rms adapter", () => {
     expect(cal.events.delete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1", sendUpdates: "none" });
   });
 
+  describe("bookMany", () => {
+    const mk = (n) => ({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: `T${n}`, requesterName: "D", requesterUserId: "U9" });
+
+    it("books at most 4 at a time and turns a thrown insert into an error", async () => {
+      let inFlight = 0;
+      let peak = 0;
+      cal.events.insert.mockImplementation(async ({ requestBody }) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        if (requestBody.summary.startsWith("T3 ")) throw new Error("boom");
+        return { data: { id: "E" + requestBody.summary } };
+      });
+      const res = await adapter.bookMany(Array.from({ length: 10 }, (_, i) => mk(i)));
+      expect(peak).toBe(4);
+      expect(res).toHaveLength(10);
+      expect(res[3]).toEqual({ status: "error", error: "boom" });
+      expect(res.filter((r) => r.status === "booked")).toHaveLength(9);
+      expect(res[0].ref.title).toBe("T0 — D");
+    });
+  });
+
   it("does not write when booking is disabled", async () => {
     const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
     const res = await off.book({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" });
