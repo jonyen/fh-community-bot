@@ -20,6 +20,11 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
     }
+    if (reservationsHandler?.handleCommand && slackEnvelope.command === "/reserve") {
+      await reservationsHandler.handleCommand({
+        userId: slackEnvelope.user_id, channel: slackEnvelope.channel_id, text: slackEnvelope.text, client, responseUrl: slackEnvelope.response_url,
+      });
+    }
     if (reservationsHandler?.disconnect && slackEnvelope.command === "/reservations-disconnect") {
       await reservationsHandler.disconnect({
         userId: slackEnvelope.user_id, channel: slackEnvelope.channel_id, client, responseUrl: slackEnvelope.response_url,

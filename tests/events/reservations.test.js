@@ -569,6 +569,51 @@ describe("reservations handler", () => {
     });
   });
 
+  describe("/reserve answers privately", () => {
+    const command = (text, channel = "CRES") => h.handleCommand({ userId: "U1", channel, text, client, responseUrl: "https://r" });
+    const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
+
+    it("answers a check to the asker alone, with nothing posted in the channel", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check" });
+      await command("is tech set 2 free sat 2-4");
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U1", text: "Tech Set 2 is free Sat 10/17, 2:00–4:00 PM." });
+      expect(ephemerals()[0].thread_ts).toBeUndefined();
+    });
+
+    it("with no text, or asking what can be reserved, shows the list privately", async () => {
+      await command("  ");
+      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      llm.parseReservationRequest.mockResolvedValue({ intent: "browse", search: null });
+      await command("what can i reserve");
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(ephemerals()).toHaveLength(2);
+      for (const m of ephemerals()) expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations" });
+    });
+
+    it("a booking request is not booked or carded; it says where to book", async () => {
+      await command("tech set 2 sat 2-4 youth night");
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(ephemerals()[0].text).toMatch(/^To book, post it in the channel without \/reserve/);
+    });
+
+    it("something that is not a reservation question gets examples instead of silence", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "other" });
+      await command("hello");
+      expect(ephemerals()[0].text).toMatch(/^Ask me privately, for example `\/reserve what are my reservations`/);
+    });
+
+    it("outside the reservations channel, points there without parsing", async () => {
+      client.chat.postEphemeral.mockRejectedValueOnce(new Error("not_in_channel"));
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+      await command("what are my reservations", "COTHER");
+      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledWith("https://r", expect.objectContaining({ body: JSON.stringify({ response_type: "ephemeral", text: "Use /reserve in <#CRES>." }) }));
+      fetchSpy.mockRestore();
+    });
+  });
+
   describe("questions are answered in the thread", () => {
     it("answers a check without booking", async () => {
       llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check" });
