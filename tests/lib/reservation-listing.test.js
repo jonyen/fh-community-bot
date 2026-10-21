@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   listingMessage, filterCatalog, PAGE_SIZE, LISTING_ACTIONS,
-  LIST_ADD_ACTION, LIST_EDIT_ACTION, LIST_PAGE_ACTION, LIST_SEARCH_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION,
+  LIST_ADD_ACTION, LIST_EDIT_ACTION, LIST_PAGE_ACTION, LIST_SEARCH_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION, LIST_CLOSE_ACTION,
 } from "../../src/lib/reservation-listing.js";
 
 const CATALOG = [
@@ -42,6 +42,14 @@ describe("listingMessage", () => {
     expect(last.map((e) => e.text.text)).toEqual(["◀ Prev"]);
     const first = buttons(msg()).filter((e) => e.action_id === LIST_PAGE_ACTION);
     expect(first.map((e) => e.text.text)).toEqual(["Next ▶"]);
+  });
+
+  it("ends every page with Close, even when nothing matches", () => {
+    const close = (m) => buttons(m).filter((e) => e.action_id === LIST_CLOSE_ACTION);
+    expect(close(msg()).map((e) => e.text.text)).toEqual(["Close"]);
+    expect(close(msg({ view: view({ p: 1 }) }))).toHaveLength(1);
+    expect(close(msg({ items: [], total: 0, view: view({ q: "zzz" }), catalog: CATALOG }))).toHaveLength(1);
+    expect(LISTING_ACTIONS.has(LIST_CLOSE_ACTION)).toBe(true);
   });
 
   it("an added item shows Added with its line id; others offer + Add with the label", () => {

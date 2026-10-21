@@ -4,7 +4,7 @@ import { createReservationsHandler } from "../../src/events/reservations.js";
 import { createListingFlow } from "../../src/events/reservations-listing.js";
 import { buildCatalog, catalogPromptText, categoryCounts } from "../../src/lib/reservation-catalog.js";
 import {
-  LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION,
+  LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION, LIST_CLOSE_ACTION,
 } from "../../src/lib/reservation-listing.js";
 import { FORM_DATE_ACTION, FORM_START_ACTION, FORM_SAVE_ACTION, FORM_REMOVE_ACTION, FORM_BACK_ACTION, FORM_REPEAT_ACTION } from "../../src/lib/reservation-line-form.js";
 import { log } from "../../src/lib/logger.js";
@@ -324,6 +324,16 @@ describe("listing flow", () => {
       expect(stored().lines[0]).toMatchObject({ date: "2026-11-07", onlyDates: null, progress: {} });
       expect(stored().lines[0].fromTray).toBeUndefined();
     });
+  });
+
+  it("Close deletes the card and keeps the tray for the next one", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L1")] }));
+    await act({ action_id: LIST_CLOSE_ACTION, value: "close" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe(URL);
+    expect(sent()).toEqual({ delete_original: true });
+    expect(trayStore.putTray).not.toHaveBeenCalled();
+    expect(stored().lines.map((l) => l.id)).toEqual(["L1"]);
   });
 
   it("a new card drops a draft left from an older one", async () => {

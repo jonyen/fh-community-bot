@@ -11,7 +11,7 @@ import { BOT_PERSONA } from "../lib/reservation-format.js";
 import { emptyTray, newLine, expandDates, lineProblems, whenOf, restartDates, hasClaims, MAX_LINES } from "../lib/reservation-tray.js";
 import {
   listingMessage, filterCatalog, PAGE_SIZE, LISTING_ACTIONS,
-  LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_CLEAR_ACTION,
+  LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_CLEAR_ACTION, LIST_CLOSE_ACTION,
 } from "../lib/reservation-listing.js";
 import {
   lineFormMessage, readLineForm, FORM_ACTIONS,
@@ -263,7 +263,7 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
       const res = await fetch(responseUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ replace_original: true, ...message }),
+        body: JSON.stringify(message.delete_original ? message : { replace_original: true, ...message }),
       });
       if (!res.ok) log.warn("replacing the listing card failed", { status: res.status });
     } catch (error) {
@@ -277,6 +277,8 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     const user = payload.user?.id;
     const responseUrl = payload.response_url;
     if (!trayStore || !user || !responseUrl) return;
+    // Close only dismisses the card; the tray stays for the next one.
+    if (action.action_id === LIST_CLOSE_ACTION) return reply(responseUrl, { delete_original: true });
     try {
       const values = payload.state?.values || {};
       const saved = await mutate(user, (tray, { fresh }) => (fresh ? { screen: "listing", notice: EXPIRED_TEXT } : apply(tray, action, values)));
