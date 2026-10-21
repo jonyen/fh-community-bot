@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { addDaysIso } from "../../src/lib/reservation-time.js";
 import {
   MAX_LINES, MAX_DATES, MAX_REPEAT_DAYS, TRAY_TTL_S,
   emptyTray, newLine, expandDates, lineProblems, trayProblems, repeatText, lineSummary,
@@ -73,5 +74,27 @@ describe("reservation tray", () => {
     expect(lineSummary(L())).toBe("MPR · Sat 10/24 · 2:00–4:00 PM · MBS");
     expect(lineSummary(L({ date: null, start: null, title: null }))).toBe("MPR · _day?_ · _time?_ · _what for?_");
     expect(lineSummary(L({ repeat: { days: [6, 0], until: "2026-11-01" } }))).toBe("MPR · Sat 10/24 · 2:00–4:00 PM · MBS · every Sat, Sun until Sun 11/1 · 4 dates");
+  });
+  it("names a repeat whose first date is not on a repeat day", () => {
+    expect(lineProblems(L({ date: "2026-10-23", repeat: { days: [6, 0], until: "2026-11-01" } }), CTX))
+      .toContain("Pick a date that falls on one of the repeat days.");
+    expect(lineProblems(L({ repeat: { days: [6, 0], until: "2026-11-01" } }), CTX)).toEqual([]);
+  });
+  it("survives a stored repeat with no days", () => {
+    const line = L({ repeat: { until: "2026-11-01" } });
+    expect(lineProblems(line, CTX)).toContain("Pick at least one day to repeat on.");
+    expect(expandDates(line)).toEqual([]);
+    expect(repeatText(line.repeat)).toBe("every  until Sun 11/1");
+    expect(lineSummary(line)).toContain("0 dates");
+    expect(expandDates(L({ repeat: { days: "6", until: "2026-11-01" } }))).toEqual([]);
+  });
+  it("allows a repeat of exactly 183 days and refuses 184", () => {
+    const at = (n) => lineProblems(L({ repeat: { days: [6], until: addDaysIso("2026-10-24", n) } }), CTX);
+    expect(at(183)).toEqual([]);
+    expect(at(184)).toContain("Repeats can run at most 6 months.");
+  });
+  it("repeats across the year end", () => {
+    expect(expandDates(L({ date: "2026-12-26", repeat: { days: [6, 0], until: "2027-01-03" } })))
+      .toEqual(["2026-12-26", "2026-12-27", "2027-01-02", "2027-01-03"]);
   });
 });

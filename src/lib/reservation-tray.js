@@ -22,6 +22,8 @@ export const TRAY_TTL_S = 86400;
 
 const WEEKDAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const randomId = () => randomBytes(4).toString("hex");
+// Trays come back from storage, so do not trust the shape of days.
+const daysOf = (repeat) => (Array.isArray(repeat?.days) ? repeat.days : []);
 const weekday = (iso) => new Date(`${iso}T12:00:00Z`).getUTCDay();
 
 export function emptyTray() {
@@ -39,7 +41,7 @@ export function newLine(itemLabel, prev, makeId = randomId) {
     end: prev?.end ?? null,
     title: prev?.title ?? null,
     appliances: {},
-    repeat: prev?.repeat ? { ...prev.repeat, days: [...prev.repeat.days] } : null,
+    repeat: prev?.repeat ? { ...prev.repeat, days: [...daysOf(prev.repeat)] } : null,
     onlyDates: null,
     progress: {},
   };
@@ -48,7 +50,8 @@ export function newLine(itemLabel, prev, makeId = randomId) {
 export function expandDates(line) {
   if (!line.date) return [];
   if (!line.repeat) return [line.date];
-  const { days, until } = line.repeat;
+  const days = daysOf(line.repeat);
+  const { until } = line.repeat;
   const out = [];
   // Bounded, so a bad until cannot loop forever.
   for (let d = line.date, n = 0; until && d <= until && n <= MAX_REPEAT_DAYS * 2; d = addDaysIso(d, 1), n++) {
@@ -67,8 +70,11 @@ export function lineProblems(line, { today, nowMin, catalog }) {
   if (line.date && line.date < today) out.push("That date has passed.");
   else if (line.date === today && line.start != null && line.start < nowMin) out.push("That time has already passed today.");
   if (line.repeat) {
-    const { days, until } = line.repeat;
+    const days = daysOf(line.repeat);
+    const { until } = line.repeat;
     if (!days.length) out.push("Pick at least one day to repeat on.");
+    // The first date is the line's date, so it must be one of the repeat days.
+    if (days.length && line.date && !days.includes(weekday(line.date))) out.push("Pick a date that falls on one of the repeat days.");
     if (!until) out.push("Pick when the repeat ends.");
     else if (line.date && until <= line.date) out.push("The repeat must end after its first date.");
     else if (line.date && until > addDaysIso(line.date, MAX_REPEAT_DAYS)) out.push("Repeats can run at most 6 months.");
@@ -86,7 +92,7 @@ export function trayProblems(tray, ctx) {
 
 export function repeatText(repeat, untilFmt = fmtDay) {
   // Monday first, so a weekend repeat reads "Sat, Sun".
-  const names = [...repeat.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((d) => WEEKDAYS_SHORT[d]);
+  const names = [...daysOf(repeat)].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((d) => WEEKDAYS_SHORT[d]);
   return `every ${names.join(", ")}${repeat.until ? ` until ${untilFmt(repeat.until)}` : ""}`;
 }
 
