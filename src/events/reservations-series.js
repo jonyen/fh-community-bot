@@ -11,7 +11,7 @@ import { log } from "../lib/logger.js";
 import { nyToday, fmtDay, periodCovering } from "../lib/reservation-time.js";
 import { BOT_PERSONA } from "../lib/reservation-format.js";
 import { repeatText } from "../lib/reservation-tray.js";
-import { refKey } from "../lib/reservation-owner.js";
+import { refKey, sameRef } from "../lib/reservation-owner.js";
 import { POST_CANCEL_ACTION, SERIES_ALL_ACTION, SERIES_ONE_ACTION, markLineCancelled, seriesChooser } from "../lib/reservation-combined.js";
 import { MINE_SERIES_ACTION } from "../lib/reservation-mine.js";
 
@@ -93,8 +93,7 @@ export function createSeriesFlow({
   // Whether line `index` still carries this member's Cancel for this ref.
   function lineHasRef(post, index, ref, user) {
     const v = buttonOn(post, index);
-    const key = refKey(ref);
-    return !!(v && v.u === user && v.r && key && refKey(v.r) === key);
+    return !!(v && v.u === user && v.r && sameRef(ref, v.r));
   }
 
   function seriesLineIndex(post, seriesId, user) {

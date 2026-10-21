@@ -90,4 +90,30 @@ describe("readLineForm", () => {
     const l = readLineForm({ appliances: { appliances: { selected_options: [{ value: "island" }] } }, count_fridge: { count_fridge: { value: "2" } } }, LINE);
     expect(l.appliances).toEqual({ island: true, fridge: 2 });
   });
+  describe("a leftover line (Reserve all booked part of it)", () => {
+    const LEFT = {
+      ...LINE, date: "2026-10-31", repeat: { days: [6], until: "2026-11-14" }, onlyDates: ["2026-10-31", "2026-11-14"],
+      progress: { "2026-11-07": "done" }, claims: {},
+    };
+    const radio = { form_repeat: { [FORM_REPEAT_ACTION]: { selected_option: { value: "weekly" } } } };
+    it("starts its dates over when the date, a time or the repeat changes", () => {
+      const changes = [
+        { form_when: { [FORM_DATE_ACTION]: { selected_date: "2026-11-07" } } },
+        { form_when: { [FORM_START_ACTION]: { selected_time: "11:00" } } },
+        { form_when: { [FORM_END_ACTION]: { selected_time: "13:00" } } },
+        { ...radio, form_days: { [FORM_DAYS_ACTION]: { selected_options: [{ value: "0" }, { value: "6" }] } } },
+        { ...radio, form_until: { [FORM_UNTIL_ACTION]: { selected_date: "2026-11-28" } } },
+        { form_repeat: { [FORM_REPEAT_ACTION]: { selected_option: { value: "none" } } } },
+      ];
+      for (const v of changes) {
+        const l = readLineForm(v, LEFT);
+        expect(l.onlyDates).toBeNull();
+        expect(l.progress).toEqual({});
+      }
+    });
+    it("keeps them when only the title changes", () => {
+      const l = readLineForm({ ...radio, title: { title: { value: "Retreat" } } }, LEFT);
+      expect(l).toMatchObject({ title: "Retreat", onlyDates: ["2026-10-31", "2026-11-14"], progress: { "2026-11-07": "done" } });
+    });
+  });
 });

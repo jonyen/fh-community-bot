@@ -62,8 +62,10 @@ Resources:
       QueueName: !Sub ${AWS::StackName}-events.fifo
       FifoQueue: true
       ContentBasedDeduplication: true
-      # At least 6x the worker timeout, per AWS guidance for Lambda sources.
-      VisibilityTimeout: 1800
+      # At least the 300 s worker timeout (3x here). Shorter than AWS's 6x
+      # guidance on purpose: a failed message holds up the rest of its FIFO
+      # group (one member's events) until it becomes visible again.
+      VisibilityTimeout: 900
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt EventDLQ.Arn
         maxReceiveCount: 3

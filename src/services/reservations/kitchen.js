@@ -59,8 +59,12 @@ export function createKitchenAdapter({ sheetsClient, spreadsheetId, tab, link, m
 
   // One read of the sheet answers every date. A date with no rows at all is
   // one Arie has not rolled forward yet, which is not the same as a free day.
-  async function checkDates({ dates, start, end }) {
-    const rows = await readRows();
+  // memo (a Map shared by one redraw's checks) keeps it to one sheet read
+  // however many tray lines are checked.
+  async function checkDates({ dates, start, end, memo = null }) {
+    const key = `kitchen:${spreadsheetId}:${tab}`;
+    if (memo && !memo.has(key)) memo.set(key, readRows());
+    const rows = await (memo ? memo.get(key) : readRows());
     return Object.fromEntries(dates.map((date) => {
       if (!rows.some((r) => r.date === date)) {
         return [date, { conflicts: [], unavailable: "The kitchen sheet is not open yet for that date." }];

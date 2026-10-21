@@ -6,8 +6,10 @@ import { buildCatalog, catalogPromptText, categoryCounts } from "../../src/lib/r
 import {
   LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION,
 } from "../../src/lib/reservation-listing.js";
-import { FORM_DATE_ACTION, FORM_SAVE_ACTION, FORM_REMOVE_ACTION, FORM_BACK_ACTION, FORM_REPEAT_ACTION } from "../../src/lib/reservation-line-form.js";
+import { FORM_DATE_ACTION, FORM_START_ACTION, FORM_SAVE_ACTION, FORM_REMOVE_ACTION, FORM_BACK_ACTION, FORM_REPEAT_ACTION } from "../../src/lib/reservation-line-form.js";
 import { log } from "../../src/lib/logger.js";
+import { createRoomsAdapter } from "../../src/services/reservations/rooms.js";
+import { createKitchenAdapter } from "../../src/services/reservations/kitchen.js";
 
 const SETS = Array.from({ length: 9 }, (_, i) => ({ label: `Tech Set ${i + 1}`, category: "tech", backend: "rms", calendarId: `t${i + 1}` }));
 const CATALOG = buildCatalog({ rooms: true, kitchen: true, rms: SETS });
@@ -266,6 +268,90 @@ describe("listing flow", () => {
 
   });
 
+  describe("Save after the line changed elsewhere", () => {
+    // MPR every Sat 10/24 – 11/14, edited, then Reserve all ran from another card.
+    const weekly = (o = {}) => line("L1", { item: "MPR", start: 840, end: 960, title: "MBS", repeat: { days: [6], until: "2026-11-14" }, ...o });
+    const when = (date, start = "14:00") => ({ form_when: { [FORM_DATE_ACTION]: { selected_date: date }, [FORM_START_ACTION]: { selected_time: start } } });
+    const runElsewhere = (change) => {
+      const row = stored();
+      change(row);
+      trayStore.rows.set("U9", { ...row, version: row.version + 1 });
+    };
+
+    it("does not put back a line Reserve all booked meanwhile", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [weekly()] }));
+      await act({ action_id: LIST_EDIT_ACTION, value: "L1" });
+      runElsewhere((t) => { t.lines = []; });
+      await act({ action_id: FORM_SAVE_ACTION }, { ...when("2026-10-24"), title: { title: { type: "plain_text_input", value: "MBS night" } } });
+      expect(stored().lines).toEqual([]);
+      expect(stored().editing).toBeNull();
+      expect(sections(sent())[0]).toBe("That line was reserved or removed meanwhile.");
+    });
+
+    it("keeps what a partial run left when saved without changing the when", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [weekly()] }));
+      await act({ action_id: LIST_EDIT_ACTION, value: "L1" });
+      runElsewhere((t) => { t.lines[0] = { ...t.lines[0], date: "2026-10-31", onlyDates: ["2026-10-31"] }; });
+      // The open form still shows the first date as it was.
+      await act({ action_id: FORM_SAVE_ACTION }, { ...when("2026-10-24"), title: { title: { type: "plain_text_input", value: "MBS night" } } });
+      expect(stored().lines).toHaveLength(1);
+      expect(stored().lines[0]).toMatchObject({ id: "L1", date: "2026-10-31", onlyDates: ["2026-10-31"], title: "MBS night", item: "MPR" });
+      expect(stored().editing).toBeNull();
+    });
+
+    it("refuses a new when for a line a run narrowed meanwhile, keeping the draft", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [weekly()] }));
+      await act({ action_id: LIST_EDIT_ACTION, value: "L1" });
+      runElsewhere((t) => { t.lines[0] = { ...t.lines[0], date: "2026-10-31", onlyDates: ["2026-10-31"] }; });
+      await act({ action_id: FORM_SAVE_ACTION }, when("2026-10-24", "15:00"));
+      expect(stored().lines[0]).toMatchObject({ date: "2026-10-31", start: 840, onlyDates: ["2026-10-31"] });
+      expect(stored().editing).toMatchObject({ id: "L1", start: 900 });
+      expect(sections(sent())[0]).toBe("That line was partly reserved meanwhile. Go back to the list to see what's left, then change it.");
+    });
+
+    it("refuses a new when while some of the line's dates are claimed by a run", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [weekly({ progress: { "2026-10-24": "started" }, claims: { "2026-10-24": "run1" } })] }));
+      await act({ action_id: LIST_EDIT_ACTION, value: "L1" });
+      await act({ action_id: FORM_SAVE_ACTION }, when("2026-10-24", "15:00"));
+      expect(stored().lines[0]).toMatchObject({ start: 840, progress: { "2026-10-24": "started" }, claims: { "2026-10-24": "run1" } });
+      expect(sections(sent())[0]).toContain("still being reserved");
+    });
+
+    it("a new when on an untouched leftover line starts its dates over", async () => {
+      trayStore.rows.set("U9", trayRow({ lines: [weekly({ date: "2026-10-31", onlyDates: ["2026-10-31"] })] }));
+      await act({ action_id: LIST_EDIT_ACTION, value: "L1" });
+      await act({ action_id: FORM_SAVE_ACTION }, when("2026-11-07"));
+      expect(stored().lines[0]).toMatchObject({ date: "2026-11-07", onlyDates: null, progress: {} });
+      expect(stored().lines[0].fromTray).toBeUndefined();
+    });
+  });
+
+  it("a new card drops a draft left from an older one", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L1")], editing: { ...line("L1"), title: "draft" } }));
+    await ask();
+    expect(stored().editing).toBeNull();
+  });
+
+  describe("failures before anything is booked", () => {
+    it("a press whose tray read fails tells the member privately instead of throwing", async () => {
+      const err = vi.spyOn(log, "error").mockImplementation(() => {});
+      trayStore.getTray.mockRejectedValue(new Error("ddb down"));
+      await expect(act({ action_id: LIST_PAGE_ACTION, value: "1" })).resolves.toBeUndefined();
+      expect(sent()).toMatchObject({ replace_original: false, text: "⚠️ Something went wrong. Please try again." });
+      expect(err).toHaveBeenCalled();
+      err.mockRestore();
+    });
+
+    it("a card whose tray write fails says so instead of throwing", async () => {
+      const err = vi.spyOn(log, "error").mockImplementation(() => {});
+      trayStore.putTray.mockRejectedValue(new Error("ddb down"));
+      await expect(ask()).resolves.toBeUndefined();
+      expect(client.chat.postEphemeral.mock.calls.at(-1)[0]).toMatchObject({ channel: "CRES", user: "U9", text: "⚠️ Something went wrong. Please try again." });
+      expect(err).toHaveBeenCalled();
+      err.mockRestore();
+    });
+  });
+
   it("a press on an expired tray shows a fresh listing with the expiry notice", async () => {
     await act({ action_id: LIST_PAGE_ACTION, value: "1" });
     expect(sections(sent())[0]).toBe("Your tray expired after a day without changes, so it was cleared.");
@@ -292,6 +378,38 @@ describe("listing flow", () => {
     await act({ action_id: LIST_PAGE_ACTION, value: "1" });
     expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 404 }));
     warn.mockRestore();
+  });
+});
+
+describe("a redraw's sheet reads", () => {
+  it("reads the rooms sheet and the kitchen sheet once each, however many lines check them", async () => {
+    const roomsRows = [["Rally", "Sat, 10/24/26", "2:00 PM", "4:00 PM", "FFX", "Rick", "MPR"]];
+    const kitchenRows = [["Date", "Name"], ["Sat, 10/24/26", "", "", "", ""], ["Sat, 10/24/26", "", "", "", ""], ["Sat, 10/31/26", "", "", "", ""]];
+    const sheetsClient = { spreadsheets: { values: { get: vi.fn(async ({ spreadsheetId }) => ({ data: { values: spreadsheetId === "rooms-id" ? roomsRows : kitchenRows } })) } } };
+    const adapters = {
+      rooms: createRoomsAdapter({ sheetsClient, spreadsheetId: "rooms-id", tab: "Rooms", link: "r", now: () => NOW }),
+      kitchen: createKitchenAdapter({ sheetsClient, spreadsheetId: "kitchen-id", tab: "Kitchen", link: "k", now: () => NOW }),
+      rms: makeAdapter("rms"),
+    };
+    const flow = createListingFlow({ catalog: CATALOG, adapters, llm: {}, catalogText: "", trayStore: makeTrayStore(), now: () => NOW, withMentions: async (c, rs) => rs });
+    const lines = [
+      line("R1", { item: "MPR", start: 840, end: 960 }),
+      line("R2", { item: "Youth Room", start: 840, end: 960 }),
+      line("R3", { item: "MPR", start: 600, end: 660, repeat: { days: [6], until: "2026-10-31" } }),
+      line("K1", { item: "Kitchen", start: 1020, end: 1140 }),
+      line("K2", { item: "Kitchen", date: "2026-11-07", start: 1020, end: 1140 }),
+    ];
+    const msg = await flow.listingFor({ ...trayRow(), lines }, { client: makeClient() });
+    const reads = sheetsClient.spreadsheets.values.get.mock.calls.map(([a]) => a.spreadsheetId);
+    expect(reads.filter((id) => id === "rooms-id")).toHaveLength(1);
+    expect(reads.filter((id) => id === "kitchen-id")).toHaveLength(1);
+    // Each line's check reads as it would on its own.
+    const rows = sections(msg).join("\n");
+    sheetsClient.spreadsheets.values.get.mockClear();
+    for (const l of lines) expect(rows).toContain(await flow.lineCheck(l));
+    expect(await flow.lineCheck(lines[0])).toBe("❌ taken by Rick");
+    expect(await flow.lineCheck(lines[1])).toBe("✅ free");
+    expect(await flow.lineCheck(lines[4])).toBe("⚠️ The kitchen sheet is not open yet for that date.");
   });
 });
 

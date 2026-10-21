@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { addDaysIso } from "../../src/lib/reservation-time.js";
 import {
   MAX_LINES, MAX_DATES, MAX_REPEAT_DAYS, TRAY_TTL_S,
-  emptyTray, newLine, expandDates, lineProblems, trayProblems, repeatText, lineSummary,
+  emptyTray, newLine, expandDates, lineProblems, trayProblems, repeatText, lineSummary, whenOf, restartDates,
 } from "../../src/lib/reservation-tray.js";
 
 const L = (o = {}) => ({ id: "l1", item: "MPR", date: "2026-10-24", start: 840, end: 960, title: "MBS", appliances: {}, repeat: null, onlyDates: null, progress: {}, ...o });
@@ -96,5 +96,35 @@ describe("reservation tray", () => {
   it("repeats across the year end", () => {
     expect(expandDates(L({ date: "2026-12-26", repeat: { days: [6, 0], until: "2027-01-03" } })))
       .toEqual(["2026-12-26", "2026-12-27", "2027-01-02", "2027-01-03"]);
+  });
+  it("accepts a leftover repeat whose first date still wanted is its last", () => {
+    const left = L({ date: "2026-11-14", repeat: { days: [6], until: "2026-11-14" }, onlyDates: ["2026-11-14"] });
+    expect(lineProblems(left, CTX)).toEqual([]);
+    // Without onlyDates it is still a repeat that ends on its first date.
+    expect(lineProblems(L({ date: "2026-11-14", repeat: { days: [6], until: "2026-11-14" } }), CTX)).toContain("The repeat must end after its first date.");
+  });
+  it("says so when a line with a date has no dates left", () => {
+    const text = "No dates left to book. Change the date or repeat.";
+    expect(lineProblems(L({ repeat: { days: [6], until: "2026-11-14" }, onlyDates: [] }), CTX)).toEqual([text]);
+    expect(lineProblems(L({ repeat: { days: [6], until: "2026-11-14" }, onlyDates: ["2026-11-01"] }), CTX)).toEqual([text]);
+    // Not on top of a repeat problem that already explains it, nor without a date.
+    expect(lineProblems(L({ repeat: { days: [], until: "2026-11-14" } }), CTX)).not.toContain(text);
+    expect(lineProblems(L({ date: null }), CTX)).not.toContain(text);
+  });
+  it("whenOf changes with date, times and repeat, not with title", () => {
+    const base = L({ repeat: { days: [6, 0], until: "2026-11-01" } });
+    expect(whenOf(L({ ...base, title: "Other" }))).toBe(whenOf(base));
+    expect(whenOf({ ...base, repeat: { days: [0, 6], until: "2026-11-01" } })).toBe(whenOf(base));
+    for (const o of [{ date: "2026-10-25" }, { start: 900 }, { end: 990 }, { repeat: null }, { repeat: { days: [6], until: "2026-11-01" } }, { repeat: { days: [6, 0], until: "2026-11-08" } }]) {
+      expect(whenOf({ ...base, ...o })).not.toBe(whenOf(base));
+    }
+  });
+  it("restartDates drops onlyDates and unclaimed progress, keeping a run's claimed dates", () => {
+    const l = restartDates(L({
+      onlyDates: ["2026-10-31"], progress: { "2026-10-24": "done", "2026-10-31": "started" }, claims: { "2026-10-31": "run1" },
+    }));
+    expect(l.onlyDates).toBeNull();
+    expect(l.progress).toEqual({ "2026-10-31": "started" });
+    expect(l.claims).toEqual({ "2026-10-31": "run1" });
   });
 });

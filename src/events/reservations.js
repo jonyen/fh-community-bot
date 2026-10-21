@@ -20,7 +20,7 @@ import {
 } from "../lib/reservation-card.js";
 import { readEditModal, MODAL_CALLBACK } from "../lib/reservation-modal.js";
 import { mineMessage, MINE_CANCEL_ACTION } from "../lib/reservation-mine.js";
-import { isMine, refKey } from "../lib/reservation-owner.js";
+import { isMine, refKey, hasRefKey } from "../lib/reservation-owner.js";
 import { calendarLink } from "../lib/rms-catalog.js";
 import { createListingFlow } from "./reservations-listing.js";
 import { createReserveAll } from "./reservations-reserve-all.js";
@@ -409,7 +409,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const byEvent = new Map();
     const entries = [];
     for (const r of lists.flat()) {
-      if (!r.ref || hasEnded(r) || seriesKeys.has(refKey(r.ref)) || !isMine(r, member, ledgerKeys)) continue;
+      if (!r.ref || hasEnded(r) || hasRefKey(seriesKeys, r.ref) || !isMine(r, member, ledgerKeys)) continue;
       const { backend } = r.ref;
       const same = backend === "rms" ? byEvent.get(r.ref.eventId) : null;
       if (same) {
@@ -420,7 +420,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       const entry = {
         items: [r.item], date: r.date, start: r.start, end: r.end, title: r.title, holderName: r.holderName,
         ref: backend === "rms" ? { ...r.ref, resources: [...(r.ref.resources || [])] } : r.ref,
-        matchedBy: (backend === "rooms" || backend === "kitchen") && !ledgerKeys.has(refKey(r.ref)) ? backend : null,
+        matchedBy: (backend === "rooms" || backend === "kitchen") && !hasRefKey(ledgerKeys, r.ref) ? backend : null,
         // Without connect, the bot can't touch an event on the member's own calendar.
         openLink: !connect && backend === "rms" && !r.ref.organizerSelf ? calendarLink(r.ref.resources?.[0] ?? "") : null,
       };

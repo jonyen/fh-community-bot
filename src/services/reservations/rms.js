@@ -80,6 +80,7 @@ function toReservation(entry, e) {
   };
 }
 
+const BOOK_IN_CALENDAR_TEXT = "Please book this one in Google Calendar (RMS) for now.";
 const isGone = (err) => [404, 410].includes(err?.code) || [404, 410].includes(err?.response?.status);
 
 export function createRmsAdapter({
@@ -132,7 +133,7 @@ export function createRmsAdapter({
   }
 
   // One calendar read per item over the whole span, however many dates.
-  async function checkDates({ dates, start, end, items }) {
+  async function readConflicts({ dates, start, end, items }) {
     if (dates.length === 0) return {};
     const sorted = [...dates].sort();
     const lists = await mapLimit(items, concurrency, (entry) => eventsFor(entry, sorted[0], sorted.at(-1)));
@@ -143,8 +144,19 @@ export function createRmsAdapter({
     }]));
   }
 
+  // Whether each date can be booked. With booking on the bot's calendar
+  // switched off, only a member's own account (clients) can book, so without
+  // it every date says where to book instead of looking free.
+  async function checkDates({ dates, start, end, items, clients = null }) {
+    if (!bookingEnabled && !clients) {
+      return Object.fromEntries(dates.map((date) => [date, { conflicts: [], unavailable: BOOK_IN_CALENDAR_TEXT }]));
+    }
+    return readConflicts({ dates, start, end, items });
+  }
+
+  // Who holds the item: answered from the calendars whatever the flag says.
   async function findConflicts({ date, start, end, items }) {
-    return (await checkDates({ dates: [date], start, end, items }))[date].conflicts;
+    return (await readConflicts({ dates: [date], start, end, items }))[date].conflicts;
   }
 
   async function book({ date, start, end, items, title, requesterName, requesterUserId }, { clients } = {}) {
@@ -152,7 +164,7 @@ export function createRmsAdapter({
     // A connected member books on their own calendar; the flag only governs
     // booking on the bot's.
     if (!bookingEnabled && !clients) {
-      return { status: "unavailable", reason: "Please book this one in Google Calendar (RMS) for now.", link: itemLink };
+      return { status: "unavailable", reason: BOOK_IN_CALENDAR_TEXT, link: itemLink };
     }
     const cal = clients?.calendarClient || calendarClient;
     // The resource only processes the invite when it is sent; with "none" it

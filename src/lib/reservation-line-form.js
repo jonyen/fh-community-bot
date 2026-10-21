@@ -5,6 +5,7 @@
 import { CATEGORY_NAMES } from "./reservation-catalog.js";
 import { applianceBlocks, readAppliances, toTimes, hhmm } from "./reservation-modal.js";
 import { fitSection } from "./reservation-card.js";
+import { whenOf, restartDates } from "./reservation-tray.js";
 
 export const FORM_DATE_ACTION = "reservation_form_date";
 export const FORM_START_ACTION = "reservation_form_start";
@@ -105,5 +106,7 @@ export function readLineForm(v, line) {
   }
   const hasAppliances = v.appliances || Object.keys(v).some((k) => k.startsWith("count_"));
   if (hasAppliances) out.appliances = readAppliances(v);
+  // New dates: what was left of the old ones no longer applies.
+  if (whenOf(out) !== whenOf(line)) restartDates(out);
   return out;
 }

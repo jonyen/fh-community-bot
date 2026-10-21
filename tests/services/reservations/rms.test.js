@@ -124,6 +124,21 @@ describe("rms adapter", () => {
     expect(reservations.map((r) => r.title)).toEqual(["Once"]);
   });
 
+  it("with booking on the bot's calendar off, says where to book for each date unless the member's account will book", async () => {
+    const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
+    const text = "Please book this one in Google Calendar (RMS) for now.";
+    expect(await off.checkDates({ dates: ["2026-10-24", "2026-10-31"], start: 900, end: 960, items: [SET2] })).toEqual({
+      "2026-10-24": { conflicts: [], unavailable: text }, "2026-10-31": { conflicts: [], unavailable: text },
+    });
+    expect(cal.events.list).not.toHaveBeenCalled();
+    const asMember = await off.checkDates({ dates: ["2026-10-24"], start: 900, end: 960, items: [SET2], clients: { calendarClient: cal } });
+    expect(asMember["2026-10-24"]).toEqual({ conflicts: [], unavailable: null });
+    // Who holds an item is still read from the calendar.
+    cal.events.list.mockClear();
+    await off.findConflicts({ date: "2026-10-24", start: 900, end: 960, items: [SET2] });
+    expect(cal.events.list).toHaveBeenCalledTimes(1);
+  });
+
   it("returns an empty map and reads nothing for no dates", async () => {
     expect(await adapter.checkDates({ dates: [], start: 900, end: 960, items: [SET2] })).toEqual({});
     expect(cal.events.list).not.toHaveBeenCalled();

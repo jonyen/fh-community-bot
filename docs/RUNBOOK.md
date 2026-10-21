@@ -248,8 +248,9 @@ series is stored in the member's ledger row, `bookings#<slack user id>`, in its
 `series` field (one entry per series).
 
 Reserve all runs in the worker, whose timeout is 300 s (`Timeout` in
-`template.yaml`). The event queue's `VisibilityTimeout` is 1800 s, at least 6
-times the timeout. A slow run can be retried; this is safe, because the tray
+`template.yaml`). The event queue's `VisibilityTimeout` is 900 s, 3 times the
+timeout. It is kept shorter than the usual 6 times because a failed message holds
+up the member's other events (one FIFO group) until it is visible again. A slow run can be retried; this is safe, because the tray
 records progress per date as it writes:
 
 - A date is marked `started` before it is written and `done` after. A retry

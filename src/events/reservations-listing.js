@@ -8,7 +8,7 @@ import { log } from "../lib/logger.js";
 import { nyToday, nyParts, fmtDay } from "../lib/reservation-time.js";
 import { CATEGORY_NAMES, categoryCounts, findItem } from "../lib/reservation-catalog.js";
 import { BOT_PERSONA } from "../lib/reservation-format.js";
-import { emptyTray, newLine, expandDates, lineProblems, MAX_LINES } from "../lib/reservation-tray.js";
+import { emptyTray, newLine, expandDates, lineProblems, whenOf, restartDates, hasClaims, MAX_LINES } from "../lib/reservation-tray.js";
 import {
   listingMessage, filterCatalog, PAGE_SIZE, LISTING_ACTIONS,
   LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_CLEAR_ACTION,
@@ -27,11 +27,17 @@ const NO_TABLE_TEXT = "To book, post the item, day, time and what it's for.";
 const FULL_TEXT = `Your tray is full (${MAX_LINES} lines). Reserve or remove some first.`;
 const EXPIRED_TEXT = "Your tray expired after a day without changes, so it was cleared.";
 const RACE_TEXT = "Something changed. Please try again.";
+const ERROR_TEXT = "⚠️ Something went wrong. Please try again.";
+const LINE_GONE_TEXT = "That line was reserved or removed meanwhile.";
+const LINE_MOVED_TEXT = "That line was partly reserved meanwhile. Go back to the list to see what's left, then change it.";
+const LINE_CLAIMED_TEXT = "Some of that line's dates are still being reserved. Change its date, time or repeat once that's done.";
 const PICKERS = new Set([FORM_DATE_ACTION, FORM_START_ACTION, FORM_END_ACTION, FORM_REPEAT_ACTION, FORM_DAYS_ACTION, FORM_UNTIL_ACTION]);
 
 // Sheet text (holder names, reasons) goes into mrkdwn.
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const cutSearch = (s) => String(s ?? "").trim().slice(0, SEARCH_MAX);
+// What a stored line's dates are made from, including what Reserve all left of them.
+const datesStamp = (l) => JSON.stringify([whenOf(l), l.onlyDates ?? null]);
 
 export function createListingFlow({ catalog, adapters, llm, catalogText, trayStore = null, now = () => new Date(), withMentions }) {
   const categories = Object.keys(CATEGORY_NAMES).filter((id) => catalog.some((e) => e.category === id));
@@ -75,8 +81,9 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
   }
 
   // What the line's dates look like right now, as mrkdwn (already escaped).
-  // "" when the line isn't complete enough to check.
-  async function lineCheck(line, client = null) {
+  // "" when the line isn't complete enough to check. memo, shared by one
+  // redraw's checks, lets a sheet backend read its sheet once for them all.
+  async function lineCheck(line, client = null, memo = null) {
     const entry = findItem(catalog, line.item);
     const adapter = entry && adapters[entry.backend];
     if (!adapter?.checkDates || line.start == null || line.end == null || line.end <= line.start) return "";
@@ -84,7 +91,7 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     if (!dates.length) return "";
     let result;
     try {
-      result = await adapter.checkDates({ dates, start: line.start, end: line.end, items: [entry] });
+      result = await adapter.checkDates({ dates, start: line.start, end: line.end, items: [entry], ...(memo ? { memo } : {}) });
     } catch (error) {
       log.warn("checking a tray line failed", { backend: adapter.backend, error });
       return "";
@@ -109,19 +116,21 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     const { matches, byModel } = await matching(tray.view);
     const pages = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
     const p = Math.min(Math.max(tray.view.p || 0, 0), pages - 1);
-    const statuses = await Promise.all(tray.lines.map(async (l) => [l.id, await lineCheck(l, client)]));
+    // One sheet read per backend for the whole redraw (Sheets read quota).
+    const memo = new Map();
+    const statuses = await Promise.all(tray.lines.map(async (l) => [l.id, await lineCheck(l, client, memo)]));
     return listingMessage({
       items: matches.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE), total: matches.length, view: { ...tray.view, p }, categories,
       tray: tray.lines, lineStatus: Object.fromEntries(statuses), notice, searchedByModel: byModel, catalog,
     });
   }
 
-  async function formFor(tray, { withProblems, client }) {
+  async function formFor(tray, { withProblems, client, notice = null }) {
     const line = tray.editing;
     const check = await lineCheck(line, client);
     const problems = withProblems ? lineProblems(line, context()).map(esc) : [];
     return lineFormMessage({
-      line, entry: findItem(catalog, line.item), check, problems, inTray: tray.lines.some((l) => l.id === line.id),
+      line, entry: findItem(catalog, line.item), check, problems, notice, inTray: tray.lines.some((l) => l.id === line.id),
     });
   }
 
@@ -138,22 +147,34 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     return null;
   }
 
+  // Nothing here books anything, so a failure is told to the member, not
+  // thrown: a thrown error would hold up the member's queue of events.
   async function post({ channel, user, search, client }) {
-    if (!trayStore) {
-      return client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, text: `${categoryCounts(catalog)}\n${NO_TABLE_TEXT}` });
+    try {
+      if (!trayStore) {
+        return await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, text: `${categoryCounts(catalog)}\n${NO_TABLE_TEXT}` });
+      }
+      const view = { q: cutSearch(search), c: "all", p: 0 };
+      // A new card starts on the list: a draft left from an older card is dropped.
+      const saved = await mutate(user, (tray) => { tray.view = view; tray.editing = null; });
+      // Lost twice: show the card anyway; the next press saves the view.
+      const tray = saved?.tray ?? { ...emptyTray(), view };
+      return await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, ...(await listingFor({ ...tray, editing: null }, { client })) });
+    } catch (error) {
+      log.error("posting the listing card failed", { error });
+      try {
+        await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, text: ERROR_TEXT });
+      } catch (replyError) {
+        log.error("listing failure reply failed", { error: replyError });
+      }
     }
-    const view = { q: cutSearch(search), c: "all", p: 0 };
-    const saved = await mutate(user, (tray) => { tray.view = view; });
-    // Lost twice: show the card anyway; the next press saves the view.
-    const tray = saved?.tray ?? { ...emptyTray(), view };
-    return client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, ...(await listingFor(tray, { client })) });
   }
 
   // What a press does to the tray, and which screen follows.
   function apply(tray, action, values) {
     const id = action.action_id;
     const listing = (notice = null) => ({ screen: "listing", notice });
-    const form = (withProblems = false) => ({ screen: "form", withProblems });
+    const form = (withProblems = false, notice = null) => ({ screen: "form", withProblems, notice });
     if (id === LIST_SEARCH_ACTION) {
       tray.view = { ...tray.view, q: cutSearch(action.value), p: 0 };
       return listing();
@@ -178,7 +199,9 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     if (id === LIST_EDIT_ACTION) {
       const line = tray.lines.find((l) => l.id === action.value);
       if (!line) return listing();
-      tray.editing = structuredClone(line);
+      // fromTray: Save finds the stored line again and keeps its bookkeeping;
+      // when/stamp say what its dates were when the form opened.
+      tray.editing = { ...structuredClone(line), fromTray: { when: whenOf(line), stamp: datesStamp(line) } };
       return form();
     }
     if (id === TRAY_CLEAR_ACTION) {
@@ -194,11 +217,32 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
       return form(true);
     }
     if (id === FORM_SAVE_ACTION) {
-      const line = readLineForm(values, tray.editing);
-      const at = tray.lines.findIndex((l) => l.id === line.id);
-      if (at >= 0) tray.lines[at] = line;
+      const { fromTray, ...draft } = readLineForm(values, tray.editing);
+      const at = tray.lines.findIndex((l) => l.id === draft.id);
+      if (fromTray) {
+        // Reserve all may have booked or narrowed the line since Edit: never
+        // put back dates it took out.
+        if (at < 0) {
+          tray.editing = null;
+          return listing(LINE_GONE_TEXT);
+        }
+        const stored = tray.lines[at];
+        const changed = whenOf(draft) !== fromTray.when;
+        if (changed && hasClaims(stored)) {
+          tray.editing = readLineForm(values, tray.editing);
+          return form(true, LINE_CLAIMED_TEXT);
+        }
+        if (changed && datesStamp(stored) !== fromTray.stamp) {
+          tray.editing = readLineForm(values, tray.editing);
+          return form(true, LINE_MOVED_TEXT);
+        }
+        // Only what the form edits; the item and bookkeeping stay the stored line's.
+        const next = { ...stored, title: draft.title, appliances: draft.appliances };
+        if (changed) restartDates(Object.assign(next, { date: draft.date, start: draft.start, end: draft.end, repeat: draft.repeat }));
+        tray.lines[at] = next;
+      } else if (at >= 0) tray.lines[at] = draft;
       else if (tray.lines.length >= MAX_LINES) return listing(FULL_TEXT);
-      else tray.lines.push(line);
+      else tray.lines.push(draft);
       tray.editing = null;
       return listing();
     }
@@ -228,21 +272,27 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
   }
 
   // The card is ephemeral, so only its asker can press it; the presser owns the tray.
+  // Nothing here books anything, so a failure is told, not thrown (see post).
   async function handleAction({ payload, action, client }) {
     const user = payload.user?.id;
     const responseUrl = payload.response_url;
     if (!trayStore || !user || !responseUrl) return;
-    const values = payload.state?.values || {};
-    const saved = await mutate(user, (tray, { fresh }) => (fresh ? { screen: "listing", notice: EXPIRED_TEXT } : apply(tray, action, values)));
-    if (!saved) {
-      const tray = (await trayStore.getTray(user)) ?? emptyTray();
-      return reply(responseUrl, await listingFor({ ...tray, editing: null }, { notice: RACE_TEXT, client }));
+    try {
+      const values = payload.state?.values || {};
+      const saved = await mutate(user, (tray, { fresh }) => (fresh ? { screen: "listing", notice: EXPIRED_TEXT } : apply(tray, action, values)));
+      if (!saved) {
+        const tray = (await trayStore.getTray(user)) ?? emptyTray();
+        return await reply(responseUrl, await listingFor({ ...tray, editing: null }, { notice: RACE_TEXT, client }));
+      }
+      const { tray, outcome } = saved;
+      const message = outcome.screen === "form"
+        ? await formFor(tray, { withProblems: outcome.withProblems, notice: outcome.notice, client })
+        : await listingFor(tray, { notice: outcome.notice, client });
+      return await reply(responseUrl, message);
+    } catch (error) {
+      log.error("listing card press failed", { action: action?.action_id, error });
+      return reply(responseUrl, { replace_original: false, response_type: "ephemeral", text: ERROR_TEXT });
     }
-    const { tray, outcome } = saved;
-    const message = outcome.screen === "form"
-      ? await formFor(tray, { withProblems: outcome.withProblems, client })
-      : await listingFor(tray, { notice: outcome.notice, client });
-    return reply(responseUrl, message);
   }
 
   // Reserve all is handled by reservations-reserve-all.js, which draws its

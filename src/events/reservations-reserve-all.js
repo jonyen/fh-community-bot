@@ -17,7 +17,8 @@
 //   while "started") is never written again: it is reported as "may already
 //   be booked" and taken out of the tray.
 import { log, metric } from "../lib/logger.js";
-import { nyToday, nyParts, fmtDay, fmtRange, periodCovering } from "../lib/reservation-time.js";
+import { nyToday, nyParts, fmtDay, fmtRange, periodCovering, overlaps } from "../lib/reservation-time.js";
+import { roomsConflict } from "../lib/rooms-catalog.js";
 import { findItem } from "../lib/reservation-catalog.js";
 import { BOT_PERSONA } from "../lib/reservation-format.js";
 import { emptyTray, expandDates, trayProblems, repeatText } from "../lib/reservation-tray.js";
@@ -34,6 +35,8 @@ const EMPTY_TEXT = "Your tray is empty. Add something to reserve first.";
 const CONNECT_TEXT = "To book as you, connect your Google account once. I'll reserve your tray as soon as you approve.";
 const RECONNECT_TEXT = "Your Google connection has expired. Connect again and I'll reserve the rest of your tray as soon as you approve.";
 const MAYBE_TEXT = "may already be booked, please check before booking again";
+const ERROR_TEXT = "⚠️ Something went wrong. Please try again.";
+const OVERLAP_TEXT = "overlaps another line in your tray";
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // What a booking is made from; a line whose fields changed mid-run is not written.
@@ -49,6 +52,32 @@ const skip = (item, date, text, detail) => ({
 });
 const entryDates = (e) => e.refs.map(([d]) => d);
 
+// Whether two catalog entries of one backend would hold the same thing: rooms
+// that share a room, the same calendar item, or the kitchen (one member, one slot).
+function sameThing(backend, a, b) {
+  if (backend === "rooms") return roomsConflict([a.label], [b.label]);
+  if (backend === "kitchen") return true;
+  return a.label === b.label;
+}
+
+// A later tray line booking the same thing on the same date at an overlapping
+// time as an earlier line would book it twice: its date is skipped instead.
+function skipOverlaps(work, skipped) {
+  const placed = [];
+  for (const w of work) {
+    const backend = w.entry.backend;
+    const clash = (d) => placed.some((p) => p.backend === backend && p.date === d
+      && overlaps(p.start, p.end, w.line.start, w.line.end) && sameThing(backend, p.entry, w.entry));
+    const kept = [];
+    for (const d of w.free) {
+      if (clash(d)) skipped.push(skip(w.line.item, d, OVERLAP_TEXT));
+      else kept.push(d);
+    }
+    w.free = kept;
+    for (const d of [...kept, ...w.booked.keys()]) placed.push({ backend, entry: w.entry, date: d, start: w.line.start, end: w.line.end });
+  }
+}
+
 // Drops the Reserve all bookkeeping for one date of a stored line.
 function forgetDate(line, date) {
   for (const field of ["progress", "claims", "booked"]) {
@@ -60,7 +89,9 @@ function forgetDate(line, date) {
 }
 
 // Takes `gone` dates out of the stored tray's lines; a line left with no
-// dates goes, a repeat keeps the rest as onlyDates. Other dates are untouched.
+// dates goes, a repeat keeps the rest as onlyDates and starts at the first
+// of them (a repeat day, as every expanded date is), so a leftover whose old
+// first date has passed can still be reserved. Other dates are untouched.
 function removeDates(tray, gone) {
   tray.lines = tray.lines.flatMap((l) => {
     const dates = expandDates(l);
@@ -70,7 +101,10 @@ function removeDates(tray, gone) {
     if (!left.length) return [];
     const next = { ...l };
     for (const d of out) forgetDate(next, d);
-    if (next.repeat) next.onlyDates = left;
+    if (next.repeat) {
+      next.onlyDates = left;
+      next.date = left[0];
+    }
     return [next];
   });
 }
@@ -257,7 +291,7 @@ export function createReserveAll({
   // started (to report and drop), another live run's (left alone), dates a
   // posts record already covers, and the rest, which are re-checked when this
   // run may book.
-  async function prepareLine(line, runId, canBook, adopt, postedKeys) {
+  async function prepareLine(line, runId, canBook, adopt, postedKeys, clients) {
     const skipped = [];
     const drop = [];
     const entry = findItem(catalog, line.item);
@@ -283,7 +317,8 @@ export function createReserveAll({
     if (!canBook || !dates.length) return { w, skipped, drop };
     let result;
     try {
-      result = await adapter.checkDates({ dates, start: line.start, end: line.end, items: [entry] });
+      // clients: the member's account will write, which some backends need to say a date is bookable.
+      result = await adapter.checkDates({ dates, start: line.start, end: line.end, items: [entry], ...(clients ? { clients } : {}) });
     } catch (error) {
       log.warn("re-checking a tray line failed", { backend: adapter.backend, error });
       result = {};
@@ -350,39 +385,46 @@ export function createReserveAll({
     const state = { tray: null };
     let owner = false;
     let problems = [];
-    for (let attempt = 0; attempt < 2 && !state.tray; attempt++) {
-      const stored = await trayStore.getTray(user);
-      // A redelivery of a run that ended, or whose leftovers another run took
-      // over: nobody pressed anything, so nothing happens.
-      if (stored?.ended?.[runId]) {
-        log.info("reserve all run already ended", { runId });
-        return;
+    // Nothing is booked before the run holds the tray, so a failure here is
+    // told to the member rather than thrown (a throw would hold up their queue).
+    try {
+      for (let attempt = 0; attempt < 2 && !state.tray; attempt++) {
+        const stored = await trayStore.getTray(user);
+        // A redelivery of a run that ended, or whose leftovers another run took
+        // over: nobody pressed anything, so nothing happens.
+        if (stored?.ended?.[runId]) {
+          log.info("reserve all run already ended", { runId });
+          return;
+        }
+        if (!stored?.lines?.length && !stored?.posts?.[runId]) {
+          return replyCard(client, where, await cardWith(stored ?? emptyTray(), EMPTY_TEXT, client));
+        }
+        const mine = ownsSomething(stored, runId);
+        // A line whose item left the catalog is skipped, not refused; one with
+        // only leftovers of some run is finished, not checked.
+        problems = trayProblems({ ...stored, lines: stored.lines.filter((l) => findItem(catalog, l.item) && !leftoverOnly(stored, l)) }, ctx);
+        const at = now().getTime();
+        const { running } = stored;
+        const busy = running && running.runId !== runId && at - Number(running.at) < RUN_STALE_MS;
+        // Leftovers are finished first, even when the rest can't be reserved yet.
+        if (problems.length && !mine && (busy || !othersLeftovers(stored, runId))) {
+          return replyCard(client, where, await cardWith(stored, problemsText(problems), client));
+        }
+        if (busy) {
+          if (!mine) return postPrivately(client, where, { text: BUSY_TEXT });
+          state.tray = stored;
+          break;
+        }
+        const tray = { ...structuredClone(stored), running: { runId, at } };
+        adoptInto(tray, runId, at);
+        if (await trayStore.putTray(user, tray, { expectVersion: stored.version })) {
+          state.tray = { ...tray, version: stored.version + 1 };
+          owner = true;
+        }
       }
-      if (!stored?.lines?.length && !stored?.posts?.[runId]) {
-        return replyCard(client, where, await cardWith(stored ?? emptyTray(), EMPTY_TEXT, client));
-      }
-      const mine = ownsSomething(stored, runId);
-      // A line whose item left the catalog is skipped, not refused; one with
-      // only leftovers of some run is finished, not checked.
-      problems = trayProblems({ ...stored, lines: stored.lines.filter((l) => findItem(catalog, l.item) && !leftoverOnly(stored, l)) }, ctx);
-      const at = now().getTime();
-      const { running } = stored;
-      const busy = running && running.runId !== runId && at - Number(running.at) < RUN_STALE_MS;
-      // Leftovers are finished first, even when the rest can't be reserved yet.
-      if (problems.length && !mine && (busy || !othersLeftovers(stored, runId))) {
-        return replyCard(client, where, await cardWith(stored, problemsText(problems), client));
-      }
-      if (busy) {
-        if (!mine) return postPrivately(client, where, { text: BUSY_TEXT });
-        state.tray = stored;
-        break;
-      }
-      const tray = { ...structuredClone(stored), running: { runId, at } };
-      adoptInto(tray, runId, at);
-      if (await trayStore.putTray(user, tray, { expectVersion: stored.version })) {
-        state.tray = { ...tray, version: stored.version + 1 };
-        owner = true;
-      }
+    } catch (error) {
+      log.error("reserve all could not load the tray", { runId, error });
+      return postPrivately(client, where, { text: ERROR_TEXT });
     }
     // Lost twice: someone else is changing the tray, so nothing is written.
     if (!state.tray) return;
@@ -431,7 +473,12 @@ export function createReserveAll({
           connectFirst = member.status;
           // Nothing of this run's to finish: just ask, the tray stays as it is.
           if (!ownsSomething(state.tray, runId) && !othersLeftovers(state.tray, runId)) {
-            await promptTray({ client, channel, user, requester, revoked: connectFirst === "revoked" });
+            try {
+              await promptTray({ client, channel, user, requester, revoked: connectFirst === "revoked" });
+            } catch (error) {
+              log.error("reserve all connect prompt failed", { error });
+              await postPrivately(client, where, { text: ERROR_TEXT });
+            }
             return;
           }
         }
@@ -441,12 +488,13 @@ export function createReserveAll({
 
       // 4. Sort and re-check every date.
       const postedKeys = new Set(Object.values(state.tray.posts || {}).flatMap(keysOf));
-      const prepared = await Promise.all(structuredClone(state.tray.lines).map((l) => prepareLine(l, runId, canBook, owner, postedKeys)));
+      const prepared = await Promise.all(structuredClone(state.tray.lines).map((l) => prepareLine(l, runId, canBook, owner, postedKeys, clients)));
       const work = prepared.map((p) => p.w).filter(Boolean);
       for (const p of prepared) {
         skipped.push(...p.skipped);
         for (const k of p.drop) drop.add(k);
       }
+      skipOverlaps(work, skipped);
 
       // 5–6. Write each backend's free dates in one go.
       let stop = null; // "notOwner": another run holds the tray; "failed": the store failed

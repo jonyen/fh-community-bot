@@ -667,7 +667,8 @@ describe("Reserve all", () => {
       const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
       await expect(handler().resume({ pendingId: "P1", client })).resolves.toBeUndefined();
       expect(ephemerals().at(-1)).toMatchObject({ channel: "CRES", user: "U9" });
-      expect(ephemerals().at(-1).text).toMatch(/couldn't reserve your tray after you connected \(ddb down\)/);
+      // The run itself catches a failure to load the tray (nothing is booked yet).
+      expect(ephemerals().at(-1).text).toBe("⚠️ Something went wrong. Please try again.");
       errSpy.mockRestore();
     });
 
@@ -781,5 +782,91 @@ describe("Reserve all", () => {
     await reserve(handler({ connect: null }));
     expect(adapters.rms.bookMany).toHaveBeenCalledWith([expect.objectContaining({ date: "2026-10-24" })], {});
     expect(publicPosts()).toHaveLength(1);
+  });
+
+  describe("final review fixes", () => {
+    it("a repeat left over from a partial run can be reserved the next day, though its first date has passed", async () => {
+      // MPR every Tue from today (2 PM, still ahead) to 11/3; 10/27 is taken.
+      trayStore.rows.set("U9", trayRow({ lines: [mprRepeat({ date: "2026-10-20", repeat: { days: [2], until: "2026-11-03" } })] }));
+      adapters.rooms.checkDates.mockImplementation(async ({ dates }) => ({
+        ...free(dates),
+        ...(dates.includes("2026-10-27") ? { "2026-10-27": { conflicts: [{ holder: "Alan", title: "Rally" }], unavailable: null } } : {}),
+      }));
+      await reserve();
+      expect(adapters.rooms.bookMany.mock.calls[0][0].map((b) => b.date)).toEqual(["2026-10-20", "2026-11-03"]);
+      expect(stored().lines[0]).toMatchObject({ date: "2026-10-27", onlyDates: ["2026-10-27"] });
+
+      // The next day 10/27 is free again.
+      adapters.rooms.checkDates.mockImplementation(async ({ dates }) => free(dates));
+      await reserve(handler({ now: () => new Date("2026-10-21T16:00:00Z") }), "next day");
+      expect(sections(sent())[0]).not.toContain("Can't reserve yet");
+      expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(2);
+      expect(adapters.rooms.bookMany.mock.calls[1][0].map((b) => b.date)).toEqual(["2026-10-27"]);
+      expect(stored().lines).toEqual([]);
+    });
+
+    it("skips a later line that would book the same thing at an overlapping time as an earlier one", async () => {
+      const k = (id, o) => line(id, { item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dinner", ...o });
+      trayStore.rows.set("U9", trayRow({
+        lines: [
+          line("M1", { item: "MPR", start: 840, end: 960 }),
+          line("M2", { item: "MPR", start: 900, end: 1000 }),
+          line("Y1", { item: "Youth Room", start: 840, end: 960 }),
+          line("M3", { item: "MPR", start: 960, end: 1020 }),
+          k("K1"), k("K2", { start: 1080, end: 1200 }),
+          line("T1"), line("T2", { start: 700, end: 800 }),
+        ],
+      }));
+      await reserve();
+      expect(adapters.rooms.bookMany.mock.calls[0][0].map((b) => [b.items[0].label, b.start])).toEqual([["MPR", 840], ["Youth Room", 840], ["MPR", 960]]);
+      expect(adapters.kitchen.bookMany.mock.calls[0][0].map((b) => b.start)).toEqual([1020]);
+      expect(adapters.rms.bookMany.mock.calls[0][0].map((b) => b.start)).toEqual([600]);
+      const notice = sections(sent())[0];
+      expect(notice).toContain("MPR · Sat 10/24 · overlaps another line in your tray");
+      expect(notice).toContain("Kitchen · Thu 10/22 · overlaps another line in your tray");
+      expect(notice).toContain("Tech Set 2 · Sat 10/24 · overlaps another line in your tray");
+      expect(stored().lines.map((l) => l.id)).toEqual(["M2", "K2", "T2"]);
+    });
+
+    it("a tray that can't be read is told privately, never thrown, and nothing is booked", async () => {
+      const err = vi.spyOn(log, "error").mockImplementation(() => {});
+      trayStore.getTray.mockRejectedValue(new Error("ddb down"));
+      await expect(reserve()).resolves.toBeUndefined();
+      expect(ephemerals().at(-1)).toMatchObject({ channel: "CRES", user: "U9", text: "⚠️ Something went wrong. Please try again." });
+      for (const a of Object.values(adapters)) expect(a.bookMany).not.toHaveBeenCalled();
+      err.mockRestore();
+    });
+
+    it("a tray write that fails before booking is told privately, never thrown, and nothing is booked", async () => {
+      const err = vi.spyOn(log, "error").mockImplementation(() => {});
+      trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+      trayStore.putTray.mockRejectedValue(new Error("ddb down"));
+      await expect(reserve()).resolves.toBeUndefined();
+      expect(ephemerals().at(-1)).toMatchObject({ text: "⚠️ Something went wrong. Please try again." });
+      for (const a of Object.values(adapters)) expect(a.bookMany).not.toHaveBeenCalled();
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      err.mockRestore();
+    });
+
+    it("with RMS booking off on the bot's calendar, a connected member still books; without connect it is skipped", async () => {
+      const cal = {
+        events: {
+          list: vi.fn().mockResolvedValue({ data: { items: [] } }),
+          insert: vi.fn().mockResolvedValue({ data: { id: "E1" } }),
+          get: vi.fn().mockResolvedValue({ data: { attendees: [{ email: "t2", resource: true, responseStatus: "accepted" }] } }),
+          delete: vi.fn(),
+        },
+      };
+      adapters.rms = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
+      connect.memberGoogle.clientsFor.mockResolvedValue({ status: "active", clients: { calendarClient: cal, sheetsClient: {} } });
+      trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+      await reserve();
+      expect(cal.events.insert).toHaveBeenCalledTimes(1);
+
+      trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+      await reserve(handler({ connect: null }), "bot account");
+      expect(cal.events.insert).toHaveBeenCalledTimes(1);
+      expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · Please book this one in Google Calendar (RMS) for now.");
+    });
   });
 });

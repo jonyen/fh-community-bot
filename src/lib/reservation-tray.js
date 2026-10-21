@@ -73,6 +73,7 @@ export function lineProblems(line, { today, nowMin, catalog }) {
   if (!line.title) out.push("Add what it's for.");
   if (line.date && line.date < today) out.push("That date has passed.");
   else if (line.date === today && line.start != null && line.start < nowMin) out.push("That time has already passed today.");
+  const before = out.length;
   if (line.repeat) {
     const days = daysOf(line.repeat);
     const { until } = line.repeat;
@@ -80,11 +81,32 @@ export function lineProblems(line, { today, nowMin, catalog }) {
     // The first date is the line's date, so it must be one of the repeat days.
     if (days.length && line.date && !days.includes(weekday(line.date))) out.push("Pick a date that falls on one of the repeat days.");
     if (!until) out.push("Pick when the repeat ends.");
-    else if (line.date && until <= line.date) out.push("The repeat must end after its first date.");
+    // A leftover repeat (onlyDates) starts at its first date still wanted,
+    // which may be its last.
+    else if (line.date && (line.onlyDates ? until < line.date : until <= line.date)) out.push("The repeat must end after its first date.");
     else if (line.date && until > addDaysIso(line.date, MAX_REPEAT_DAYS)) out.push("Repeats can run at most 6 months.");
   }
+  if (line.date && out.length === before && !expandDates(line).length) out.push("No dates left to book. Change the date or repeat.");
   return out;
 }
+
+// The line's when: what its dates are made from.
+export function whenOf(line) {
+  const r = line.repeat ? [[...daysOf(line.repeat)].sort(), line.repeat.until ?? null] : null;
+  return JSON.stringify([line.date ?? null, line.start ?? null, line.end ?? null, r]);
+}
+
+// A line whose when changed starts its dates over: onlyDates goes, and so
+// does progress no Reserve all run claimed. A claimed date is a run's to post
+// or report, so it is kept (callers refuse such edits).
+export function restartDates(line) {
+  line.onlyDates = null;
+  const claimed = new Set(Object.keys(line.claims || {}));
+  line.progress = Object.fromEntries(Object.entries(line.progress || {}).filter(([d]) => claimed.has(d)));
+  return line;
+}
+
+export const hasClaims = (line) => Object.keys(line.claims || {}).length > 0;
 
 export function trayProblems(tray, ctx) {
   const out = tray.lines.flatMap((l) => lineProblems(l, ctx).map((p) => `${l.item}: ${p}`));

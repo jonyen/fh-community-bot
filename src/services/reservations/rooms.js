@@ -54,10 +54,19 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
     return { reservations: rows.map(toReservation), errors: [] };
   }
 
+  // memo (a Map shared by one redraw's checks) keeps it to one sheet read
+  // however many tray lines are checked.
+  function rowsFor(memo) {
+    if (!memo) return readRows();
+    const key = `rooms:${spreadsheetId}:${tab}`;
+    if (!memo.has(key)) memo.set(key, readRows());
+    return memo.get(key);
+  }
+
   // One read of the sheet answers every date, so a weekly repeat costs the same as one day.
-  async function checkDates({ dates, start, end, items }) {
+  async function checkDates({ dates, start, end, items, memo = null }) {
     const wanted = items.map((i) => i.label);
-    const rows = await readRows();
+    const rows = await rowsFor(memo);
     return Object.fromEntries(dates.map((date) => [date, {
       conflicts: rows
         .filter((r) => r.date === date && overlaps(start, end, r.start, r.end) && roomsConflict(wanted, r.rooms))
