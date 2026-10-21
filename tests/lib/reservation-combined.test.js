@@ -113,6 +113,6 @@ describe("seriesChooser", () => {
   it("caps options at 100", () => {
     const refs = Array.from({ length: 150 }, (_, i) => ref(`2027-${String(1 + Math.floor(i / 28)).padStart(2, "0")}-${String(1 + (i % 28)).padStart(2, "0")}`));
     const big = seriesChooser({ user: "U1", series: { ...series, refs }, postTs: "1.2", channel: "C1", today: "2026-10-20" });
-    expect(big.blocks.find((b) => b.type === "actions").elements.find((e) => e.action_id === SERIES_ONE_ACTION).options).toHaveLength(40);
+    expect(big.blocks.find((b) => b.type === "actions").elements.find((e) => e.action_id === SERIES_ONE_ACTION).options).toHaveLength(100);
   });
 });
