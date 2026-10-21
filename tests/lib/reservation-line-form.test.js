@@ -75,6 +75,13 @@ describe("readLineForm", () => {
     expect(readLineForm({ form_repeat: { [FORM_REPEAT_ACTION]: { selected_option: { value: "none" } } } }, { ...LINE, repeat: { days: [1], until: "2026-11-01" } }).repeat).toBeNull();
   });
 
+  it("un-ticking every day gives no days, while an absent days block keeps them", () => {
+    const weekly = { ...LINE, repeat: { days: [6, 0], until: "2026-12-20" } };
+    const radio = { form_repeat: { [FORM_REPEAT_ACTION]: { selected_option: { value: "weekly" } } } };
+    expect(readLineForm({ ...radio, form_days: { [FORM_DAYS_ACTION]: { selected_options: [] } } }, weekly).repeat.days).toEqual([]);
+    expect(readLineForm(radio, weekly).repeat.days).toEqual([6, 0]);
+  });
+
   it("keeps fields the state does not carry", () => {
     expect(readLineForm({}, LINE)).toEqual(LINE);
   });

@@ -76,7 +76,8 @@ export function listingMessage({ items, total, view, categories, tray, lineStatu
 
   if (items.length === 0) {
     const overview = categoryCounts(catalog);
-    blocks.push(section(`Nothing matches "${esc(q)}".${overview ? `\n${overview}` : ""}`));
+    const none = q ? `Nothing matches "${esc(q)}".` : `Nothing to reserve in ${CATEGORY_NAMES[view.c] || "this category"}.`;
+    blocks.push(section(`${none}${overview ? `\n${overview}` : ""}`));
   } else {
     for (const e of items.slice(0, PAGE_SIZE)) blocks.push(itemSection(e, tray));
     const nav = [
@@ -104,5 +105,5 @@ export function listingMessage({ items, total, view, categories, tray, lineStatu
       ],
     });
   }
-  return { text: q ? `${total} items match "${q}"` : "Things you can reserve", blocks };
+  return { text: q ? `${total} items match "${esc(q)}"` : "Things you can reserve", blocks };
 }

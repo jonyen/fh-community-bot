@@ -61,6 +61,17 @@ describe("listingMessage", () => {
     expect(long.blocks.find((b) => b.block_id === "list_search").element.initial_value).toBe("a".repeat(60));
   });
 
+  it("escapes the search in the fallback text too", () => {
+    expect(msg({ view: view({ q: "<!channel>" }), total: 1 }).text).toBe('1 items match "&lt;!channel&gt;"');
+  });
+
+  it("names the category when it is empty and nothing was searched", () => {
+    const m = msg({ items: [], total: 0, view: view({ c: "tech" }), catalog: CATALOG.slice(0, 3) });
+    const t = sections(m).map((b) => b.text.text).join("\n");
+    expect(t).toContain("Nothing to reserve in Tech.");
+    expect(t).not.toContain('Nothing matches ""');
+  });
+
   it("says nothing matches, with what exists", () => {
     const m = msg({ items: [], total: 0, view: view({ q: "zzz" }), catalog: CATALOG });
     expect(sections(m).map((b) => b.text.text).join("\n")).toContain('Nothing matches "zzz".');

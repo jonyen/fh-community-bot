@@ -68,6 +68,7 @@ export function lineFormMessage({ line, entry, check, problems, notice = null, i
   }
   if (entry?.category === "kitchen") blocks.push(...applianceBlocks(line.appliances || {}));
 
+  // check and problems are built by the caller and must already be escaped.
   const status = [check, ...(problems || [])].filter(Boolean).join("\n");
   if (status) blocks.push(section(status));
   blocks.push({
@@ -78,7 +79,7 @@ export function lineFormMessage({ line, entry, check, problems, notice = null, i
       button(FORM_BACK_ACTION, "◀ Back to list"),
     ],
   });
-  return { text: `Reserving ${label}`, blocks };
+  return { text: `Reserving ${esc(label)}`, blocks };
 }
 
 // The draft updated from payload.state.values; whatever the state does not
