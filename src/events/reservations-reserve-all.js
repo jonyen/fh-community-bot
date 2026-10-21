@@ -75,12 +75,50 @@ function removeDates(tray, gone) {
   });
 }
 
+const problemsText = (problems) => `Can't reserve yet:\n${problems.map((p) => `• ${esc(p)}`).join("\n")}`;
 const ownsSomething = (tray, runId) => !!tray.posts?.[runId] || tray.lines.some((l) => Object.values(l.claims || {}).includes(runId));
 // Another run's leftovers: claims or a posts record. A run that takes the
 // tray took it from no one or from a run gone quiet for 15 minutes (runs
 // last at most 5), so every other run's leftovers are abandoned to it.
 const othersLeftovers = (tray, runId) => Object.keys(tray.posts || {}).some((id) => id !== runId)
   || tray.lines.some((l) => Object.values(l.claims || {}).some((by) => by !== runId));
+// Runs that ended or were taken over are remembered this long, so an SQS
+// redelivery of one stops instead of acting as a new press.
+const ENDED_KEEP_MS = 24 * 60 * 60 * 1000;
+
+// Lines whose every date is a leftover of some run (claimed or posted): they
+// are finished, not booked, so their details aren't checked again.
+function leftoverOnly(tray, line) {
+  const dates = expandDates(line);
+  const posted = new Set(Object.values(tray.posts || {}).flatMap(keysOf));
+  return dates.length > 0 && dates.every((d) => line.progress?.[d] || posted.has(keyOf(line.id, d)));
+}
+
+function remember(tray, ids, at) {
+  const ended = Object.fromEntries(Object.entries(tray.ended || {}).filter(([, t]) => at - Number(t) < ENDED_KEEP_MS));
+  for (const id of ids) ended[id] = at;
+  tray.ended = Object.keys(ended).length ? ended : null;
+}
+
+// Taking the tray from no one or from a run gone quiet for 15 minutes (runs
+// last at most 5): every other run's claims become this run's, in the same
+// version-checked write, and those runs are remembered as ended. Their posts
+// records stay under their ids for this run to finish; an ended run never
+// touches them again.
+function adoptInto(tray, runId, at) {
+  const others = new Set();
+  if (tray.running?.runId && tray.running.runId !== runId) others.add(tray.running.runId);
+  for (const l of tray.lines) {
+    for (const [d, by] of Object.entries(l.claims || {})) {
+      if (by === runId) continue;
+      others.add(by);
+      l.claims = { ...l.claims, [d]: runId };
+    }
+  }
+  for (const id of Object.keys(tray.posts || {})) if (id !== runId) others.add(id);
+  if (others.size || tray.ended) remember(tray, others, at);
+}
+
 const keysOf = (record) => (record.entries || []).flatMap((e) => entryDates(e).map((d) => keyOf(e.lineId, d)));
 
 export function createReserveAll({
@@ -311,27 +349,36 @@ export function createReserveAll({
     // them, holding the tray or not.
     const state = { tray: null };
     let owner = false;
+    let problems = [];
     for (let attempt = 0; attempt < 2 && !state.tray; attempt++) {
       const stored = await trayStore.getTray(user);
+      // A redelivery of a run that ended, or whose leftovers another run took
+      // over: nobody pressed anything, so nothing happens.
+      if (stored?.ended?.[runId]) {
+        log.info("reserve all run already ended", { runId });
+        return;
+      }
       if (!stored?.lines?.length && !stored?.posts?.[runId]) {
         return replyCard(client, where, await cardWith(stored ?? emptyTray(), EMPTY_TEXT, client));
       }
       const mine = ownsSomething(stored, runId);
-      if (!mine) {
-        // A line whose item left the catalog is skipped, not refused.
-        const problems = trayProblems({ ...stored, lines: stored.lines.filter((l) => findItem(catalog, l.item)) }, ctx);
-        if (problems.length) {
-          return replyCard(client, where, await cardWith(stored, `Can't reserve yet:\n${problems.map((p) => `• ${esc(p)}`).join("\n")}`, client));
-        }
-      }
+      // A line whose item left the catalog is skipped, not refused; one with
+      // only leftovers of some run is finished, not checked.
+      problems = trayProblems({ ...stored, lines: stored.lines.filter((l) => findItem(catalog, l.item) && !leftoverOnly(stored, l)) }, ctx);
       const at = now().getTime();
       const { running } = stored;
-      if (running && running.runId !== runId && at - Number(running.at) < RUN_STALE_MS) {
+      const busy = running && running.runId !== runId && at - Number(running.at) < RUN_STALE_MS;
+      // Leftovers are finished first, even when the rest can't be reserved yet.
+      if (problems.length && !mine && (busy || !othersLeftovers(stored, runId))) {
+        return replyCard(client, where, await cardWith(stored, problemsText(problems), client));
+      }
+      if (busy) {
         if (!mine) return postPrivately(client, where, { text: BUSY_TEXT });
         state.tray = stored;
         break;
       }
-      const tray = { ...stored, running: { runId, at } };
+      const tray = { ...structuredClone(stored), running: { runId, at } };
+      adoptInto(tray, runId, at);
       if (await trayStore.putTray(user, tray, { expectVersion: stored.version })) {
         state.tray = { ...tray, version: stored.version + 1 };
         owner = true;
@@ -343,16 +390,19 @@ export function createReserveAll({
     // Every way out lets go of the tray, unless another run has taken it.
     let released = !owner;
     const release = (t) => {
-      if (owner && t.running?.runId === runId) t.running = null;
+      if (owner && t.running?.runId === runId) {
+        t.running = null;
+        remember(t, [runId], now().getTime());
+      }
     };
     try {
-      await reserve({ user, channel, client, runId, where, ctx, state, owner, release, onReleased: () => { released = true; } });
+      await reserve({ user, channel, client, runId, where, ctx, state, owner, problems, release, onReleased: () => { released = true; } });
     } finally {
       if (!released) await persist(state, user, release, "release");
     }
   }
 
-  async function reserve({ user, channel, client, runId, where, ctx, state, owner, release, onReleased }) {
+  async function reserve({ user, channel, client, runId, where, ctx, state, owner, problems, release, onReleased }) {
     const skipped = [];
     const drop = new Set(); // this run's uncertain dates: reported and taken out
     const clear = new Set(); // this run's claims that turned out bookable again
@@ -369,7 +419,7 @@ export function createReserveAll({
     if (!record) {
       // 3. Whose account writes.
       let member = { status: "none" };
-      if (owner) {
+      if (owner && !problems.length) {
         try {
           requester = await requesterFor(client, user);
           member = await memberClients(user);
@@ -386,7 +436,7 @@ export function createReserveAll({
           }
         }
       }
-      const canBook = owner && !connectFirst;
+      const canBook = owner && !connectFirst && !problems.length;
       const clients = member.clients ?? null;
 
       // 4. Sort and re-check every date.
@@ -574,7 +624,8 @@ export function createReserveAll({
       const head = !total ? "Nothing could be booked."
         : record.ts ? `✅ Reserved ${n}. It's posted in the channel.`
           : `✅ Reserved ${n}, but I couldn't post them in the channel.`;
-      const lines = skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.detail ?? s.text).slice(0, NOTICE_SKIP_MAX))}`);
+      const lines = problems.length ? [problemsText(problems)] : [];
+      lines.push(...skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.detail ?? s.text).slice(0, NOTICE_SKIP_MAX))}`));
       if (skipped.length > NOTICE_SKIPS) lines.push(`…and ${skipped.length - NOTICE_SKIPS} more.`);
       await replyCard(client, where, await cardWith(state.tray, [head, ...lines].join("\n"), client));
     } catch (error) {

@@ -514,6 +514,110 @@ describe("Reserve all", () => {
     expect(stored().posts).toBeNull();
   });
 
+  describe("a dead run's redelivery", () => {
+    const deadRef = { backend: "rms", date: "2026-10-24", id: "rms-by-A" };
+    const deadTray = () => trayRow({
+      running: { runId: "A", at: NOW.getTime() - 16 * 60_000 },
+      lines: [
+        line("L2", { progress: { "2026-10-24": "done" }, claims: { "2026-10-24": "A" }, booked: { "2026-10-24": deadRef } }),
+        line("L3", { item: "MPR" }),
+      ],
+    });
+
+    it("arriving while the run that took over is busy, posts and records nothing", async () => {
+      trayStore.rows.set("U9", deadTray());
+      let entered;
+      const inBook = new Promise((r) => { entered = r; });
+      let open;
+      const gate = new Promise((r) => { open = r; });
+      adapters.rooms.bookMany.mockImplementation(async (bookings) => {
+        entered();
+        await gate;
+        return bookings.map((b) => ({ status: "booked", link: "x", ref: { backend: "rooms", date: b.date, id: "rooms-by-L" } }));
+      });
+      const h = handler();
+      const runL = reserve(h, "L");
+      await inBook;
+      // The take-over already moved A's claims to L and remembered A as ended.
+      expect(stored().lines[0].claims).toEqual({ "2026-10-24": "L" });
+      expect(stored().ended).toHaveProperty("A");
+      const before = { posts: publicPosts().length, eph: ephemerals().length, fetches: fetchSpy.mock.calls.length };
+      await reserve(h, "A");
+      expect(publicPosts()).toHaveLength(before.posts);
+      expect(ephemerals()).toHaveLength(before.eph);
+      expect(fetchSpy.mock.calls).toHaveLength(before.fetches);
+      open();
+      await runL;
+
+      expect(publicPosts()).toHaveLength(1);
+      const text = sections(publicPosts()[0]).join("\n");
+      expect(text).toContain("Tech Set 2 · Sat 10/24");
+      expect(text).toContain("MPR · Sat 10/24");
+      expect(ledger.recordBooking).toHaveBeenCalledTimes(2);
+      expect(ledger.recordBooking.mock.calls.map((c) => c[1].id).sort()).toEqual(["rms-by-A", "rooms-by-L"]);
+      expect(adapters.rms.bookMany).not.toHaveBeenCalled();
+      expect(stored().lines).toEqual([]);
+    });
+
+    it("arriving after the take-over finished and the member added a line, books and posts nothing", async () => {
+      trayStore.rows.set("U9", deadTray());
+      const h = handler();
+      await reserve(h, "L");
+      expect(publicPosts()).toHaveLength(1);
+      const row = trayStore.rows.get("U9");
+      row.lines.push(line("L4", { item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dinner" }));
+      row.version += 1;
+      const puts = trayStore.putTray.mock.calls.length;
+      await reserve(h, "A");
+      // And a redelivery of the finished run L itself.
+      await reserve(h, "L");
+      expect(adapters.kitchen.bookMany).not.toHaveBeenCalled();
+      expect(publicPosts()).toHaveLength(1);
+      expect(ledger.recordBooking).toHaveBeenCalledTimes(2);
+      expect(trayStore.putTray.mock.calls).toHaveLength(puts);
+      expect(stored().lines.map((l) => l.id)).toEqual(["L4"]);
+    });
+  });
+
+  it("a dead run's leftovers on dates since passed are finished, not refused, and the rest books", async () => {
+    const ref = { backend: "rms", date: "2026-10-18", id: "rms-past" };
+    trayStore.rows.set("U9", trayRow({
+      running: null,
+      lines: [
+        line("L1", { date: "2026-10-18", progress: { "2026-10-18": "done" }, claims: { "2026-10-18": "dead" }, booked: { "2026-10-18": ref } }),
+        line("L2", { item: "Kitchen", date: "2026-10-17", progress: { "2026-10-17": "started" }, claims: { "2026-10-17": "dead" } }),
+        line("L3", { item: "MPR" }),
+      ],
+    }));
+    await reserve();
+    expect(sections(sent())[0]).not.toContain("Can't reserve yet");
+    const text = sections(publicPosts()[0]).join("\n");
+    expect(text).toContain("Tech Set 2 · Sun 10/18");
+    expect(text).toContain("MPR · Sat 10/24");
+    expect(text).toContain("Kitchen · Sat 10/17 · may already be booked, please check before booking again");
+    expect(ledger.recordBooking).toHaveBeenCalledWith("U9", ref, { today: "2026-10-20" });
+    expect(stored().lines).toEqual([]);
+  });
+
+  it("a dead run's leftovers are finished even when another line still can't be reserved", async () => {
+    const ref = { backend: "rms", date: "2026-10-24", id: "rms-dead" };
+    trayStore.rows.set("U9", trayRow({
+      running: null,
+      lines: [
+        line("L1", { progress: { "2026-10-24": "done" }, claims: { "2026-10-24": "dead" }, booked: { "2026-10-24": ref } }),
+        line("L3", { item: "MPR", title: null }),
+      ],
+    }));
+    await reserve();
+    expect(adapters.rooms.bookMany).not.toHaveBeenCalled();
+    expect(sections(publicPosts()[0]).join("\n")).toContain("Tech Set 2 · Sat 10/24");
+    const head = sections(sent())[0];
+    expect(head).toContain("✅ Reserved 1 booking. It's posted in the channel.");
+    expect(head).toContain("Can't reserve yet:\n• MPR: Add what it's for.");
+    expect(stored().lines.map((l) => l.id)).toEqual(["L3"]);
+    expect(stored().running).toBeNull();
+  });
+
   it("when the public post fails, the private result doesn't claim it was posted", async () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
     client.chat.postMessage.mockRejectedValue(new Error("slack down"));

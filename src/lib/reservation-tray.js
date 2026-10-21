@@ -13,7 +13,8 @@
 //   Tray = { version, lines: Line[], view: { q, c /* "all" or category id */, p },
 //            editing: Line|null /* the draft being edited */,
 //            running: { runId, at } | null,
-//            posts?: { [runId]: { ts, entries, ledger } } /* posted, not yet tidied */ }
+//            posts?: { [runId]: { ts, entries, ledger } } /* posted, not yet tidied */,
+//            ended?: { [runId]: ms } /* runs ended or taken over; a redelivery stops */ }
 import { randomBytes } from "node:crypto";
 import { findItem } from "./reservation-catalog.js";
 import { addDaysIso, fmtDay, fmtRange } from "./reservation-time.js";
