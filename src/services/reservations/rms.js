@@ -73,16 +73,24 @@ export function createRmsAdapter({
 }) {
   const link = "https://calendar.google.com";
 
+  // Follows nextPageToken so a long span on a busy calendar is never cut off.
   async function eventsFor(entry, from, to) {
-    const res = await calendarClient.events.list({
-      calendarId: entry.calendarId,
-      timeMin: nyDateTime(from, 0),
-      timeMax: nyDateTime(addDaysIso(to, 1), 0),
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 250,
-    });
-    return (res.data.items || []).filter((e) => e.status !== "cancelled").map((e) => toReservation(entry, e));
+    const items = [];
+    let pageToken;
+    do {
+      const res = await calendarClient.events.list({
+        calendarId: entry.calendarId,
+        timeMin: nyDateTime(from, 0),
+        timeMax: nyDateTime(addDaysIso(to, 1), 0),
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 250,
+        ...(pageToken && { pageToken }),
+      });
+      items.push(...(res.data.items || []));
+      pageToken = res.data.nextPageToken;
+    } while (pageToken);
+    return items.filter((e) => e.status !== "cancelled").map((e) => toReservation(entry, e));
   }
 
   async function listReservations({ from, to, items }) {

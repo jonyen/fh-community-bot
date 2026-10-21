@@ -105,6 +105,21 @@ describe("rms adapter", () => {
     expect(res["2026-10-24"]).toEqual({ conflicts: [], unavailable: null });
   });
 
+  it("follows nextPageToken so a conflict on a later page is seen", async () => {
+    cal.events.list
+      .mockResolvedValueOnce({ data: { items: [ev("Early", "2026-10-17T09:00:00-04:00", "2026-10-17T10:00:00-04:00", { id: "P1" })], nextPageToken: "T2" } })
+      .mockResolvedValueOnce({ data: { items: [ev("Late", "2026-10-24T14:00:00-04:00", "2026-10-24T16:00:00-04:00", { id: "P2" })] } });
+    const res = await adapter.checkDates({ dates: ["2026-10-17", "2026-10-24"], start: 900, end: 960, items: [SET2] });
+    expect(cal.events.list).toHaveBeenCalledTimes(2);
+    expect(cal.events.list.mock.calls[1][0]).toEqual(expect.objectContaining({ pageToken: "T2" }));
+    expect(res["2026-10-24"].conflicts.map((c) => c.title)).toEqual(["Late"]);
+  });
+
+  it("returns an empty map and reads nothing for no dates", async () => {
+    expect(await adapter.checkDates({ dates: [], start: 900, end: 960, items: [SET2] })).toEqual({});
+    expect(cal.events.list).not.toHaveBeenCalled();
+  });
+
   it("books by inviting the resource and returns booked once accepted", async () => {
     const res = await adapter.book({
       date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night",
