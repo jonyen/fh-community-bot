@@ -4,9 +4,11 @@
 // its confirm quotes the sheet row as typed so a wrong match is easy to spot.
 import { fmtDay, fmtRange } from "./reservation-time.js";
 import { encodeRef, fitSection } from "./reservation-card.js";
+import { repeatText } from "./reservation-tray.js";
 
 export const MINE_CANCEL_ACTION = "reservation_mine_cancel";
 export const MINE_OPEN_ACTION = "reservation_mine_open";
+export const MINE_SERIES_ACTION = "reservation_mine_series";
 export const NONE_TEXT = "I don't see any upcoming bookings under your name.";
 const HEAD_TEXT = "Your upcoming bookings";
 const PARTIAL_TEXT = "⚠️ Some bookings couldn't be checked.";
@@ -14,6 +16,8 @@ const PARTIAL_TEXT = "⚠️ Some bookings couldn't be checked.";
 const VALUE_MAX = 2000;
 const CONFIRM_MAX = 300;
 
+// Slack reads mrkdwn: member text is escaped so it can't ping or link.
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const plain = (text) => ({ type: "plain_text", text });
 const section = (text, accessory) => ({ type: "section", text: { type: "mrkdwn", text: fitSection(text) }, ...(accessory ? { accessory } : {}) });
 
@@ -25,10 +29,17 @@ export function linksLine(links = {}) {
     .join(" · ");
 }
 
+// A booked repeat series is one line; its Cancel… asks which dates.
+function seriesLine(e) {
+  const title = String(e.title ?? "").trim();
+  return `📅 *${esc(e.item)}* · ${repeatText(e.repeat)} · ${e.count} date${e.count === 1 ? "" : "s"} left · ${fmtRange(e.start, e.end)}${title ? ` · ${esc(title)}` : ""}`;
+}
+
 function entryLine(e) {
+  if (e.series) return seriesLine(e);
   const title = String(e.title ?? "").trim();
   const source = e.matchedBy ? ` · from the ${e.matchedBy} sheet, matched by name` : "";
-  return `📅 *${e.item}* · ${fmtDay(e.date)} · ${fmtRange(e.start, e.end)}${title ? ` · ${title}` : ""}${source}`;
+  return `📅 *${esc(e.item)}* · ${fmtDay(e.date)} · ${fmtRange(e.start, e.end)}${title ? ` · ${esc(title)}` : ""}${source}`;
 }
 
 function confirmText(e) {
@@ -40,6 +51,10 @@ function confirmText(e) {
 }
 
 function accessoryFor(user, e) {
+  if (e.series) {
+    const value = JSON.stringify({ u: user, s: e.seriesId });
+    return value.length > VALUE_MAX ? null : { type: "button", action_id: MINE_SERIES_ACTION, text: plain("Cancel…"), value };
+  }
   if (e.openLink) return { type: "button", action_id: MINE_OPEN_ACTION, text: plain("Open in Calendar"), url: e.openLink };
   const value = encodeRef({ user, ref: e.ref });
   if (value.length > VALUE_MAX) return null;

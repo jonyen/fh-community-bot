@@ -6,7 +6,7 @@ import { findItem } from "./reservation-catalog.js";
 import { hhmmToMin } from "./reservation-time.js";
 import { APPLIANCES } from "../services/reservations/kitchen.js";
 
-const INTENTS = new Set(["book", "check", "list", "find", "mine", "other"]);
+const INTENTS = new Set(["book", "check", "list", "find", "mine", "browse", "other"]);
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const str = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
@@ -53,6 +53,7 @@ export function normalizeRequest(raw, catalog) {
     title: str(r.title),
     ministry: str(r.ministry),
     appliances,
+    search: str(r.search)?.slice(0, 60) ?? null,
   };
 }
 

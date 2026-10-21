@@ -93,7 +93,7 @@ describe("reservations with connected accounts", () => {
     expect(pending.request.requester).toEqual({ requesterName: "Deandra", requesterUserId: "U9", phone: "555", slackEmail: "deandra.shim@acts2.network" });
     expect(connect.consentUrl).toHaveBeenCalledWith({ state: "NONCE", loginHint: "deandra.shim@acts2.network" });
     const [prompt] = ephemerals();
-    expect(prompt).toMatchObject({ channel: "CRES", user: "U9", thread_ts: MSG_TS, username: "FH Reservations" });
+    expect(prompt).toMatchObject({ channel: "CRES", user: "U9", thread_ts: MSG_TS, username: "Reservations" });
     expect(prompt.text).toMatch(/connect your Google account once/);
     expect(prompt.blocks[1].elements[0]).toMatchObject({ type: "button", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE", action_id: "reservations_connect_google" });
     // The card stays open, so it can still be edited.
@@ -239,7 +239,7 @@ describe("reservations with connected accounts", () => {
       after.authStore.getPending.mockResolvedValue(row);
       await handler(after).resume({ pendingId: "P1", client });
       expect(adapters.rooms.cancel.mock.calls).toEqual([[ROOM_REF, { clients: MEMBER_CLIENTS }]]);
-      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: "🚫 Booking cancelled by <@U9>.", username: "FH Reservations", icon_emoji: ":calendar:" }]);
+      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: "🚫 Booking cancelled by <@U9>.", username: "Reservations", icon_emoji: ":calendar:" }]);
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       expect(client.chat.update).not.toHaveBeenCalled();
     });

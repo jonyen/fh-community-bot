@@ -20,6 +20,14 @@ describe("normalizeRequest", () => {
   it("normalizeRequest keeps intent mine", () => {
     expect(normalizeRequest({ intent: "mine" }, CAT).intent).toBe("mine");
   });
+  it("keeps the browse intent and its search words", () => {
+    const r = normalizeRequest({ intent: "browse", search: "  speakers  " }, CAT);
+    expect(r).toMatchObject({ intent: "browse", search: "speakers" });
+  });
+  it("cuts a long search to 60 characters and nulls a blank one", () => {
+    expect(normalizeRequest({ intent: "browse", search: "x".repeat(80) }, CAT).search).toHaveLength(60);
+    expect(normalizeRequest({ intent: "browse", search: " " }, CAT).search).toBeNull();
+  });
   it("treats an unknown intent as other", () => {
     expect(normalizeRequest({ intent: "chitchat" }, CAT).intent).toBe("other");
     expect(normalizeRequest(null, CAT).intent).toBe("other");

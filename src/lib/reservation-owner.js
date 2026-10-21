@@ -35,21 +35,47 @@ export function namesMatch(sheetName, member) {
   return [member?.realName, member?.displayName].some((n) => matchesCandidate(sheet, normalizeName(n)));
 }
 
+// The rooms key without its rooms: what keys looked like before rooms were
+// part of them, so a ref stored without rooms still matches.
+function roomsLegacyKey(ref) {
+  return `rooms:${ref.date}:${ref.start}:${ref.end}:${normalizeName(ref.title)}:${normalizeName(ref.holder)}`;
+}
+
 export function refKey(ref) {
   if (!ref) return "";
   if (ref.backend === "rms") return `rms:${ref.eventId}`;
   if (ref.backend === "rooms") {
-    return `rooms:${ref.date}:${ref.start}:${ref.end}:${normalizeName(ref.title)}:${normalizeName(ref.holder)}`;
+    // Two rows alike but for their rooms are two bookings.
+    if (!Array.isArray(ref.rooms)) return roomsLegacyKey(ref);
+    const rooms = ref.rooms.map((r) => String(r).trim().toLowerCase()).sort().join("|");
+    return `${roomsLegacyKey(ref)}:${rooms}`;
   }
   if (ref.backend === "kitchen") return `kitchen:${ref.row}:${ref.date}:${normalizeName(ref.name)}`;
   return "";
 }
 
+// Whether a set of refKeys holds this ref, by its key or (for a ref stored
+// before rooms were in the key) by the key without rooms.
+export function hasRefKey(keys, ref) {
+  const key = refKey(ref);
+  if (!key || !keys) return false;
+  return keys.has(key) || (ref.backend === "rooms" && keys.has(roomsLegacyKey(ref)));
+}
+
+// Whether two refs name the same booking; a rooms ref without rooms on
+// either side is compared without them.
+export function sameRef(a, b) {
+  const ka = refKey(a);
+  if (!ka || !b) return false;
+  if (ka === refKey(b)) return true;
+  return a.backend === "rooms" && b.backend === "rooms" && (!Array.isArray(a.rooms) || !Array.isArray(b.rooms))
+    && roomsLegacyKey(a) === roomsLegacyKey(b);
+}
+
 const last10 = (s) => String(s ?? "").replace(/\D/g, "").slice(-10);
 
 export function isMine(reservation, member, ledgerKeys) {
-  const key = refKey(reservation.ref);
-  if (key && ledgerKeys?.has(key)) return true;
+  if (hasRefKey(ledgerKeys, reservation.ref)) return true;
   if (reservation.holderUserId && reservation.holderUserId === member.userId) return true;
   const email = String(member.email ?? "").toLowerCase();
   if (email && String(reservation.holderEmail ?? "").toLowerCase() === email) return true;

@@ -151,6 +151,7 @@ export function getDeps() {
       livingDigest,
       claimBooking: connect ? connect.authStore.claimBooking : null,
       ledger,
+      trayStore: ledger,
     });
   }
 

@@ -6,6 +6,21 @@
 // the bot's account can't book resources.
 import { TZ, nyDateTime, nyLocal, nyParts, addDaysIso, overlaps } from "../../lib/reservation-time.js";
 import { calendarLink } from "../../lib/rms-catalog.js";
+import { log } from "../../lib/logger.js";
+
+const MAX_PAGES = 20;
+
+// The event was inserted, then something failed (reading the resource's
+// answer, or removing a declined event). The booking may exist, so this must
+// never be taken for a refusal (403, revoked grant) that leaves the date free
+// to book again.
+export function maybeWritten(err, eventId) {
+  const wrapped = new Error(`the calendar event was made but its answer couldn't be read (${err?.message || err})`);
+  wrapped.maybeWritten = true;
+  wrapped.eventId = eventId;
+  wrapped.cause = err;
+  return wrapped;
+}
 
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
@@ -65,6 +80,7 @@ function toReservation(entry, e) {
   };
 }
 
+const BOOK_IN_CALENDAR_TEXT = "Please book this one in Google Calendar (RMS) for now.";
 const isGone = (err) => [404, 410].includes(err?.code) || [404, 410].includes(err?.response?.status);
 
 export function createRmsAdapter({
@@ -73,16 +89,33 @@ export function createRmsAdapter({
 }) {
   const link = "https://calendar.google.com";
 
+  // Follows nextPageToken so a long span on a busy calendar is never cut off.
   async function eventsFor(entry, from, to) {
-    const res = await calendarClient.events.list({
-      calendarId: entry.calendarId,
-      timeMin: nyDateTime(from, 0),
-      timeMax: nyDateTime(addDaysIso(to, 1), 0),
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 250,
-    });
-    return (res.data.items || []).filter((e) => e.status !== "cancelled").map((e) => toReservation(entry, e));
+    const items = [];
+    let pageToken;
+    for (let page = 1; ; page++) {
+      const res = await calendarClient.events.list({
+        calendarId: entry.calendarId,
+        timeMin: nyDateTime(from, 0),
+        timeMax: nyDateTime(addDaysIso(to, 1), 0),
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 250,
+        ...(pageToken && { pageToken }),
+      });
+      // The same token again means the calendar is repeating a page; stop
+      // rather than loop forever or list its events twice.
+      if (pageToken && res.data.nextPageToken === pageToken) break;
+      items.push(...(res.data.items || []));
+      const next = res.data.nextPageToken;
+      if (!next) break;
+      if (page >= MAX_PAGES) {
+        log.warn("calendar paging hit the page cap", { calendarId: entry.calendarId, pages: page });
+        break;
+      }
+      pageToken = next;
+    }
+    return items.filter((e) => e.status !== "cancelled").map((e) => toReservation(entry, e));
   }
 
   async function listReservations({ from, to, items }) {
@@ -99,9 +132,31 @@ export function createRmsAdapter({
     return { reservations: results.flatMap((r) => r.ok || []), errors };
   }
 
+  // One calendar read per item over the whole span, however many dates.
+  async function readConflicts({ dates, start, end, items }) {
+    if (dates.length === 0) return {};
+    const sorted = [...dates].sort();
+    const lists = await mapLimit(items, concurrency, (entry) => eventsFor(entry, sorted[0], sorted.at(-1)));
+    const all = lists.flat();
+    return Object.fromEntries(dates.map((date) => [date, {
+      conflicts: all.filter((r) => r.date === date && overlaps(start, end, r.start, r.end)),
+      unavailable: null,
+    }]));
+  }
+
+  // Whether each date can be booked. With booking on the bot's calendar
+  // switched off, only a member's own account (clients) can book, so without
+  // it every date says where to book instead of looking free.
+  async function checkDates({ dates, start, end, items, clients = null }) {
+    if (!bookingEnabled && !clients) {
+      return Object.fromEntries(dates.map((date) => [date, { conflicts: [], unavailable: BOOK_IN_CALENDAR_TEXT }]));
+    }
+    return readConflicts({ dates, start, end, items });
+  }
+
+  // Who holds the item: answered from the calendars whatever the flag says.
   async function findConflicts({ date, start, end, items }) {
-    const lists = await mapLimit(items, concurrency, (entry) => eventsFor(entry, date, date));
-    return lists.flat().filter((r) => r.date === date && overlaps(start, end, r.start, r.end));
+    return (await readConflicts({ dates: [date], start, end, items }))[date].conflicts;
   }
 
   async function book({ date, start, end, items, title, requesterName, requesterUserId }, { clients } = {}) {
@@ -109,7 +164,7 @@ export function createRmsAdapter({
     // A connected member books on their own calendar; the flag only governs
     // booking on the bot's.
     if (!bookingEnabled && !clients) {
-      return { status: "unavailable", reason: "Please book this one in Google Calendar (RMS) for now.", link: itemLink };
+      return { status: "unavailable", reason: BOOK_IN_CALENDAR_TEXT, link: itemLink };
     }
     const cal = clients?.calendarClient || calendarClient;
     // The resource only processes the invite when it is sent; with "none" it
@@ -127,24 +182,41 @@ export function createRmsAdapter({
       },
     });
     const eventId = res.data.id;
-    // Resources answer the invite a few seconds after it is sent (about 6 s
-    // in a live test), so allow up to 12 s.
-    for (let attempt = 0; attempt < 8; attempt++) {
-      await sleep(1500);
-      const got = await cal.events.get({ calendarId: botCalendarId, eventId });
-      const resources = (got.data.attendees || []).filter((a) => a.resource);
-      const declined = resources.filter((a) => a.responseStatus === "declined");
-      if (declined.length > 0) {
-        await cal.events.delete({ calendarId: botCalendarId, eventId, sendUpdates: "none" });
-        return { status: "unavailable", reason: "The calendar declined the booking (it may already be taken).", link: itemLink };
+    try {
+      // Resources answer the invite a few seconds after it is sent (about 6 s
+      // in a live test), so allow up to 12 s.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await sleep(1500);
+        const got = await cal.events.get({ calendarId: botCalendarId, eventId });
+        const resources = (got.data.attendees || []).filter((a) => a.resource);
+        const declined = resources.filter((a) => a.responseStatus === "declined");
+        if (declined.length > 0) {
+          await cal.events.delete({ calendarId: botCalendarId, eventId, sendUpdates: "none" });
+          return { status: "unavailable", reason: "The calendar declined the booking (it may already be taken).", link: itemLink };
+        }
+        if (resources.every((a) => a.responseStatus === "accepted")) break;
       }
-      if (resources.every((a) => a.responseStatus === "accepted")) break;
+    } catch (err) {
+      log.error("calendar booking failed after its event was made", { eventId, error: err });
+      throw maybeWritten(err, eventId);
     }
     const ref = {
       backend: "rms", eventId, organizerEmail: null, organizerSelf: !clients,
       resources: items.map((i) => i.calendarId), date, start, end, title: `${title} — ${requesterName}`,
     };
     return { status: "booked", link: itemLink, ref };
+  }
+
+  // Each booking waits on its resource's answer (1.5-12 s), so they run four
+  // at a time; one failing never stops the others.
+  function bookMany(bookings, { clients } = {}) {
+    return mapLimit(bookings, 4, async (b) => {
+      try {
+        return await book(b, { clients });
+      } catch (err) {
+        return { status: "error", error: err };
+      }
+    });
   }
 
   // Delete an event the bot made when nobody else is invited; otherwise
@@ -179,5 +251,5 @@ export function createRmsAdapter({
     return { status: "cancelled", link: itemLink };
   }
 
-  return { backend: "rms", link, listReservations, findConflicts, book, cancel };
+  return { backend: "rms", link, listReservations, checkDates, findConflicts, book, bookMany, cancel };
 }

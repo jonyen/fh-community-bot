@@ -30,7 +30,7 @@ describe("createLivingDigest", () => {
     const p = client.chat.postMessage.mock.calls[0][0];
     expect(p).toMatchObject({
       channel: "CRES",
-      username: "FH Reservations",
+      username: "Reservations",
       metadata: { event_type: "reservation_digest", event_payload: { from: "2026-10-19", to: "2026-10-22" } },
     });
     expect(p.text).toContain("• 7:00–10:00 PM · MPR · Equipping (John)");
@@ -57,7 +57,9 @@ describe("createLivingDigest", () => {
     const adapters = { rooms: makeAdapter("rooms", { reservations: [WEEKEND_RES], errors: [] }) };
     const ok = await createLivingDigest({ client, adapters, channelId: "CRES", escalationUserId: "UOPS" }).refresh("2026-10-24");
     expect(ok).toBe(true);
-    expect(client.conversations.history).toHaveBeenCalledWith({ channel: "CRES", limit: 100, include_all_metadata: true });
+    expect(client.conversations.history).toHaveBeenCalledWith({
+      channel: "CRES", limit: 200, include_all_metadata: true, oldest: String(Date.parse("2026-10-16T00:00:00-04:00") / 1000),
+    });
     expect(adapters.rooms.listReservations).toHaveBeenCalledWith({ from: "2026-10-23", to: "2026-10-25" });
     expect(client.chat.update).toHaveBeenCalledTimes(1);
     const u = client.chat.update.mock.calls[0][0];
@@ -74,5 +76,30 @@ describe("createLivingDigest", () => {
     expect(ok).toBe(false);
     expect(client.chat.update).not.toHaveBeenCalled();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("refresh pages back through history to find an older digest", async () => {
+    client.conversations.history
+      .mockResolvedValueOnce({ messages: [{ ts: "1792400000.1" }], response_metadata: { next_cursor: "c2" } })
+      .mockResolvedValueOnce({ messages: [digestMsg("1792300000.1", "2026-10-23", "2026-10-25")], response_metadata: { next_cursor: "" } });
+    const adapters = { rooms: makeAdapter("rooms", { reservations: [WEEKEND_RES], errors: [] }) };
+    const ok = await createLivingDigest({ client, adapters, channelId: "CRES" }).refresh("2026-10-24");
+    expect(ok).toBe(true);
+    expect(client.conversations.history).toHaveBeenNthCalledWith(2, expect.objectContaining({ channel: "CRES", cursor: "c2", limit: 200, include_all_metadata: true }));
+    expect(client.chat.update).toHaveBeenCalledWith(expect.objectContaining({ ts: "1792300000.1" }));
+  });
+
+  it("refresh stops after 5 pages", async () => {
+    client.conversations.history.mockResolvedValue({ messages: [{ ts: "1792400000.1" }], response_metadata: { next_cursor: "more" } });
+    const ok = await createLivingDigest({ client, adapters: {}, channelId: "CRES" }).refresh("2026-10-24");
+    expect(ok).toBe(false);
+    expect(client.conversations.history).toHaveBeenCalledTimes(5);
+  });
+
+  it("refresh stops once messages are older than a week before the period", async () => {
+    client.conversations.history.mockResolvedValue({ messages: [{ ts: "1.0" }], response_metadata: { next_cursor: "more" } });
+    const ok = await createLivingDigest({ client, adapters: {}, channelId: "CRES" }).refresh("2026-10-24");
+    expect(ok).toBe(false);
+    expect(client.conversations.history).toHaveBeenCalledTimes(1);
   });
 });

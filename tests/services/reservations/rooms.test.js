@@ -76,6 +76,17 @@ describe("rooms adapter", () => {
     expect(hits.map((h) => h.title)).toEqual(["Whole building"]);
   });
 
+  it("checks many dates with one read of the sheet", async () => {
+    const res = await adapter.checkDates({
+      dates: ["2026-10-24", "2026-10-31"], start: 840, end: 900, items: [{ label: "Parking Lot" }],
+    });
+    expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+    expect(Object.keys(res)).toEqual(["2026-10-24", "2026-10-31"]);
+    expect(res["2026-10-24"].conflicts.map((c) => c.title)).toEqual(["Rally"]);
+    expect(res["2026-10-24"].unavailable).toBeNull();
+    expect(res["2026-10-31"]).toEqual({ conflicts: [], unavailable: null });
+  });
+
   it("appends a row with blank status", async () => {
     const res = await adapter.book({
       date: "2026-10-28", start: 1140, end: 1260, items: [{ label: "MPR" }, { label: "Parking Lot" }],
@@ -118,6 +129,59 @@ describe("rooms adapter", () => {
     );
     expect(member.spreadsheets.values.append).toHaveBeenCalledTimes(1);
     expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+  });
+
+  describe("bookMany", () => {
+    const mk = (date, title) => ({
+      date, start: 1140, end: 1260, items: [{ label: "MPR" }], title, ministry: "AYM", requesterName: "Deandra Shim",
+    });
+
+    it("appends every row in one call and returns a ref per booking", async () => {
+      const res = await adapter.bookMany([mk("2026-10-28", "A"), mk("2026-11-04", "B"), mk("2026-11-11", "C")]);
+      expect(sheets.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+      const call = sheets.spreadsheets.values.append.mock.calls[0][0];
+      expect(call.range).toBe("'Upcoming Room Requests'!A:I");
+      expect(call.requestBody.values).toEqual([
+        ["A", "Wed, 10/28/26", "7:00 PM", "9:00 PM", "AYM", "Deandra Shim", "MPR", "", "Booked via #reservations"],
+        ["B", "Wed, 11/4/26", "7:00 PM", "9:00 PM", "AYM", "Deandra Shim", "MPR", "", "Booked via #reservations"],
+        ["C", "Wed, 11/11/26", "7:00 PM", "9:00 PM", "AYM", "Deandra Shim", "MPR", "", "Booked via #reservations"],
+      ]);
+      expect(res.map((r) => r.status)).toEqual(["booked", "booked", "booked"]);
+      expect(res.map((r) => r.ref.date)).toEqual(["2026-10-28", "2026-11-04", "2026-11-11"]);
+      expect(res[0].link).toBe("https://rooms");
+    });
+
+    it("makes every result an error when the append fails", async () => {
+      sheets.spreadsheets.values.append.mockRejectedValue(new Error("quota"));
+      const res = await adapter.bookMany([mk("2026-10-28", "A"), mk("2026-11-04", "B"), mk("2026-11-11", "C")]);
+      expect(res).toEqual(Array(3).fill({ status: "error", error: expect.objectContaining({ message: "quota" }) }));
+    });
+
+    it("keeps the error object, so a 403 can be told from other failures", async () => {
+      sheets.spreadsheets.values.append.mockRejectedValue(Object.assign(new Error("The caller does not have permission"), { code: 403 }));
+      const [res] = await adapter.bookMany([mk("2026-10-28", "A")]);
+      expect(res.status).toBe("error");
+      expect(res.error).toBeInstanceOf(Error);
+      expect(res.error.code).toBe(403);
+    });
+
+    it("returns errors instead of throwing on a malformed booking", async () => {
+      const res = await adapter.bookMany([mk("2026-10-28", "A"), { ...mk("2026-11-04", "B"), items: undefined }]);
+      expect(res.map((r) => r.status)).toEqual(["error", "error"]);
+      expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+    });
+
+    it("returns [] without appending when given nothing", async () => {
+      expect(await adapter.bookMany([])).toEqual([]);
+      expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+    });
+
+    it("writes with the member's Sheets client when given", async () => {
+      const member = { spreadsheets: { values: { append: vi.fn().mockResolvedValue({}) } } };
+      await adapter.bookMany([mk("2026-10-28", "A")], { clients: { sheetsClient: member } });
+      expect(member.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+      expect(sheets.spreadsheets.values.append).not.toHaveBeenCalled();
+    });
   });
 
   it("treats Canceled rows as free", async () => {

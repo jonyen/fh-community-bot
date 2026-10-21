@@ -10,7 +10,7 @@ export const MODAL_CALLBACK = "reservation_edit_modal";
 export const ITEM_ACTION = "reservation_items";
 
 const pad = (n) => String(n).padStart(2, "0");
-const hhmm = (min) => `${pad(Math.floor(min / 60) % 24)}:${pad(min % 60)}`;
+export const hhmm = (min) => `${pad(Math.floor(min / 60) % 24)}:${pad(min % 60)}`;
 const plain = (text) => ({ type: "plain_text", text });
 const option = (label) => ({ text: plain(label), value: label });
 
@@ -18,7 +18,7 @@ function input(blockId, label, element, { optional = false } = {}) {
   return { type: "input", block_id: blockId, label: plain(label), element: { action_id: blockId, ...element }, ...(optional ? { optional: true } : {}) };
 }
 
-function applianceBlocks(appliances) {
+export function applianceBlocks(appliances) {
   const bools = APPLIANCES.filter((a) => a.kind === "bool");
   const checked = bools.filter((a) => appliances[a.key] === true).map((a) => ({ text: plain(a.label), value: a.key }));
   return [
@@ -61,11 +61,24 @@ const values = (view) => view?.state?.values || {};
 
 // The timepicker has no 24:00, so an end of 00:00 after a later start is
 // midnight at the end of the day (1440, as the adapters read it).
-function readTimes(v) {
-  const start = hhmmToMin(v.start?.start?.selected_time);
-  let end = hhmmToMin(v.end?.end?.selected_time);
+export function toTimes(startHHMM, endHHMM) {
+  const start = hhmmToMin(startHHMM);
+  let end = hhmmToMin(endHHMM);
   if (end === 0 && start > 0) end = 1440;
   return { start, end };
+}
+
+const readTimes = (v) => toTimes(v.start?.start?.selected_time, v.end?.end?.selected_time);
+
+// Kitchen equipment from a view's or message's state values.
+export function readAppliances(v) {
+  const appliances = {};
+  for (const o of v.appliances?.appliances?.selected_options || []) appliances[o.value] = true;
+  for (const a of APPLIANCES.filter((x) => x.kind === "count")) {
+    const n = Number(v[`count_${a.key}`]?.[`count_${a.key}`]?.value);
+    if (Number.isInteger(n) && n > 0) appliances[a.key] = n;
+  }
+  return appliances;
 }
 
 export function readEditModal(view, catalog) {
@@ -76,12 +89,7 @@ export function readEditModal(view, catalog) {
   } catch {
     meta = {};
   }
-  const appliances = {};
-  for (const o of v.appliances?.appliances?.selected_options || []) appliances[o.value] = true;
-  for (const a of APPLIANCES.filter((x) => x.kind === "count")) {
-    const n = Number(v[`count_${a.key}`]?.[`count_${a.key}`]?.value);
-    if (Number.isInteger(n) && n > 0) appliances[a.key] = n;
-  }
+  const appliances = readAppliances(v);
   const items = (v.items?.[ITEM_ACTION]?.selected_options || []).map((o) => findItem(catalog, o.value)).filter(Boolean);
   return {
     user: meta.u, channel: meta.c, threadTs: meta.th, cardTs: meta.ct,

@@ -86,6 +86,64 @@ describe("rms adapter", () => {
     expect(hits.map((h) => h.title)).toEqual(["A"]);
   });
 
+  it("checks many dates with one calendar read per item over the whole span", async () => {
+    cal.events.list.mockImplementation(async ({ calendarId }) => ({
+      data: { items: calendarId === SET2.calendarId ? [
+        ev("Youth night", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { id: "EV1" }),
+        ev("Elsewhere", "2026-10-20T14:00:00-04:00", "2026-10-20T16:00:00-04:00", { id: "EV2" }),
+      ] : [] },
+    }));
+    const res = await adapter.checkDates({
+      dates: ["2026-10-24", "2026-10-17"], start: 900, end: 960, items: [SET2, POOL],
+    });
+    expect(cal.events.list).toHaveBeenCalledTimes(2);
+    expect(cal.events.list).toHaveBeenCalledWith(expect.objectContaining({
+      calendarId: SET2.calendarId, timeMin: "2026-10-17T00:00:00-04:00", timeMax: "2026-10-25T00:00:00-04:00",
+    }));
+    expect(res["2026-10-17"].conflicts.map((c) => c.title)).toEqual(["Youth night"]);
+    expect(res["2026-10-17"].unavailable).toBeNull();
+    expect(res["2026-10-24"]).toEqual({ conflicts: [], unavailable: null });
+  });
+
+  it("follows nextPageToken so a conflict on a later page is seen", async () => {
+    cal.events.list
+      .mockResolvedValueOnce({ data: { items: [ev("Early", "2026-10-17T09:00:00-04:00", "2026-10-17T10:00:00-04:00", { id: "P1" })], nextPageToken: "T2" } })
+      .mockResolvedValueOnce({ data: { items: [ev("Late", "2026-10-24T14:00:00-04:00", "2026-10-24T16:00:00-04:00", { id: "P2" })] } });
+    const res = await adapter.checkDates({ dates: ["2026-10-17", "2026-10-24"], start: 900, end: 960, items: [SET2] });
+    expect(cal.events.list).toHaveBeenCalledTimes(2);
+    expect(cal.events.list.mock.calls[1][0]).toEqual(expect.objectContaining({ pageToken: "T2" }));
+    expect(res["2026-10-24"].conflicts.map((c) => c.title)).toEqual(["Late"]);
+  });
+
+  it("stops when the calendar keeps returning the same page token", async () => {
+    cal.events.list.mockResolvedValue({
+      data: { items: [ev("Once", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { id: "L1" })], nextPageToken: "SAME" },
+    });
+    const { reservations } = await adapter.listReservations({ from: "2026-10-17", to: "2026-10-17", items: [SET2] });
+    expect(cal.events.list).toHaveBeenCalledTimes(2);
+    expect(reservations.map((r) => r.title)).toEqual(["Once"]);
+  });
+
+  it("with booking on the bot's calendar off, says where to book for each date unless the member's account will book", async () => {
+    const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
+    const text = "Please book this one in Google Calendar (RMS) for now.";
+    expect(await off.checkDates({ dates: ["2026-10-24", "2026-10-31"], start: 900, end: 960, items: [SET2] })).toEqual({
+      "2026-10-24": { conflicts: [], unavailable: text }, "2026-10-31": { conflicts: [], unavailable: text },
+    });
+    expect(cal.events.list).not.toHaveBeenCalled();
+    const asMember = await off.checkDates({ dates: ["2026-10-24"], start: 900, end: 960, items: [SET2], clients: { calendarClient: cal } });
+    expect(asMember["2026-10-24"]).toEqual({ conflicts: [], unavailable: null });
+    // Who holds an item is still read from the calendar.
+    cal.events.list.mockClear();
+    await off.findConflicts({ date: "2026-10-24", start: 900, end: 960, items: [SET2] });
+    expect(cal.events.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an empty map and reads nothing for no dates", async () => {
+    expect(await adapter.checkDates({ dates: [], start: 900, end: 960, items: [SET2] })).toEqual({});
+    expect(cal.events.list).not.toHaveBeenCalled();
+  });
+
   it("books by inviting the resource and returns booked once accepted", async () => {
     const res = await adapter.book({
       date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "Youth night",
@@ -140,6 +198,53 @@ describe("rms adapter", () => {
     expect(res.status).toBe("unavailable");
     expect(res.reason).toMatch(/declined/i);
     expect(cal.events.delete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "E1", sendUpdates: "none" });
+  });
+
+  it.each([
+    ["a 403 reading the answer", "get", Object.assign(new Error("Rate Limit Exceeded"), { code: 403 })],
+    ["a revoked grant reading the answer", "get", Object.assign(new Error("invalid_grant"), { response: { data: { error: "invalid_grant" } } })],
+    ["a failure deleting a declined event", "delete", Object.assign(new Error("Forbidden"), { code: 403 })],
+  ])("after the event is made, %s comes back as maybe written, with the event id", async (_, call, err) => {
+    if (call === "delete") cal.events.get.mockResolvedValue({ data: { attendees: [{ email: SET2.calendarId, resource: true, responseStatus: "declined" }] } });
+    cal.events[call].mockRejectedValue(err);
+    const book = { date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" };
+    const error = await adapter.book(book).catch((e) => e);
+    expect(error.maybeWritten).toBe(true);
+    expect(error.eventId).toBe("E1");
+    expect(error.code).toBeUndefined();
+    expect(error.response).toBeUndefined();
+    const [res] = await adapter.bookMany([book]);
+    expect(res).toEqual({ status: "error", error: expect.objectContaining({ maybeWritten: true, eventId: "E1" }) });
+  });
+
+  it("a failed insert is passed on as it is, so a refusal can be told apart", async () => {
+    const denied = Object.assign(new Error("Forbidden"), { code: 403 });
+    cal.events.insert.mockRejectedValue(denied);
+    const [res] = await adapter.bookMany([{ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: "T", requesterName: "D", requesterUserId: "U9" }]);
+    expect(res).toEqual({ status: "error", error: denied });
+  });
+
+  describe("bookMany", () => {
+    const mk = (n) => ({ date: "2026-10-17", start: 840, end: 960, items: [SET2], title: `T${n}`, requesterName: "D", requesterUserId: "U9" });
+
+    it("books at most 4 at a time and turns a thrown insert into an error", async () => {
+      let inFlight = 0;
+      let peak = 0;
+      cal.events.insert.mockImplementation(async ({ requestBody }) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        if (requestBody.summary.startsWith("T3 ")) throw new Error("boom");
+        return { data: { id: "E" + requestBody.summary } };
+      });
+      const res = await adapter.bookMany(Array.from({ length: 10 }, (_, i) => mk(i)));
+      expect(peak).toBe(4);
+      expect(res).toHaveLength(10);
+      expect(res[3]).toEqual({ status: "error", error: expect.objectContaining({ message: "boom" }) });
+      expect(res.filter((r) => r.status === "booked")).toHaveLength(9);
+      expect(res[0].ref.title).toBe("T0 — D");
+    });
   });
 
   it("does not write when booking is disabled", async () => {

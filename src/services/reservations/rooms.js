@@ -54,34 +54,65 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
     return { reservations: rows.map(toReservation), errors: [] };
   }
 
-  async function findConflicts({ date, start, end, items }) {
-    const wanted = items.map((i) => i.label);
-    return (await readRows())
-      .filter((r) => r.date === date && overlaps(start, end, r.start, r.end) && roomsConflict(wanted, r.rooms))
-      .map(toReservation);
+  // memo (a Map shared by one redraw's checks) keeps it to one sheet read
+  // however many tray lines are checked.
+  function rowsFor(memo) {
+    if (!memo) return readRows();
+    const key = `rooms:${spreadsheetId}:${tab}`;
+    if (!memo.has(key)) memo.set(key, readRows());
+    return memo.get(key);
   }
 
-  async function book({ date, start, end, items, title, ministry, requesterName }, { clients } = {}) {
+  // One read of the sheet answers every date, so a weekly repeat costs the same as one day.
+  async function checkDates({ dates, start, end, items, memo = null }) {
+    const wanted = items.map((i) => i.label);
+    const rows = await rowsFor(memo);
+    return Object.fromEntries(dates.map((date) => [date, {
+      conflicts: rows
+        .filter((r) => r.date === date && overlaps(start, end, r.start, r.end) && roomsConflict(wanted, r.rooms))
+        .map(toReservation),
+      unavailable: null,
+    }]));
+  }
+
+  async function findConflicts({ date, start, end, items }) {
+    return (await checkDates({ dates: [date], start, end, items }))[date].conflicts;
+  }
+
+  const rowOf = ({ date, start, end, items, title, ministry, requesterName }) => [
+    sheetText(title), formatSheetDate(date), fmtTime(start), fmtTime(end), sheetText(ministry || ""),
+    sheetText(requesterName), items.map((i) => i.label).join("\n"), "", "Booked via #reservations",
+  ];
+
+  const bookedRef = ({ date, start, end, items, title, requesterName }) =>
+    refOf({ date, start, end, title: String(title).trim(), holder: String(requesterName).trim(), rooms: items.map((i) => i.label) });
+
+  const append = (writer, rows) => writer.spreadsheets.values.append({
+    spreadsheetId,
+    range: `'${tab}'!A:I`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: rows },
+  });
+
+  async function book(booking, { clients } = {}) {
     // Written as the member when they are connected, so the sheet's edit
     // history shows them.
     const writer = clients?.sheetsClient || sheetsClient;
-    await writer.spreadsheets.values.append({
-      spreadsheetId,
-      range: `'${tab}'!A:I`,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: {
-        values: [[
-          sheetText(title), formatSheetDate(date), fmtTime(start), fmtTime(end), sheetText(ministry || ""),
-          sheetText(requesterName), items.map((i) => i.label).join("\n"), "", "Booked via #reservations",
-        ]],
-      },
-    });
-    const ref = {
-      backend: "rooms", date, start, end, title: String(title).trim(), holder: String(requesterName).trim(),
-      rooms: items.map((i) => i.label),
-    };
-    return { status: "booked", link, ref };
+    await append(writer, [rowOf(booking)]);
+    return { status: "booked", link, ref: bookedRef(booking) };
+  }
+
+  // Every date in one append, so "reserve all" is one write however many dates.
+  async function bookMany(bookings, { clients } = {}) {
+    if (bookings.length === 0) return [];
+    const writer = clients?.sheetsClient || sheetsClient;
+    try {
+      await append(writer, bookings.map(rowOf));
+      return bookings.map((b) => ({ status: "booked", link, ref: bookedRef(b) }));
+    } catch (err) {
+      return bookings.map(() => ({ status: "error", error: err }));
+    }
   }
 
   async function cancel(ref, { clients } = {}) {
@@ -98,5 +129,5 @@ export function createRoomsAdapter({ sheetsClient, spreadsheetId, tab, link, now
     return { status: "cancelled", link };
   }
 
-  return { backend: "rooms", link, listReservations, findConflicts, book, cancel };
+  return { backend: "rooms", link, listReservations, checkDates, findConflicts, book, bookMany, cancel };
 }

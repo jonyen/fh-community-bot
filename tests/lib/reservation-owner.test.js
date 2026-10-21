@@ -1,6 +1,6 @@
 // tests/lib/reservation-owner.test.js
 import { describe, it, expect } from "vitest";
-import { normalizeName, namesMatch, isMine, refKey } from "../../src/lib/reservation-owner.js";
+import { normalizeName, namesMatch, isMine, refKey, hasRefKey, sameRef } from "../../src/lib/reservation-owner.js";
 
 const M = { userId: "U1", realName: "Jon Yen", displayName: "jy", email: "jon@x.org", phone: "+1 (571) 555-0101" };
 
@@ -42,6 +42,29 @@ describe("reservation-owner", () => {
     expect(refKey({ backend: "rms", eventId: "e1" })).toBe("rms:e1");
     expect(refKey({ backend: "rooms", date: "2026-10-24", start: 600, end: 660, title: "Rally (x)", holder: "José" }))
       .toBe("rooms:2026-10-24:600:660:rally:jose");
+    expect(refKey({ backend: "rooms", date: "2026-10-24", start: 600, end: 660, title: "Rally (x)", holder: "José", rooms: ["MPR", "Chapel"] }))
+      .toBe("rooms:2026-10-24:600:660:rally:jose:chapel|mpr");
     expect(refKey({ backend: "kitchen", row: 9, date: "2026-10-24", name: "Jon Yen" })).toBe("kitchen:9:2026-10-24:jon yen");
+  });
+  describe("rooms keys include the rooms", () => {
+    const base = { backend: "rooms", date: "2026-10-24", start: 600, end: 660, title: "Rally", holder: "jy2" };
+    const mpr = { ...base, rooms: ["MPR"] };
+    const chapel = { ...base, rooms: ["Chapel"] };
+    it("tells apart two rows alike but for their rooms, whatever the rooms' order", () => {
+      expect(refKey(mpr)).not.toBe(refKey(chapel));
+      expect(refKey({ ...base, rooms: ["MPR", "Chapel"] })).toBe(refKey({ ...base, rooms: ["Chapel", "MPR"] }));
+      expect(isMine({ holderName: "Pat Doe", ref: chapel }, M, new Set([refKey(mpr)]))).toBe(false);
+      expect(isMine({ holderName: "Pat Doe", ref: mpr }, M, new Set([refKey(mpr)]))).toBe(true);
+      expect(sameRef(mpr, chapel)).toBe(false);
+      expect(sameRef(mpr, { ...mpr, rooms: ["MPR"] })).toBe(true);
+    });
+    it("still matches a ref stored without rooms", () => {
+      const keys = new Set([refKey(base)]);
+      expect(hasRefKey(keys, mpr)).toBe(true);
+      expect(isMine({ holderName: "Pat Doe", ref: mpr }, M, keys)).toBe(true);
+      expect(sameRef(base, mpr)).toBe(true);
+      expect(sameRef(mpr, base)).toBe(true);
+      expect(hasRefKey(new Set([refKey(mpr)]), chapel)).toBe(false);
+    });
   });
 });
