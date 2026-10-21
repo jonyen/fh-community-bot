@@ -4,7 +4,7 @@ import { createReservationsHandler } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
 import { BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE, decodeCard, decodeRef, encodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
-import { MINE_CANCEL_ACTION } from "../../src/lib/reservation-mine.js";
+import { MINE_CANCEL_ACTION, MINE_SERIES_ACTION } from "../../src/lib/reservation-mine.js";
 import { log } from "../../src/lib/logger.js";
 import { buildEditModal, ITEM_ACTION } from "../../src/lib/reservation-modal.js";
 
@@ -767,6 +767,41 @@ describe("my reservations", () => {
     expect(lines(m)[0]).toContain("T0");
     expect(sectionTexts(m).at(-1)).toBe(`…and 3 more. ${LINKS}`);
     expect(m.blocks.length).toBeLessThanOrEqual(50);
+  });
+
+  it("mine shows a 14-date series as one line, first, with Cancel… opening the chooser", async () => {
+    const dates = Array.from({ length: 14 }, (_, i) => new Date(Date.UTC(2026, 9, 24 + 7 * i)).toISOString().slice(0, 10));
+    const rows = dates.map((date) => room({ date, start: 840, end: 960, holder: "D. S.", holderName: "D. S." }));
+    const series = { id: "L1-run1", item: "MPR", start: 840, end: 960, title: "MBS", repeat: { days: [6], until: dates.at(-1) }, channel: "CRES", postTs: "500.1", refs: rows.map((r) => r.ref) };
+    ledger.seriesFor = vi.fn().mockResolvedValue([series]);
+    ledger.bookingsFor.mockResolvedValue(series.refs);
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: [...rows.slice(0, 9), room({ date: "2026-10-22", title: "Other" })], errors: [] });
+    await ask(make());
+    const m = reply();
+    expect(ledger.seriesFor).toHaveBeenCalledWith("U9", { today: "2026-10-20" });
+    expect(lines(m)).toEqual([
+      "📅 *MPR* · every Sat until Sat 1/23 · 14 dates left · 2:00–4:00 PM · MBS",
+      "📅 *MPR* · Thu 10/22 · 10:00 AM–12:00 PM · Other · from the rooms sheet, matched by name",
+    ]);
+    const b = m.blocks.find((x) => x.accessory).accessory;
+    expect(b).toMatchObject({ type: "button", action_id: MINE_SERIES_ACTION, text: { text: "Cancel…" } });
+    expect(JSON.parse(b.value)).toEqual({ u: "U9", s: "L1-run1" });
+
+    // Cancel… replaces the list with the series chooser.
+    await make().handleCardAction({ payload: listPress(b.value, { actions: [{ action_id: MINE_SERIES_ACTION, value: b.value }] }), client });
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(body.replace_original).toBe(true);
+    expect(body.blocks.find((x) => x.type === "actions").elements.map((e) => e.action_id)).toEqual(["reservation_series_all", "reservation_series_one"]);
+  });
+
+  it("series lines count toward the 20-line cap", async () => {
+    const one = (i) => ({ id: `S${i}`, item: "MPR", start: 840, end: 960, title: `S${i}`, repeat: { days: [6], until: "2026-11-07" }, channel: "CRES", postTs: null, refs: [room({ date: "2026-10-24", start: 840 + i, title: `S${i}` }).ref] });
+    ledger.seriesFor = vi.fn().mockResolvedValue([one(1), one(2), one(3)]);
+    adapters.rooms.listReservations.mockResolvedValue({ reservations: Array.from({ length: 20 }, (_, i) => room({ start: 600 + i, title: `T${i}` })), errors: [] });
+    await ask(make());
+    expect(lines(reply())).toHaveLength(20);
+    expect(lines(reply())[0]).toContain("S1");
+    expect(sectionTexts(reply()).at(-1)).toBe(`…and 3 more. ${LINKS}`);
   });
 
   it("mine with nothing found gives the empty copy and links", async () => {

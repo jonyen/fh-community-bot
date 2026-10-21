@@ -1,6 +1,6 @@
 // tests/lib/reservation-mine.test.js
 import { describe, it, expect } from "vitest";
-import { mineMessage, MINE_CANCEL_ACTION } from "../../src/lib/reservation-mine.js";
+import { mineMessage, MINE_CANCEL_ACTION, MINE_SERIES_ACTION } from "../../src/lib/reservation-mine.js";
 import { decodeRef } from "../../src/lib/reservation-card.js";
 
 const RMS_REF = { backend: "rms", eventId: "ev1", organizerEmail: null, organizerSelf: true, resources: ["t2"], date: "2026-10-21", start: 840, end: 960, title: "Youth night" };
@@ -91,6 +91,18 @@ describe("mineMessage", () => {
     const big = { ...RMS, ref: { ...RMS_REF, title: "x".repeat(2100) } };
     const m = mineMessage({ user: "U9", entries: [big], more: 0, links: LINKS });
     expect(sections(m)[1].accessory).toBeUndefined();
+  });
+
+  it("a series is one line with its repeat, dates left and time, and a Cancel… that opens the chooser", () => {
+    const series = { series: true, seriesId: "L1-run1", item: "MPR", repeat: { days: [6, 0], until: "2026-12-20" }, count: 14, start: 840, end: 960, title: "MBS" };
+    const m = mineMessage({ user: "U9", entries: [series, RMS], more: 0, links: LINKS });
+    const [, line, single] = sections(m);
+    expect(line.text.text).toBe("📅 *MPR* · every Sat, Sun until Sun 12/20 · 14 dates left · 2:00–4:00 PM · MBS");
+    expect(MINE_SERIES_ACTION).toBe("reservation_mine_series");
+    expect(line.accessory).toEqual({ type: "button", action_id: MINE_SERIES_ACTION, text: { type: "plain_text", text: "Cancel…" }, value: JSON.stringify({ u: "U9", s: "L1-run1" }) });
+    expect(single.accessory.action_id).toBe(MINE_CANCEL_ACTION);
+    const one = mineMessage({ user: "U9", entries: [{ ...series, count: 1 }], more: 0, links: LINKS });
+    expect(sections(one)[1].text.text).toContain(" · 1 date left · ");
   });
 
   it("stays under 50 blocks at the cap", () => {

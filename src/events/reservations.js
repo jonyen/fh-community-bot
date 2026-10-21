@@ -24,6 +24,7 @@ import { isMine, refKey } from "../lib/reservation-owner.js";
 import { calendarLink } from "../lib/rms-catalog.js";
 import { createListingFlow } from "./reservations-listing.js";
 import { createReserveAll } from "./reservations-reserve-all.js";
+import { createSeriesFlow } from "./reservations-series.js";
 import { TRAY_RESERVE_ACTION } from "../lib/reservation-listing.js";
 
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
@@ -246,6 +247,51 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return (ref.end ?? 1440) <= nyParts(now().toISOString()).min;
   }
 
+  // One cancel as `clients` (the member's), or as the bot when there are
+  // none. A calendar event the bot organized is always the bot's to cancel;
+  // one on a member's calendar can't be without their account. Never throws:
+  // the outcome is { status: cancelled|already|changed|revoked|forbidden|
+  // unsupported|error, link, error? }.
+  async function cancelOne({ ref, user, clients = null }) {
+    const adapter = adapters[ref?.backend];
+    if (!adapter) return { status: "error", link: null, error: new Error(`no ${ref?.backend} backend`) };
+    const botsOwnEvent = ref.backend === "rms" && ref.organizerSelf;
+    const as = botsOwnEvent ? null : clients;
+    if (ref.backend === "rms" && !botsOwnEvent && !as) return { status: "unsupported", link: adapter.link };
+    let result;
+    try {
+      result = as ? await adapter.cancel(ref, { clients: as }) : await adapter.cancel(ref);
+    } catch (error) {
+      const kind = as ? classifyWriteError(error) : "error";
+      if (kind === "error") {
+        metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend, stage: "cancel" } });
+        log.error("reservation cancel failed", { backend: adapter.backend, user, error });
+      }
+      return { status: kind, link: adapter.link, error };
+    }
+    if (result.status === "cancelled") {
+      metric("ReservationCancelled", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
+      return { status: "cancelled", link: result.link };
+    }
+    return { status: result.status === "already" ? "already" : "changed", link: result.link };
+  }
+
+  // What a cancel's outcome tells the member.
+  function cancelText(ref, out, user) {
+    const adapter = adapters[ref.backend];
+    switch (out.status) {
+      case "cancelled": return `🚫 Booking cancelled by <@${user}>.`;
+      case "already": return "That booking was already cancelled.";
+      case "changed": return `I couldn't find that booking as it was; it may have been changed. Please check it here: ${out.link}`;
+      case "unsupported": return `I can't cancel that one from here. Please cancel it in Google Calendar: ${adapter.link}`;
+      case "forbidden": {
+        const items = (Array.isArray(ref.resources) ? ref.resources : []).map((id) => catalog.find((e) => e.calendarId === id)).filter(Boolean);
+        return forbiddenText(adapter, { items }, "cancel");
+      }
+      default: return `⚠️ I couldn't cancel that (${out.error?.message}). Please try again, or cancel it here: ${adapter.link}`;
+    }
+  }
+
   // Undo a booking the bot made. Shared by the booked card and the "mine"
   // list: say.done takes the outcome, say.failed (if given) a passing failure.
   async function cancelBooking({ ref, user, say, client }) {
@@ -254,41 +300,27 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (hasEnded(ref)) return say.done(ENDED_TEXT);
     const botsOwnEvent = ref.backend === "rms" && ref.organizerSelf;
     // An event on the member's own calendar needs their account; the bot's can't delete it.
-    if (ref.backend === "rms" && !botsOwnEvent && !connect) {
-      return say.done(`I can't cancel that one from here. Please cancel it in Google Calendar: ${adapter.link}`);
-    }
-    let clients;
+    if (ref.backend === "rms" && !botsOwnEvent && !connect) return say.done(cancelText(ref, { status: "unsupported" }, user));
+    let clients = null;
     if (connect && !botsOwnEvent) {
-      const member = await connect.memberGoogle.clientsFor(user);
+      const member = await memberClients(user);
       if (member.status !== "active") {
         return promptCancelConnect({ ref, adapter, user, say, client, revoked: member.status === "revoked" });
       }
       clients = member.clients;
     }
-    let result;
-    try {
-      result = clients ? await adapter.cancel(ref, { clients }) : await adapter.cancel(ref);
-    } catch (error) {
-      if (clients && (isInvalidGrant(error) || isScopeMissing(error))) {
-        await connect.authStore.markRevoked(user);
-        connect.memberGoogle.forget(user);
-        return promptCancelConnect({ ref, adapter, user, say, client, revoked: true });
-      }
-      const items = (Array.isArray(ref.resources) ? ref.resources : []).map((id) => catalog.find((e) => e.calendarId === id)).filter(Boolean);
-      if (clients && isForbidden(error)) return say.done(forbiddenText(adapter, { items }, "cancel"));
-      metric("ReservationFailed", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend, stage: "cancel" } });
-      log.error("reservation cancel failed", { backend: adapter.backend, error });
-      return (say.failed || say.done)(`⚠️ I couldn't cancel that (${error.message}). Please try again, or cancel it here: ${adapter.link}`);
+    const out = await cancelOne({ ref, user, clients });
+    if (out.status === "revoked") {
+      await connect.authStore.markRevoked(user);
+      connect.memberGoogle.forget(user);
+      return promptCancelConnect({ ref, adapter, user, say, client, revoked: true });
     }
-    if (result.status === "already") return say.done("That booking was already cancelled.");
-    if (result.status !== "cancelled") {
-      return say.done(`I couldn't find that booking as it was; it may have been changed. Please check it here: ${result.link}`);
-    }
-    metric("ReservationCancelled", 1, { dimensions: { Flow: "reservations" }, fields: { backend: adapter.backend } });
+    if (out.status === "error") return (say.failed || say.done)(cancelText(ref, out, user));
+    if (out.status !== "cancelled") return say.done(cancelText(ref, out, user));
     // Cancelled. As after a booking, a failed reply or digest edit is logged,
     // so an SQS retry doesn't run the cancel again.
     try {
-      await say.done(`🚫 Booking cancelled by <@${user}>.`);
+      await say.done(cancelText(ref, out, user));
     } catch (error) {
       log.error("cancel confirmation failed", { backend: adapter.backend, error });
     }
@@ -346,6 +378,21 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     } catch (error) {
       log.error("booking ledger read failed", { error });
     }
+    // A booked repeat series is one entry, whatever its span; its dates
+    // aren't listed again one by one.
+    let series = [];
+    try {
+      series = (await ledger?.seriesFor?.(user, { today })) ?? [];
+    } catch (error) {
+      log.error("series ledger read failed", { error });
+    }
+    const seriesKeys = new Set(series.flatMap((s) => s.refs.map(refKey)));
+    const seriesEntries = series
+      .map((s) => ({ s, live: s.refs.filter((r) => !hasEnded(r)) }))
+      .filter(({ live }) => live.length)
+      .map(({ s, live }) => ({
+        series: true, seriesId: s.id, item: s.item, repeat: s.repeat, count: live.length, start: s.start, end: s.end, title: s.title,
+      }));
     let partial = false;
     const lists = await Promise.all(Object.values(adapters).map(async (adapter) => {
       try {
@@ -362,7 +409,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const byEvent = new Map();
     const entries = [];
     for (const r of lists.flat()) {
-      if (!r.ref || hasEnded(r) || !isMine(r, member, ledgerKeys)) continue;
+      if (!r.ref || hasEnded(r) || seriesKeys.has(refKey(r.ref)) || !isMine(r, member, ledgerKeys)) continue;
       const { backend } = r.ref;
       const same = backend === "rms" ? byEvent.get(r.ref.eventId) : null;
       if (same) {
@@ -383,7 +430,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const sorted = entries
       .map(({ items, ...e }) => ({ ...e, item: items.join(", ") }))
       .sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? -1) - (b.start ?? -1));
-    return { entries: sorted.slice(0, MINE_CAP), more: Math.max(0, sorted.length - MINE_CAP), partial };
+    const all = [...seriesEntries, ...sorted];
+    return { entries: all.slice(0, MINE_CAP), more: Math.max(0, all.length - MINE_CAP), partial };
   }
 
   async function postMine({ channel, user, client }) {
@@ -433,6 +481,11 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     memberClients, classifyWriteError, forbiddenText, renderListing: listing.listingFor,
   });
 
+  // Cancel from the combined post: one line, a whole series, or one date.
+  const seriesFlow = createSeriesFlow({
+    adapters, ledger, connect, livingDigest, now, cancelOne, memberClients, promptConnect, hasEnded, requesterFor, cancelText,
+  });
+
   async function resume({ pendingId, client }) {
     if (!connect) return;
     const pending = await connect.authStore.getPending(pendingId);
@@ -441,6 +494,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     // can never book twice.
     await connect.authStore.deletePending(pendingId);
     if (pending.request.kind === "cancel") return resumeCancel(pending, client);
+    if (pending.request.kind === "series-cancel") return seriesFlow.resume(pending, client);
     if (pending.request.kind === "tray") {
       try {
         return await reserveAll.resume({ ...pending, pendingId }, client);
@@ -645,6 +699,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
     const listed = (payload.actions || []).find((a) => listing.ACTIONS.has(a.action_id));
     if (listed) return listing.handleAction({ payload, action: listed, client });
+    const seriesAction = (payload.actions || []).find((a) => seriesFlow.ACTIONS.has(a.action_id));
+    if (seriesAction) return seriesFlow.handleAction({ payload, action: seriesAction, client });
     const action = (payload.actions || []).find((a) => CARD_ACTIONS.has(a.action_id));
     if (!action) return;
     if (action.action_id === MINE_CANCEL_ACTION) return cancelFromList({ payload, action, client });
