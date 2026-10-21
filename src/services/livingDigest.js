@@ -4,7 +4,7 @@
 // current list. A source that can't be read never stops the post; it is named
 // in it and DMed to the operator, since a quietly missing source looks like a
 // quiet week.
-import { digestPeriod, periodCovering } from "../lib/reservation-time.js";
+import { addDaysIso, digestPeriod, nyDateTime, periodCovering } from "../lib/reservation-time.js";
 import { buildLivingDigest, BOT_PERSONA, DIGEST_EVENT_TYPE } from "../lib/reservation-format.js";
 import { log, metric } from "../lib/logger.js";
 
@@ -58,10 +58,22 @@ export function createLivingDigest({ client, adapters, channelId, escalationUser
   // Rebuilds the digest covering dateIso, if one was posted; false when none.
   async function refresh(dateIso) {
     const period = periodCovering(dateIso);
-    const history = await client.conversations.history({ channel: channelId, limit: 100, include_all_metadata: true });
-    const existing = (history.messages || []).find(
-      (m) => m.metadata?.event_type === DIGEST_EVENT_TYPE && m.metadata.event_payload?.from === period.from,
-    );
+    // The digest sinks under card traffic, so page back, but only as far as a
+    // week before the period and never more than 5 pages.
+    const oldest = String(Date.parse(nyDateTime(addDaysIso(period.from, -7), 0)) / 1000);
+    let existing;
+    let cursor;
+    for (let page = 0; page < 5 && !existing; page++) {
+      const history = await client.conversations.history({
+        channel: channelId, limit: 200, include_all_metadata: true, oldest, ...(cursor && { cursor }),
+      });
+      const messages = history.messages || [];
+      existing = messages.find(
+        (m) => m.metadata?.event_type === DIGEST_EVENT_TYPE && m.metadata.event_payload?.from === period.from,
+      );
+      cursor = history.response_metadata?.next_cursor;
+      if (!cursor || (messages.length && Number(messages[messages.length - 1].ts) < Number(oldest))) break;
+    }
     if (!existing) return false;
     const { text, metadata } = await render(period);
     await client.chat.update({ channel: channelId, ts: existing.ts, text, metadata });

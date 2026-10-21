@@ -62,7 +62,8 @@ Resources:
       QueueName: !Sub ${AWS::StackName}-events.fifo
       FifoQueue: true
       ContentBasedDeduplication: true
-      VisibilityTimeout: 180
+      # At least 6x the worker timeout, per AWS guidance for Lambda sources.
+      VisibilityTimeout: 1800
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt EventDLQ.Arn
         maxReceiveCount: 3
@@ -100,9 +101,10 @@ Resources:
     Properties:
       Handler: src/lambda/worker.handler
       MemorySize: 256
-      # 60s: a :ticket: reaction logs in to the landlord portal, uploads
+      # 300s: a :ticket: reaction logs in to the landlord portal, uploads
       # photos and posts the ticket, several slow round-trips in one event.
-      Timeout: 60
+      # Reserve all books calendar dates that each take seconds to confirm.
+      Timeout: 300
       Environment:
         Variables:
           SLACK_BOT_TOKEN:        !Ref SlackBotToken

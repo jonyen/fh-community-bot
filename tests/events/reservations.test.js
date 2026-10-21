@@ -115,7 +115,7 @@ describe("reservations handler", () => {
     it("apologises in the thread when the model call fails", async () => {
       llm.parseReservationRequest.mockResolvedValue(null);
       await h.handleMessage({ event: msg(), client });
-      expect(posts()[0]).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, text: "Sorry, I couldn't read that. Please try again.", username: "FH Reservations" });
+      expect(posts()[0]).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, text: "Sorry, I couldn't read that. Please try again.", username: "Reservations" });
     });
 
     it("says when it doesn't know an item", async () => {
@@ -132,7 +132,7 @@ describe("reservations handler", () => {
       expect(adapters.rms.findConflicts).toHaveBeenCalledWith({ date: "2026-10-17", start: 840, end: 960, items: [SET2] });
       expect(adapters.rms.book).not.toHaveBeenCalled();
       const [card] = posts();
-      expect(card).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, username: "FH Reservations", metadata: { event_type: CARD_EVENT_TYPE, event_payload: { user: "U9" } } });
+      expect(card).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, username: "Reservations", metadata: { event_type: CARD_EVENT_TYPE, event_payload: { user: "U9" } } });
       expect(card.reply_broadcast).toBeUndefined();
       expect(sectionText(card)).toBe("📅 *Tech Set 2* · Sat 10/17 · 2:00–4:00 PM · Youth night\n✅ Free");
       expect(buttons(card).map((b) => b.action_id)).toEqual([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION]);
@@ -355,7 +355,7 @@ describe("reservations handler", () => {
     it("Cancel by someone else is answered privately", async () => {
       await h.handleCardAction({ payload: press({ user: { id: "U7" } }), client });
       expect(client.chat.update).not.toHaveBeenCalled();
-      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U7", thread_ts: MSG_TS, text: "Only <@U9> can cancel this.", username: "FH Reservations" });
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U7", thread_ts: MSG_TS, text: "Only <@U9> can cancel this.", username: "Reservations" });
     });
 
     it("Cancel on an already closed card does nothing", async () => {
@@ -736,7 +736,7 @@ describe("my reservations", () => {
     for (const a of Object.values(adapters)) expect(a.listReservations).toHaveBeenCalledWith({ from: "2026-10-20", to: "2026-12-19" });
     expect(client.chat.postMessage).not.toHaveBeenCalled();
     const m = reply();
-    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "FH Reservations" });
+    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
     expect(m.thread_ts).toBeUndefined();
     expect(lines(m)).toEqual([
       "📅 *Tech Set 2* · Tue 10/20 · 11:00 AM–1:00 PM · Now",
@@ -882,7 +882,7 @@ describe("my reservations", () => {
       expect(adapters.rooms.cancel).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(client.users.info).toHaveBeenCalledTimes(1);
-      expect(client.chat.postEphemeral.mock.calls[0][0]).toEqual({ channel: "CRES", user: "U7", text: "Only <@U9> can cancel this.", username: "FH Reservations", icon_emoji: ":calendar:" });
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toEqual({ channel: "CRES", user: "U7", text: "Only <@U9> can cancel this.", username: "Reservations", icon_emoji: ":calendar:" });
     });
 
     it("a press after the booking ended says so privately", async () => {
