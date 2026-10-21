@@ -115,6 +115,15 @@ describe("rms adapter", () => {
     expect(res["2026-10-24"].conflicts.map((c) => c.title)).toEqual(["Late"]);
   });
 
+  it("stops when the calendar keeps returning the same page token", async () => {
+    cal.events.list.mockResolvedValue({
+      data: { items: [ev("Once", "2026-10-17T14:00:00-04:00", "2026-10-17T16:00:00-04:00", { id: "L1" })], nextPageToken: "SAME" },
+    });
+    const { reservations } = await adapter.listReservations({ from: "2026-10-17", to: "2026-10-17", items: [SET2] });
+    expect(cal.events.list).toHaveBeenCalledTimes(2);
+    expect(reservations.map((r) => r.title)).toEqual(["Once"]);
+  });
+
   it("returns an empty map and reads nothing for no dates", async () => {
     expect(await adapter.checkDates({ dates: [], start: 900, end: 960, items: [SET2] })).toEqual({});
     expect(cal.events.list).not.toHaveBeenCalled();

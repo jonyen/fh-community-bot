@@ -6,6 +6,9 @@
 // the bot's account can't book resources.
 import { TZ, nyDateTime, nyLocal, nyParts, addDaysIso, overlaps } from "../../lib/reservation-time.js";
 import { calendarLink } from "../../lib/rms-catalog.js";
+import { log } from "../../lib/logger.js";
+
+const MAX_PAGES = 20;
 
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
@@ -77,7 +80,7 @@ export function createRmsAdapter({
   async function eventsFor(entry, from, to) {
     const items = [];
     let pageToken;
-    do {
+    for (let page = 1; ; page++) {
       const res = await calendarClient.events.list({
         calendarId: entry.calendarId,
         timeMin: nyDateTime(from, 0),
@@ -87,9 +90,18 @@ export function createRmsAdapter({
         maxResults: 250,
         ...(pageToken && { pageToken }),
       });
+      // The same token again means the calendar is repeating a page; stop
+      // rather than loop forever or list its events twice.
+      if (pageToken && res.data.nextPageToken === pageToken) break;
       items.push(...(res.data.items || []));
-      pageToken = res.data.nextPageToken;
-    } while (pageToken);
+      const next = res.data.nextPageToken;
+      if (!next) break;
+      if (page >= MAX_PAGES) {
+        log.warn("calendar paging hit the page cap", { calendarId: entry.calendarId, pages: page });
+        break;
+      }
+      pageToken = next;
+    }
     return items.filter((e) => e.status !== "cancelled").map((e) => toReservation(entry, e));
   }
 
