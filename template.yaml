@@ -169,6 +169,8 @@ Resources:
           GOOGLE_CLIENT_ID:        !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET:    !Ref GoogleClientSecret
           GOOGLE_REFRESH_TOKEN:    !Ref GoogleRefreshToken
+          # loadConfig requires it even though the digest never calls Claude.
+          ANTHROPIC_API_KEY:       !Ref AnthropicApiKey
           ESCALATION_USER_ID:      !Ref EscalationUserId
           RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
           ROOM_REQUESTS_SHEET_ID:  !Ref RoomRequestsSheetId
