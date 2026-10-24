@@ -23,7 +23,7 @@ const SEARCH_MAX = 60;
 const MATCH_TTL_MS = 10 * 60 * 1000;
 const MATCH_CACHE_MAX = 200;
 const TAKEN_SHOWN = 5;
-const NO_TABLE_TEXT = "To book, post the item, day, time and what it's for.";
+const NO_TABLE_TEXT = "Booking from here isn't set up yet. Book directly in the room sheet, kitchen sheet or calendar.";
 const FULL_TEXT = `Your tray is full (${MAX_LINES} lines). Reserve or remove some first.`;
 const EXPIRED_TEXT = "Your tray expired after a day without changes, so it was cleared.";
 const RACE_TEXT = "Something changed. Please try again.";
@@ -31,6 +31,8 @@ const ERROR_TEXT = "⚠️ Something went wrong. Please try again.";
 const LINE_GONE_TEXT = "That line was reserved or removed meanwhile.";
 const LINE_MOVED_TEXT = "That line was partly reserved meanwhile. Go back to the list to see what's left, then change it.";
 const LINE_CLAIMED_TEXT = "Some of that line's dates are still being reserved. Change its date, time or repeat once that's done.";
+const REQUEST_ADDED_TEXT = "Added to your tray. Check the details, then press *Reserve all*.";
+const REQUEST_FULL_TEXT = `Your tray is full (${MAX_LINES} lines), so I couldn't add all of that. Reserve or remove some first.`;
 const PICKERS = new Set([FORM_DATE_ACTION, FORM_START_ACTION, FORM_END_ACTION, FORM_REPEAT_ACTION, FORM_DAYS_ACTION, FORM_UNTIL_ACTION]);
 
 // Sheet text (holder names, reasons) goes into mrkdwn.
@@ -170,6 +172,40 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
     }
   }
 
+  // /reserve with a booking request: its items go into the tray as lines with
+  // the request's day, time and title, and the card shows them. Nothing is
+  // booked until the member presses Reserve all, so nothing here is thrown.
+  async function postRequest({ channel, user, req, client }) {
+    if (!trayStore) return post({ channel, user, search: null, client });
+    try {
+      const saved = await mutate(user, (tray) => {
+        tray.view = { q: "", c: "all", p: 0 };
+        tray.editing = null;
+        let added = 0;
+        for (const entry of req.items) {
+          if (tray.lines.length >= MAX_LINES) break;
+          tray.lines.push({
+            ...newLine(entry.label, null),
+            date: req.date, start: req.start, end: req.end, title: req.title || null,
+            appliances: entry.category === "kitchen" ? { ...(req.appliances || {}) } : {},
+          });
+          added++;
+        }
+        return { added };
+      });
+      if (!saved) return await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, text: RACE_TEXT });
+      const notice = saved.outcome.added < req.items.length ? REQUEST_FULL_TEXT : REQUEST_ADDED_TEXT;
+      return await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, ...(await listingFor({ ...saved.tray, editing: null }, { notice, client })) });
+    } catch (error) {
+      log.error("adding a request to the tray failed", { error });
+      try {
+        await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, text: ERROR_TEXT });
+      } catch (replyError) {
+        log.error("tray request failure reply failed", { error: replyError });
+      }
+    }
+  }
+
   // What a press does to the tray, and which screen follows.
   function apply(tray, action, values) {
     const id = action.action_id;
@@ -299,5 +335,5 @@ export function createListingFlow({ catalog, adapters, llm, catalogText, traySto
 
   // Reserve all is handled by reservations-reserve-all.js, which draws its
   // result with listingFor.
-  return { post, handleAction, lineCheck, listingFor, ACTIONS: new Set([...LISTING_ACTIONS, ...FORM_ACTIONS]) };
+  return { post, postRequest, handleAction, lineCheck, listingFor, ACTIONS: new Set([...LISTING_ACTIONS, ...FORM_ACTIONS]) };
 }

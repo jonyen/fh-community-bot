@@ -9,7 +9,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Duplicate detection** — two-pass strategy using keyword matching + LLM verification (warn-only: a possible duplicate is noted in the confirmation)
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
-- **Reservations** — members post plain messages in #reservations to book, check and list rooms, the kitchen and RMS equipment; questions are answered in the thread, and booking requests get a card with **Book** and **Edit**. First come, first served. #reservations also holds the weekday and weekend digests (see below)
+- **Reservations** — members book, check and list rooms, the kitchen and RMS equipment privately with `/reserve` in #reservations; booking requests go into a private tray booked with **Reserve all**. First come, first served. #reservations also holds the weekday and weekend digests (see below)
 
 ## Architecture
 
@@ -201,30 +201,55 @@ Before the gender feature works in production, update the Slack app config:
 
 ## #reservations
 
-The bot is the front door for FH's four reservation systems. Members post a
-plain message in #reservations, no command or @mention needed:
+The bot is the front door for FH's four reservation systems. Members book and
+ask privately with `/reserve` in #reservations. Nobody else sees the request,
+and every answer is visible only to the member who asked:
 
-- `Tech Set 2 Sat 2-4pm for youth night`
-- `is the MPR free Wednesday 7-9?`
-- `who has the pickleball set this weekend?`
-- `what do I have booked?`
+- `/reserve Tech Set 2 Sat 2-4pm for youth night`
+- `/reserve is the MPR free Wednesday 7-9?`
+- `/reserve who has the pickleball set this weekend?`
+- `/reserve what do I have booked?`
 
-The bot reads every top-level message and replies in its thread. Chatter gets
-no reply. Thread replies are left to people, so members can sort out a conflict
-there without the bot joining in.
+What each kind of request gets:
 
+- **Booking requests** go into the member's tray (see below) as one line per
+  item, with the request's day, time and what it's for. The private listing
+  card shows the tray with each line's availability. The member checks it,
+  fixes anything with **Edit**, and presses **Reserve all**. Nothing is booked
+  before that. A request naming no item, an item the bot doesn't know, or an
+  ambiguous one gets a private reply asking which.
 - **Questions** (is it free, who has it, what's booked, "what speakers are
-  there?") are answered in the thread.
-- **Booking requests** get a card: what the bot understood, and whether the
-  slot is free. If it is, the card has **Book** and **Edit**. If it is taken,
-  incomplete or unclear, the card says why and has only **Edit**.
+  there?") are answered privately.
+- `/reserve` alone, or `/reserve what can I reserve`, opens the listing card.
+- **"What do I have booked?"** gets a private list: the member's bookings from
+  today through 60 days ahead, at most 20 lines, each with its own **Cancel**
+  (behind a confirm dialog). Bookings the bot made are matched exactly. Rows
+  typed into the sheets by hand are matched by name (and, for the kitchen,
+  phone), so those lines say `from the rooms sheet, matched by name` and the
+  confirm dialog quotes the row as typed. Without connected accounts, a
+  calendar event the member made themselves gets an **Open in Calendar** link
+  instead of Cancel.
+- Used in any other channel, `/reserve` says to use it in #reservations.
+
+#reservations sees bookings in its digest; confirmations are not broadcast.
+
+### Posting in the channel
+
+A request or question posted as a plain message in #reservations gets no
+answer in the thread. Instead the poster gets a private nudge to use
+`/reserve`, with their own message as the example. Every time, but once per
+message: a redelivery doesn't repeat it (claimed as
+`once#nudge:<channel>:<ts>`). Chatter gets nothing, and thread replies are left
+to people.
+
+### Booking cards from before /reserve
+
+Booking cards the bot posted in threads before this change still work:
+
 - **Book** checks for a conflict again and writes the booking straight into the
   system that owns the item. The card is replaced by the confirmation.
-  #reservations sees the booking in its digest; the confirmation is not
-  broadcast.
-- **Edit** opens a form pre-filled from the card (item search, day, start, end,
-  what it's for, and kitchen equipment for kitchen requests). Submitting it
-  updates the card; it does not book.
+- **Edit** opens a form pre-filled from the card. Submitting it updates the
+  card; it does not book.
 - **Cancel** on an open card closes it (`🚫 Cancelled by @member.`). Nothing
   is written.
 - A booked card keeps a **Cancel booking** button. After a confirm dialog it
@@ -233,45 +258,18 @@ there without the bot joining in.
   is deleted, or only its resources are removed when it has other guests. The
   card keeps its ✅ line and adds `🚫 Booking cancelled by @member.` A booking
   that was edited since, or has already ended, is not touched.
-- **"What do I have booked?"** gets a private reply in the channel: the
-  member's bookings from today through 60 days ahead, at most 20 lines, each
-  with its own **Cancel** (behind a confirm dialog). Bookings the bot made are
-  matched exactly. Rows typed into the sheets by hand are matched by name (and,
-  for the kitchen, phone), so those lines say `from the rooms sheet, matched by
-  name` and the confirm dialog quotes the row as typed. Without connected
-  accounts, a calendar event the member made themselves gets an **Open in
-  Calendar** link instead of Cancel.
 - Only the member who asked can press Book, Edit, Cancel or Cancel booking.
 
-### Asking privately with /reserve
+### Welcome
 
-A plain message in #reservations is seen by everyone. To ask without that, type
-`/reserve` and the question in #reservations, for example
-`/reserve what are my reservations` or `/reserve is the MPR free Saturday 2-4`.
-Nobody else sees the command, and every answer is visible only to you.
+When someone joins #reservations, the bot tells them privately (an ephemeral
+message, visible only to them) that everything goes through `/reserve`, with
+examples for booking, asking and browsing. Every join, rejoins included; a
+redelivery of the same join is dropped (`once#welcome:<user>:<event_ts>`).
 
-- `/reserve` alone, or `/reserve what can I reserve`, opens the listing card.
-- `/reserve what do I have booked?` shows your bookings, with Cancel.
-- Questions (is it free, who has it, what's booked) are answered privately.
-- A booking request is not booked. The reply says to post it in the channel
-  or add it from the listing card.
-- Used in any other channel, `/reserve` says to use it in #reservations.
-
-### Welcome and /reserve tips
-
-- When someone joins #reservations, the bot tells them privately (an
-  ephemeral message, visible only to them) how to book and how to ask with
-  `/reserve`. Every join, rejoins included; a redelivery of the same join is
-  dropped.
-- When a member asks a question in the open (is it free, who has it, what do I
-  have booked), the bot answers as usual, then tips them privately in the
-  thread that `/reserve` keeps the question to themselves. At most once a week
-  per member. Booking requests and chatter get no tip.
-
-Both are remembered in the reservations table (`once#welcome:<user>:<event_ts>`,
-`once#tip:<user>`) and are off when the table isn't configured. The welcome
-needs the `member_joined_channel` bot event under Event Subscriptions in the
-Slack app.
+The welcome and the nudge's redelivery check use the reservations table and
+are off when it isn't configured. The welcome needs the
+`member_joined_channel` bot event under Event Subscriptions in the Slack app.
 
 ### Browsing and reserving several things at once
 
