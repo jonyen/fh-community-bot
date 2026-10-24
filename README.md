@@ -257,6 +257,22 @@ Nobody else sees the command, and every answer is visible only to you.
   or add it from the listing card.
 - Used in any other channel, `/reserve` says to use it in #reservations.
 
+### Welcome and /reserve tips
+
+- When someone joins #reservations, the bot tells them privately (an
+  ephemeral message, visible only to them) how to book and how to ask with
+  `/reserve`. Every join, rejoins included; a redelivery of the same join is
+  dropped.
+- When a member asks a question in the open (is it free, who has it, what do I
+  have booked), the bot answers as usual, then tips them privately in the
+  thread that `/reserve` keeps the question to themselves. At most once a week
+  per member. Booking requests and chatter get no tip.
+
+Both are remembered in the reservations table (`once#welcome:<user>:<event_ts>`,
+`once#tip:<user>`) and are off when the table isn't configured. The welcome
+needs the `member_joined_channel` bot event under Event Subscriptions in the
+Slack app.
+
 ### Browsing and reserving several things at once
 
 Post `list items to reserve` (or `what can I reserve?`) in #reservations. The

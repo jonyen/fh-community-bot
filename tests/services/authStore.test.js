@@ -159,6 +159,26 @@ describe("booking claims", () => {
   });
 });
 
+describe("claimOnce", () => {
+  it("claims a key once per window, and again once the claim has expired", async () => {
+    const ddb = fakeDdb();
+    let t = 1_000_000;
+    const store = createAuthStore({ ddb, kms: {}, tableName: "T", keyId: "K", now: () => t });
+    expect(await store.claimOnce("tip:U9", 60)).toBe(true);
+    expect(await store.claimOnce("tip:U9", 60)).toBe(false);
+    expect(await store.claimOnce("tip:U8", 60)).toBe(true);
+    expect(ddb.items.get("once#tip:U9").expiresAt).toBe(1000 + 60);
+    t += 60_000;
+    expect(await store.claimOnce("tip:U9", 60)).toBe(true);
+  });
+
+  it("rethrows any other DynamoDB error", async () => {
+    const ddb = { send: vi.fn().mockRejectedValue(Object.assign(new Error("throttled"), { name: "ThrottlingException" })) };
+    const store = createAuthStore({ ddb, kms: {}, tableName: "T", keyId: "K" });
+    await expect(store.claimOnce("k", 60)).rejects.toThrow("throttled");
+  });
+});
+
 describe("booking ledger", () => {
   const make = () => {
     const ddb = fakeDdb();

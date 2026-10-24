@@ -66,6 +66,7 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
   // arrives as both app_mention and message; only the message is handled.
   if (reservationsHandler && event.channel === reservationsHandler.channelId) {
     if (event.type === "message") await reservationsHandler.handleMessage({ event, client });
+    if (event.type === "member_joined_channel" && reservationsHandler.handleMemberJoined) await reservationsHandler.handleMemberJoined({ event, client });
     return;
   }
 
