@@ -34,7 +34,6 @@ function makeService({ map = { U_MALE_1: "male", U_MALE_2: "male", U_FEMALE_1: "
       if (getMapError) throw getMapError;
       return map;
     }),
-    invalidate: vi.fn().mockResolvedValue(Object.keys(map).length),
   };
 }
 

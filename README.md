@@ -148,7 +148,7 @@ In the configured Slack channel:
 
 ## Gender Aliases
 
-Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bros` / `@brothers` (pings members mapped to `male`) or `!sis` / `!sisters` / `@sis` / `@sisters` (pings `female`). The slash command `/refresh-genders` reloads the map from the sheet.
+Users can ping channel members by gender by typing `!bros` / `!brothers` / `@bros` / `@brothers` (pings members mapped to `male`) or `!sis` / `!sisters` / `@sis` / `@sisters` (pings `female`).
 
 The bot posts only the mention list — the user's message body is dropped:
 
@@ -160,7 +160,6 @@ Replies are always posted by the **Gender Aliases** bot persona (username `Gende
 
 Ephemeral notices (visible only to the caller) use the same persona:
 
-- `/refresh-genders` slash command result (`Refreshed gender map. N entries loaded.` or `Refresh failed: ...`) — posts via Slack's `response_url`.
 - "No `<gender>` members configured for this channel." when no match — posts via `chat.postEphemeral`.
 
 Triggers fire in any public or private channel the bot is a member of. They do **not** honor `SLACK_CHANNEL_IDS` (that allowlist still gates the maintenance handler only).
@@ -188,14 +187,13 @@ Rows with a blank `slack_id` or with `gender` outside `{male, female}` are skipp
 
 To backfill `slack_id` from `gpmail`, run `node scripts/backfill-slack-ids.js` locally (requires `users:read.email` scope on the bot token).
 
-The map is cached in memory for 7 days per warm Lambda container (override with `GENDER_CACHE_TTL_DAYS`). Cold starts always refetch. `!refresh-genders` invalidates the cache and refetches immediately.
+The map is cached in memory for 7 days per warm Lambda container (override with `GENDER_CACHE_TTL_DAYS`). Cold starts always refetch, so a sheet edit shows up by the next cold start, or within 7 days at most.
 
 ### Slack app prerequisites
 
 Before the gender feature works in production, update the Slack app config:
 
 - **OAuth scopes (bot):** add `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`, `users:read.email` (for the `scripts/backfill-slack-ids.js` script), and `chat:write.customize` (to post replies under the Gender Aliases persona). Reinstall the app afterwards.
-- **Slash command:** create `/refresh-genders` under Slack app config → Slash Commands. Set the Request URL to the same Receiver Function URL used for Event Subscriptions. No usage hint is required.
 - **Event Subscriptions:** subscribe to `message.channels` (public) and `message.groups` (private) bot events, in addition to `app_mention`.
 - Invite the bot to each channel where these triggers should work.
 

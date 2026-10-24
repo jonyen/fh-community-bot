@@ -51,13 +51,6 @@ describe("createGenderMapService", () => {
     expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(1);
   });
 
-  it("invalidate() forces a refetch and returns the entry count", async () => {
-    await service.getMap();
-    const count = await service.invalidate();
-    expect(count).toBe(3);
-    expect(sheets.spreadsheets.values.get).toHaveBeenCalledTimes(2);
-  });
-
   it("refetches after TTL expiry", async () => {
     vi.useFakeTimers();
     const t0 = new Date("2026-01-01T00:00:00Z").getTime();

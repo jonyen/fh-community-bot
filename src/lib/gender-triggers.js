@@ -1,5 +1,4 @@
 export const GENDER_TRIGGER_RE = /(?:^|\s)[!@](bros|brothers|sis|sisters)\b/i;
-export const GENDER_REFRESH_RE = /(?:^|\s)[!@]refresh-genders\b/i;
 
 const MALE_ALIASES = new Set(["bros", "brothers"]);
 const TRIGGER_GLOBAL_RE = /(^|\s)[!@](bros|brothers|sis|sisters)\b/gi;
