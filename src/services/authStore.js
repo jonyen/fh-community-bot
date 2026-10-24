@@ -118,6 +118,25 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     }
   }
 
+  // True the first time a key is claimed within ttlS seconds. Used to say
+  // something to a member once (the #reservations welcome, the /reserve
+  // tip) however many events would trigger it. TTL deletion lags, so an
+  // expired claim may be retaken before DynamoDB removes it.
+  async function claimOnce(key, ttlS) {
+    try {
+      await ddb.send(new PutCommand({
+        TableName: tableName,
+        Item: { pk: `once#${key}`, expiresAt: nowS() + ttlS },
+        ConditionExpression: "attribute_not_exists(pk) OR expiresAt <= :now",
+        ExpressionAttributeValues: { ":now": nowS() },
+      }));
+      return true;
+    } catch (error) {
+      if (error.name === "ConditionalCheckFailedException") return false;
+      throw error;
+    }
+  }
+
   // The ledger row holds single refs and booked series side by side. Each
   // write sets only its own attribute so it cannot clobber the other, and
   // expiresAt covers the latest date of either list plus two days (a day of slack).
@@ -213,5 +232,5 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     await ddb.send(new DeleteCommand({ TableName: tableName, Key: { pk: `tray#${slackUserId}` } }));
   }
 
-  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking, recordBooking, recordSeries, seriesFor, dropSeriesRefs, bookingsFor, getTray, putTray, deleteTray };
+  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking, claimOnce, recordBooking, recordSeries, seriesFor, dropSeriesRefs, bookingsFor, getTray, putTray, deleteTray };
 }

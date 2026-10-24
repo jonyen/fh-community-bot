@@ -1,6 +1,6 @@
 // tests/events/reservations.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createReservationsHandler } from "../../src/events/reservations.js";
+import { createReservationsHandler, WELCOME_TEXT, COMMAND_TIP, WELCOME_TTL_S, TIP_TTL_S } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
 import { BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE, decodeCard, decodeRef, encodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
@@ -977,6 +977,80 @@ describe("my reservations", () => {
       await make().handleCardAction({ payload: listPress("{nope"), client });
       expect(adapters.rooms.cancel).not.toHaveBeenCalled();
       expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("reservations onboarding", () => {
+  let llm, client, claimed, claimOnce, h;
+  beforeEach(() => {
+    llm = { parseReservationRequest: vi.fn().mockResolvedValue({ ...BOOK, intent: "check" }) };
+    const adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
+    client = makeClient();
+    claimed = new Set();
+    claimOnce = vi.fn(async (key) => (claimed.has(key) ? false : (claimed.add(key), true)));
+    h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, claimOnce });
+  });
+  const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
+  const joined = (o = {}) => ({ type: "member_joined_channel", channel: "CRES", user: "U9", ...o });
+
+  describe("welcome on join", () => {
+    it("tells the new member privately how to book and how to ask with /reserve", async () => {
+      await h.handleMemberJoined({ event: joined(), client });
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(ephemerals()).toHaveLength(1);
+      expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U9", text: WELCOME_TEXT, username: "Reservations" });
+      expect(WELCOME_TEXT).toMatch(/\/reserve/);
+      expect(claimOnce).toHaveBeenCalledWith("welcome:U9", WELCOME_TTL_S);
+    });
+
+    it("welcomes a member once, however often the join arrives", async () => {
+      await h.handleMemberJoined({ event: joined(), client });
+      await h.handleMemberJoined({ event: joined(), client });
+      expect(ephemerals()).toHaveLength(1);
+    });
+
+    it("ignores joins to other channels, and says nothing without a claim store", async () => {
+      await h.handleMemberJoined({ event: joined({ channel: "COTHER" }), client });
+      const bare = createReservationsHandler({ llm, adapters: {}, catalog: CATALOG, channelId: "CRES", now: () => NOW });
+      await bare.handleMemberJoined({ event: joined(), client });
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
+    });
+
+    it("a failed welcome doesn't fail the event", async () => {
+      client.chat.postEphemeral.mockRejectedValue(new Error("user_not_in_channel"));
+      await expect(h.handleMemberJoined({ event: joined(), client })).resolves.toBeUndefined();
+    });
+  });
+
+  describe("/reserve tip after a question asked in the channel", () => {
+    it("answers in the thread, then tips the asker privately in that thread", async () => {
+      await h.handleMessage({ event: msg(), client });
+      expect(client.chat.postMessage.mock.calls[0][0]).toMatchObject({ thread_ts: MSG_TS, text: "Tech Set 2 is free Sat 10/17, 2:00–4:00 PM." });
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U9", thread_ts: MSG_TS, text: COMMAND_TIP })]);
+      expect(claimOnce).toHaveBeenCalledWith("tip:U9", TIP_TTL_S);
+    });
+
+    it("tips a member at most once per claim window", async () => {
+      await h.handleMessage({ event: msg(), client });
+      await h.handleMessage({ event: msg({ ts: "300.1" }), client });
+      expect(ephemerals().filter((m) => m.text === COMMAND_TIP)).toHaveLength(1);
+    });
+
+    it("doesn't tip booking requests, chatter, or /reserve itself", async () => {
+      llm.parseReservationRequest.mockResolvedValueOnce(BOOK).mockResolvedValueOnce({ intent: "other" });
+      await h.handleMessage({ event: msg(), client });
+      await h.handleMessage({ event: msg({ ts: "300.1", text: "see you there" }), client });
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check" });
+      await h.handleCommand({ userId: "U9", channel: "CRES", text: "is tech set 2 free sat 2-4", client, responseUrl: "https://r" });
+      expect(ephemerals().some((m) => m.text === COMMAND_TIP)).toBe(false);
+      expect(claimOnce).not.toHaveBeenCalled();
+    });
+
+    it("a failed tip leaves the answer standing and the event succeeding", async () => {
+      claimOnce.mockRejectedValue(new Error("throttled"));
+      await h.handleMessage({ event: msg(), client });
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
     });
   });
 });

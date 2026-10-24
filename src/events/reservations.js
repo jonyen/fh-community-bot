@@ -32,6 +32,18 @@ export const FIND_CAP = 25;
 const ENDED_TEXT = "That booking has already ended.";
 const COMMAND_HELP = "Ask me privately, for example `/reserve what are my reservations`, `/reserve what can I reserve`, `/reserve is the MPR free Saturday 2-4` or `/reserve who has the Transit`.";
 const COMMAND_BOOK_TEXT = "To book, post it in the channel without /reserve, or open `/reserve what can I reserve` and add it there.";
+// Shown privately to each member when they join #reservations.
+export const WELCOME_TEXT = [
+  "*Welcome to #reservations!* I book rooms, the kitchen, tech sets, vehicles, and sports, outreach and accessories equipment.",
+  "• *To book*, post what you need here, for example `Tech Set 2 Sat 2-4pm for youth night`. I reply in the thread with a card; press *Book* to confirm.",
+  "• *To ask privately*, use `/reserve`, for example `/reserve is the MPR free Saturday 2-4` or `/reserve what do I have booked?`. Only you see the question and the answer.",
+  "• `/reserve` on its own lists everything you can reserve.",
+].join("\n");
+// After a question asked in the open, at most once a week per member.
+export const COMMAND_TIP = "Tip: only you can see this. Next time, you can ask with `/reserve`, for example `/reserve is the MPR free Saturday 2-4`, and nobody else sees the question or the answer.";
+export const WELCOME_TTL_S = 365 * 86400;
+export const TIP_TTL_S = 7 * 86400;
+const QUESTION_INTENTS = new Set(["mine", "browse", "find", "check", "list"]);
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
@@ -47,7 +59,7 @@ export function classifyWriteError(error) {
   return "error";
 }
 
-export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null, trayStore = null }) {
+export function createReservationsHandler({ llm, adapters, catalog, channelId, now = () => new Date(), connect = null, livingDigest = null, claimBooking = null, ledger = null, trayStore = null, claimOnce = null }) {
   const catalogText = catalogPromptText(catalog);
 
   async function withMentions(client, reservations) {
@@ -661,6 +673,31 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return answer({ text, user: event.user, channel: event.channel, say, client, threadTs: event.ts });
   }
 
+  // Someone joined #reservations: tell them, privately, how it works. Once per
+  // member a year, so a redelivery or leaving and rejoining doesn't repeat it.
+  async function handleMemberJoined({ event, client }) {
+    if (event.channel !== channelId || !event.user || !claimOnce) return;
+    if (!(await claimOnce(`welcome:${event.user}`, WELCOME_TTL_S))) return;
+    try {
+      await client.chat.postEphemeral({ channel: channelId, user: event.user, text: WELCOME_TEXT, ...BOT_PERSONA });
+      metric("ReservationsWelcomed", 1, { dimensions: { Flow: "reservations" } });
+    } catch (error) {
+      log.warn("reservations welcome failed", { user: event.user, error });
+    }
+  }
+
+  // A question asked in the open could have been asked privately. Never
+  // fails the event: the answer is already posted and must not be repeated.
+  async function tipCommand({ user, channel, threadTs, client }) {
+    if (!claimOnce) return;
+    try {
+      if (!(await claimOnce(`tip:${user}`, TIP_TTL_S))) return;
+      await client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text: COMMAND_TIP, ...BOT_PERSONA });
+    } catch (error) {
+      log.warn("reservations /reserve tip failed", { user, error });
+    }
+  }
+
   // /reserve: the same questions as chatting in the channel, but nobody else
   // sees them and every answer is private. Booking itself stays in the
   // channel (a public card) or on the listing card.
@@ -679,6 +716,12 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const raw = await parse(text);
     if (!raw) return say.done("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
+    const result = await route({ req, text, user, channel, say, client, threadTs });
+    if (threadTs && QUESTION_INTENTS.has(req.intent)) await tipCommand({ user, channel, threadTs, client });
+    return result;
+  }
+
+  async function route({ req, text, user, channel, say, client, threadTs }) {
     if (req.intent === "other") return threadTs ? undefined : say.done(COMMAND_HELP);
     if (req.intent === "mine") return postMine({ channel, user, client });
     if (req.intent === "browse") return listing.post({ channel, user, search: req.search, client });
@@ -790,5 +833,5 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     await updateCard(client, { channel, cardTs, user, req, assessment });
   }
 
-  return { channelId, handleMessage, handleCommand, handleCardAction, handleModalSubmit, resume, disconnect };
+  return { channelId, handleMessage, handleMemberJoined, handleCommand, handleCardAction, handleModalSubmit, resume, disconnect };
 }

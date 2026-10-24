@@ -152,6 +152,7 @@ export function getDeps() {
       claimBooking: connect ? connect.authStore.claimBooking : null,
       ledger,
       trayStore: ledger,
+      claimOnce: ledger ? ledger.claimOnce : null,
     });
   }
 

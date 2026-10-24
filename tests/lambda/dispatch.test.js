@@ -383,6 +383,17 @@ describe("dispatch to #reservations", () => {
     expect(reservationsHandler.handleMessage).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it("routes a join to the reservations channel to the welcome", async () => {
+    const joinHandler = { ...reservationsHandler, handleMessage: vi.fn(), handleMemberJoined: vi.fn().mockResolvedValue() };
+    const handler = vi.fn();
+    const client = makeClient();
+    const event = { type: "member_joined_channel", channel: "CRES", user: "U1" };
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler, reservationsHandler: joinHandler, client });
+    expect(joinHandler.handleMemberJoined).toHaveBeenCalledWith({ event, client });
+    expect(joinHandler.handleMessage).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
 
 describe("dispatch for connected accounts", () => {
