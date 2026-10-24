@@ -1,9 +1,10 @@
 // tests/events/reservations.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createReservationsHandler, WELCOME_TEXT, COMMAND_TIP, WELCOME_TTL_S, TIP_TTL_S } from "../../src/events/reservations.js";
+import { createReservationsHandler, WELCOME_TEXT, WELCOME_TTL_S, NUDGE_TTL_S, nudgeText } from "../../src/events/reservations.js";
 import { buildCatalog } from "../../src/lib/reservation-catalog.js";
 import { CLOSED_METADATA } from "../../src/lib/reservation-format.js";
-import { BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, CARD_EVENT_TYPE, decodeCard, decodeRef, encodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
+import { EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, cardMessage, decodeCard, decodeRef, encodeRef, bookedMessage } from "../../src/lib/reservation-card.js";
+import { normalizeRequest } from "../../src/lib/reservation-request.js";
 import { MINE_CANCEL_ACTION, MINE_SERIES_ACTION } from "../../src/lib/reservation-mine.js";
 import { log } from "../../src/lib/logger.js";
 import { buildEditModal, ITEM_ACTION } from "../../src/lib/reservation-modal.js";
@@ -46,6 +47,25 @@ const BOOK = { intent: "book", items: ["Tech Set 2"], date: "2026-10-17", start:
 const msg = (o = {}) => ({ type: "message", channel: "CRES", channel_type: "channel", user: "U9", text: "book tech set 2 sat 2-4 for youth night", ts: MSG_TS, ...o });
 const TAKEN = { category: "tech", item: "Tech Set 2", date: "2026-10-17", start: 840, end: 930, title: "Fall rally", holder: "Alan Chow", holderUserId: null, holderEmail: "alan@x" };
 
+// A public card posted in a thread before requests moved to /reserve, as the
+// handler's assess and cardMessage drew it. Its buttons still work.
+const existingCard = (raw = BOOK, assessment = { state: "free" }) => cardMessage({ user: "U9", req: normalizeRequest(raw, CATALOG), assessment });
+
+// The Task 6 contract: version 0 means "no tray yet"; a stale version loses.
+function makeTrayStore() {
+  const rows = new Map();
+  return {
+    rows,
+    getTray: vi.fn(async (u) => (rows.has(u) ? structuredClone(rows.get(u)) : null)),
+    putTray: vi.fn(async (u, tray, { expectVersion }) => {
+      if ((rows.get(u)?.version ?? 0) !== expectVersion) return false;
+      rows.set(u, structuredClone({ ...tray, version: expectVersion + 1 }));
+      return true;
+    }),
+    deleteTray: vi.fn(async (u) => rows.delete(u)),
+  };
+}
+
 const sectionText = (m) => m.blocks.filter((b) => b.type === "section").map((b) => b.text.text).join("\n");
 const buttons = (m) => m.blocks.filter((b) => b.type === "actions").flatMap((b) => b.elements);
 
@@ -58,7 +78,6 @@ describe("reservations handler", () => {
     livingDigest = { refresh: vi.fn().mockResolvedValue(true) };
     h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, livingDigest });
   });
-  const posts = () => client.chat.postMessage.mock.calls.map((c) => c[0]);
   const updates = () => client.chat.update.mock.calls.map((c) => c[0]);
 
   it("exposes its channel", () => {
@@ -80,6 +99,7 @@ describe("reservations handler", () => {
       }
       expect(llm.parseReservationRequest).not.toHaveBeenCalled();
       expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
     });
 
     it("drops obvious chatter before calling the model", async () => {
@@ -87,109 +107,87 @@ describe("reservations handler", () => {
       expect(llm.parseReservationRequest).not.toHaveBeenCalled();
     });
 
-    it("stays silent when the model says it's chatter", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ intent: "other" });
+    it("stays silent when the model says it's chatter, or can't read it", async () => {
+      llm.parseReservationRequest.mockResolvedValueOnce({ intent: "other" }).mockResolvedValueOnce(null);
       await h.handleMessage({ event: msg({ text: "see you all there" }), client });
+      await h.handleMessage({ event: msg({ ts: "300.1", text: "see you all there" }), client });
+      expect(llm.parseReservationRequest).toHaveBeenCalledTimes(2);
       expect(client.chat.postMessage).not.toHaveBeenCalled();
-    });
-
-    it("fails the event, so SQS retries, when it can't check for an earlier answer", async () => {
-      client.conversations.replies.mockRejectedValue(new Error("ratelimited"));
-      await expect(h.handleMessage({ event: msg(), client })).rejects.toThrow("ratelimited");
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.chat.postEphemeral).not.toHaveBeenCalled();
     });
 
     it("reads a request posted with an attachment", async () => {
       await h.handleMessage({ event: msg({ subtype: "file_share" }), client });
       expect(llm.parseReservationRequest).toHaveBeenCalled();
     });
-
-    it("does nothing for a message the bot already answered (SQS redelivery)", async () => {
-      client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1" }] });
-      await h.handleMessage({ event: msg(), client });
-      expect(client.conversations.replies).toHaveBeenCalledWith({ channel: "CRES", ts: MSG_TS, limit: 20 });
-      expect(llm.parseReservationRequest).not.toHaveBeenCalled();
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
-    });
-
-    it("apologises in the thread when the model call fails", async () => {
-      llm.parseReservationRequest.mockResolvedValue(null);
-      await h.handleMessage({ event: msg(), client });
-      expect(posts()[0]).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, text: "Sorry, I couldn't read that. Please try again.", username: "Reservations" });
-    });
-
-    it("says when it doesn't know an item", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Hologram"] });
-      await h.handleMessage({ event: msg(), client });
-      expect(posts()[0].text).toMatch(/^I don't know "Hologram"\./);
-      expect(posts()[0].text).toMatch(/vehicles/);
-    });
   });
 
-  describe("booking requests get a card", () => {
-    it("posts a free card in the thread and writes nothing", async () => {
+  describe("a request posted in the channel gets a private nudge to /reserve", () => {
+    const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
+
+    it("nudges a booking request privately, with the request as a /reserve example, and books nothing", async () => {
       await h.handleMessage({ event: msg(), client });
-      expect(adapters.rms.findConflicts).toHaveBeenCalledWith({ date: "2026-10-17", start: 840, end: 960, items: [SET2] });
-      expect(adapters.rms.book).not.toHaveBeenCalled();
-      const [card] = posts();
-      expect(card).toMatchObject({ channel: "CRES", thread_ts: MSG_TS, username: "Reservations", metadata: { event_type: CARD_EVENT_TYPE, event_payload: { user: "U9" } } });
-      expect(card.reply_broadcast).toBeUndefined();
-      expect(sectionText(card)).toBe("📅 *Tech Set 2* · Sat 10/17 · 2:00–4:00 PM · Youth night\n✅ Free");
-      expect(buttons(card).map((b) => b.action_id)).toEqual([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION]);
-      expect(decodeCard(buttons(card)[0].value, CATALOG)).toMatchObject({ user: "U9", req: { items: [SET2], date: "2026-10-17", start: 840, end: 960, title: "Youth night" } });
-      expect(livingDigest.refresh).not.toHaveBeenCalled();
+      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: nudgeText("book tech set 2 sat 2-4 for youth night"), username: "Reservations", icon_emoji: ":calendar:" }]);
+      expect(ephemerals()[0].text).toContain("`/reserve book tech set 2 sat 2-4 for youth night`");
+      expect(ephemerals()[0].thread_ts).toBeUndefined();
+      for (const a of Object.values(adapters)) {
+        expect(a.findConflicts).not.toHaveBeenCalled();
+        expect(a.book).not.toHaveBeenCalled();
+      }
     });
 
-    it("shows who holds a taken slot and offers only Edit", async () => {
-      adapters.rms.findConflicts.mockResolvedValue([TAKEN]);
-      client.users.lookupByEmail.mockResolvedValue({ user: { id: "UALAN" } });
-      await h.handleMessage({ event: msg(), client });
-      const [card] = posts();
-      expect(sectionText(card)).toContain("❌ Taken:\n• 2:00–3:30 PM · Tech Set 2 · Fall rally (<@UALAN>)");
-      expect(buttons(card).map((b) => b.action_id)).toEqual([EDIT_ACTION, CANCEL_ACTION]);
-    });
-
-    it("lists missing details", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Tech Set 2"] });
-      await h.handleMessage({ event: msg(), client });
-      expect(sectionText(posts()[0])).toContain("Missing: date, start and end time, what it's for. Press Edit to fill it in.");
+    it("nudges a question too, without answering it", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check" });
+      await h.handleMessage({ event: msg({ text: "is tech set 2 free sat 2-4" }), client });
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U9", text: nudgeText("is tech set 2 free sat 2-4") })]);
       expect(adapters.rms.findConflicts).not.toHaveBeenCalled();
     });
 
-    it("asks which item when ambiguous", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ intent: "book", ambiguous: [{ phrase: "a speaker", options: ["Tech Set 2", "MPR"] }] });
-      await h.handleMessage({ event: msg(), client });
-      expect(sectionText(posts()[0])).toContain('Which one did you mean by "a speaker": Tech Set 2, MPR? Press Edit to pick.');
+    it("posts nothing in the thread and doesn't read it", async () => {
+      for (const raw of [BOOK, { ...BOOK, intent: "check" }, { intent: "mine" }, { intent: "book", items: ["Hologram"] }]) {
+        llm.parseReservationRequest.mockResolvedValueOnce(raw);
+        await h.handleMessage({ event: msg(), client });
+      }
+      expect(ephemerals()).toHaveLength(4);
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(client.conversations.replies).not.toHaveBeenCalled();
     });
 
-    it("refuses mixed kinds and past dates on the card", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["Tech Set 2", "MPR"] });
+    it("nudges once per message, however often SQS delivers it", async () => {
+      const claimed = new Set();
+      const claimOnce = vi.fn(async (key) => (claimed.has(key) ? false : (claimed.add(key), true)));
+      h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, claimOnce });
       await h.handleMessage({ event: msg(), client });
-      expect(sectionText(posts()[0])).toContain("booked separately");
-      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, date: "2026-10-01" });
+      await h.handleMessage({ event: msg(), client });
+      expect(ephemerals()).toHaveLength(1);
+      expect(claimOnce).toHaveBeenCalledWith(`nudge:CRES:${MSG_TS}`, NUDGE_TTL_S);
+      // Another message from the same member is nudged again.
       await h.handleMessage({ event: msg({ ts: "300.1" }), client });
-      expect(sectionText(posts()[1])).toContain("That date has passed.");
+      expect(ephemerals()).toHaveLength(2);
     });
 
-    it("treats a small-hours time nobody said am for as missing", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "02:00", end: "04:00" });
-      await h.handleMessage({ event: msg(), client });
-      expect(sectionText(posts()[0])).toContain("Missing: start and end time.");
+    it("doesn't claim a message that gets no nudge", async () => {
+      const claimOnce = vi.fn().mockResolvedValue(true);
+      h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, claimOnce });
+      llm.parseReservationRequest.mockResolvedValue({ intent: "other" });
+      await h.handleMessage({ event: msg({ text: "see you all there" }), client });
+      await h.handleMessage({ event: msg({ text: "thanks!" }), client });
+      expect(claimOnce).not.toHaveBeenCalled();
     });
 
-    it("keeps a small-hours time the member wrote as am", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "05:00", end: "07:00" });
-      await h.handleMessage({ event: msg({ text: "book tech set 2 sat 5-7am for sunrise hike" }), client });
-      expect(sectionText(posts()[0])).toContain("5:00–7:00 AM");
+    it("the example is the request on one line, without backticks, cut to fit", () => {
+      expect(nudgeText("tech set 2\nsat `2-4`")).toMatch(/\n`\/reserve tech set 2 sat 2-4`$/);
+      const long = nudgeText("x".repeat(400));
+      expect(long).toMatch(/\n`\/reserve x+…`$/);
+      expect(long.length).toBeLessThan(400);
     });
   });
 
   describe("Book", () => {
     let card;
-    beforeEach(async () => {
-      await h.handleMessage({ event: msg(), client });
-      card = posts()[0];
-      client.chat.postMessage.mockClear();
+    beforeEach(() => {
+      card = existingCard(BOOK, { state: "free", adapter: adapters.rms });
       // The card as Slack holds it now.
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1", blocks: card.blocks }] });
     });
@@ -251,7 +249,7 @@ describe("reservations handler", () => {
 
     it("ignores other buttons", async () => {
       await h.handleCardAction({ payload: press({ actions: [{ action_id: "maintenance_submit", value: "x" }] }), client });
-      expect(client.conversations.replies).toHaveBeenCalledTimes(1);
+      expect(client.conversations.replies).not.toHaveBeenCalled();
       expect(adapters.rms.book).not.toHaveBeenCalled();
     });
 
@@ -314,11 +312,7 @@ describe("reservations handler", () => {
     });
 
     it("passes kitchen appliances through to the booking", async () => {
-      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["Kitchen"], appliances: { airFryer: true } });
-      client.conversations.replies.mockResolvedValue({ messages: [] });
-      client.chat.postMessage.mockClear();
-      await h.handleMessage({ event: msg({ ts: "400.1" }), client });
-      const kitchen = posts()[0];
+      const kitchen = existingCard({ ...BOOK, items: ["Kitchen"], appliances: { airFryer: true } }, { state: "free", adapter: adapters.kitchen });
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: CARD_TS, bot_id: "B1", blocks: kitchen.blocks }] });
       await h.handleCardAction({ payload: press({ actions: [buttons(kitchen)[0]] }), client });
       expect(adapters.kitchen.book.mock.calls[0][0].appliances).toEqual({ airFryer: true });
@@ -327,10 +321,8 @@ describe("reservations handler", () => {
 
   describe("Cancel on an open card", () => {
     let card;
-    beforeEach(async () => {
-      await h.handleMessage({ event: msg(), client });
-      card = posts()[0];
-      client.chat.postMessage.mockClear();
+    beforeEach(() => {
+      card = existingCard(BOOK, { state: "free", adapter: adapters.rms });
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1", blocks: card.blocks }] });
     });
     const cancelButton = () => buttons(card).find((b) => b.action_id === CANCEL_ACTION);
@@ -374,11 +366,9 @@ describe("reservations handler", () => {
     let ledger, booked;
     const showCard = (m) => client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS, user: "U9" }, { ts: CARD_TS, bot_id: "B1", blocks: m.blocks }] });
     const bookedCard = (ref = REF) => bookedMessage({ user: "U9", text: `${SUMMARY}\n<https://rms/item|Open the booking>`, ref, req: REQ });
-    // A fresh card for the request, as Slack then holds it.
+    // An open card for the request, as Slack holds it.
     const postCard = async () => {
-      client.conversations.replies.mockResolvedValue({ messages: [] });
-      await h.handleMessage({ event: msg(), client });
-      const card = posts()[0];
+      const card = existingCard(BOOK, { state: "free", adapter: adapters.rms });
       showCard(card);
       return card;
     };
@@ -527,9 +517,8 @@ describe("reservations handler", () => {
 
   describe("Edit modal submit", () => {
     let card;
-    beforeEach(async () => {
-      await h.handleMessage({ event: msg(), client });
-      card = posts()[0];
+    beforeEach(() => {
+      card = existingCard(BOOK, { state: "free", adapter: adapters.rms });
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: MSG_TS }, { ts: CARD_TS, bot_id: "B1", blocks: card.blocks }] });
     });
     const submit = (o = {}) => {
@@ -557,7 +546,7 @@ describe("reservations handler", () => {
       client.conversations.replies.mockResolvedValue({ messages: [{ ts: CARD_TS, bot_id: "B1", blocks: [{ type: "section", text: { type: "mrkdwn", text: "✅ done" } }] }] });
       await h.handleModalSubmit({ payload: submit(), client });
       expect(client.chat.update).not.toHaveBeenCalled();
-      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ user: "U9", text: "That request is already finished. Post a new message to book again." });
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ user: "U9", text: "That request is already finished. Use `/reserve` to book again." });
     });
 
     it("ignores other modals and other users", async () => {
@@ -591,17 +580,94 @@ describe("reservations handler", () => {
       for (const m of ephemerals()) expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations" });
     });
 
-    it("a booking request is not booked or carded; it says where to book", async () => {
-      await command("tech set 2 sat 2-4 youth night");
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
-      expect(adapters.rms.book).not.toHaveBeenCalled();
-      expect(ephemerals()[0].text).toMatch(/^To book, post it in the channel without \/reserve/);
-    });
-
     it("something that is not a reservation question gets examples instead of silence", async () => {
       llm.parseReservationRequest.mockResolvedValue({ intent: "other" });
       await command("hello");
-      expect(ephemerals()[0].text).toMatch(/^Ask me privately, for example `\/reserve what are my reservations`/);
+      expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U1" });
+      expect(ephemerals()[0].text).toMatch(/^Book or ask with \/reserve, for example `\/reserve Tech Set 2 Sat 2-4pm for youth night`, `\/reserve what are my reservations`/);
+    });
+
+    it("apologises privately when the model call fails", async () => {
+      llm.parseReservationRequest.mockResolvedValue(null);
+      await command("tech set 2 sat 2-4 youth night");
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", text: "Sorry, I couldn't read that. Please try again.", username: "Reservations" })]);
+    });
+
+    it("says when it doesn't know an item", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Hologram"] });
+      await command("book the hologram sat 2-4");
+      expect(ephemerals()[0].text).toMatch(/^I don't know "Hologram"\./);
+      expect(ephemerals()[0].text).toMatch(/vehicles/);
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("asks which item when a booking request is ambiguous", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "book", ambiguous: [{ phrase: "a speaker", options: ["Tech Set 2", "MPR"] }] });
+      await command("book a speaker sat 2-4");
+      expect(ephemerals()).toEqual([expect.objectContaining({ user: "U1", text: 'Which one did you mean by "a speaker": Tech Set 2, MPR? Ask again with its name.' })]);
+    });
+
+    it("a booking request that names nothing asks what to book", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "book", date: "2026-10-17", start: "14:00", end: "16:00", title: "Youth night" });
+      await command("book something sat 2-4");
+      expect(ephemerals()).toEqual([expect.objectContaining({ user: "U1", text: expect.stringMatching(/^What would you like to book\? For example `\/reserve Tech Set 2 Sat 2-4pm for youth night`/) })]);
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+    });
+
+    it("without a tray table, a booking request shows the plain listing", async () => {
+      await command("tech set 2 sat 2-4 youth night");
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(adapters.rms.book).not.toHaveBeenCalled();
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", username: "Reservations" })]);
+      expect(ephemerals()[0].blocks).toBeUndefined();
+    });
+
+    describe("a booking request goes into the tray", () => {
+      let trayStore;
+      beforeEach(() => {
+        trayStore = makeTrayStore();
+        h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, livingDigest, trayStore });
+      });
+      const stored = () => trayStore.rows.get("U1");
+
+      it("adds it to the member's tray and shows the private listing card; nothing is booked", async () => {
+        await command("tech set 2 sat 2-4 youth night");
+        expect(stored().lines).toEqual([expect.objectContaining({ item: "Tech Set 2", date: "2026-10-17", start: 840, end: 960, title: "Youth night", appliances: {} })]);
+        expect(client.chat.postMessage).not.toHaveBeenCalled();
+        const [m] = ephemerals();
+        expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations" });
+        expect(m.thread_ts).toBeUndefined();
+        expect(sectionText(m).split("\n")[0]).toBe("Added to your tray. Check the details, then press *Reserve all*.");
+        expect(sectionText(m)).toContain("*Your tray (1)*");
+        for (const a of Object.values(adapters)) expect(a.book).not.toHaveBeenCalled();
+        expect(livingDigest.refresh).not.toHaveBeenCalled();
+      });
+
+      it("a request missing details still goes in, with the gaps left to fill", async () => {
+        llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Tech Set 2"] });
+        await command("tech set 2");
+        expect(stored().lines).toEqual([expect.objectContaining({ item: "Tech Set 2", date: null, start: null, end: null, title: null })]);
+      });
+
+      it("treats a small-hours time nobody said am for as missing", async () => {
+        llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "02:00", end: "04:00" });
+        await command("tech set 2 sat 2-4 youth night");
+        expect(stored().lines[0]).toMatchObject({ date: "2026-10-17", start: null, end: null });
+      });
+
+      it("keeps a small-hours time the member wrote as am", async () => {
+        llm.parseReservationRequest.mockResolvedValue({ ...BOOK, start: "05:00", end: "07:00" });
+        await command("tech set 2 sat 5-7am for sunrise hike");
+        expect(stored().lines[0]).toMatchObject({ start: 300, end: 420 });
+      });
+
+      it("keeps the lines already in the tray", async () => {
+        await command("tech set 2 sat 2-4 youth night");
+        llm.parseReservationRequest.mockResolvedValue({ ...BOOK, items: ["MPR"], title: "MBS" });
+        await command("mpr sat 2-4 mbs");
+        expect(stored().lines.map((l) => [l.item, l.title])).toEqual([["Tech Set 2", "Youth night"], ["MPR", "MBS"]]);
+      });
     });
 
     it("outside the reservations channel, points there without parsing", async () => {
@@ -614,34 +680,44 @@ describe("reservations handler", () => {
     });
   });
 
-  describe("questions are answered in the thread", () => {
+  describe("questions are answered privately", () => {
+    const ask = (text = "book tech set 2 sat 2-4 for youth night") => h.handleCommand({ userId: "U9", channel: "CRES", text, client, responseUrl: "https://r" });
+    // The private answer, and nothing in the channel.
+    const answer = () => {
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      const [m] = client.chat.postEphemeral.mock.calls.map((c) => c[0]);
+      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
+      expect(m.thread_ts).toBeUndefined();
+      return m;
+    };
+
     it("answers a check without booking", async () => {
       llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check" });
-      await h.handleMessage({ event: msg(), client });
+      await ask();
       expect(adapters.rms.book).not.toHaveBeenCalled();
-      expect(posts()[0]).toMatchObject({ thread_ts: MSG_TS, text: "Tech Set 2 is free Sat 10/17, 2:00–4:00 PM." });
+      expect(answer().text).toBe("Tech Set 2 is free Sat 10/17, 2:00–4:00 PM.");
     });
 
     it("a check naming items in two systems reads both", async () => {
       llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check", items: ["MPR", "Tech Set 2"] });
       adapters.rms.findConflicts.mockResolvedValue([{ category: "tech", item: "Tech Set 2", date: "2026-10-17", start: 840, end: 900, title: "Rally", holder: "Alan", holderUserId: null, holderEmail: null }]);
-      await h.handleMessage({ event: msg(), client });
+      await ask();
       expect(adapters.rooms.findConflicts).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ label: "MPR" })] }));
-      expect(posts()[0].text).toMatch(/^MPR, Tech Set 2 is taken Sat 10\/17:\n• 2:00–3:00 PM · Tech Set 2 · Rally \(Alan\)/);
+      expect(answer().text).toMatch(/^MPR, Tech Set 2 is taken Sat 10\/17:\n• 2:00–3:00 PM · Tech Set 2 · Rally \(Alan\)/);
     });
 
     it("an ambiguous question asks which one", async () => {
       llm.parseReservationRequest.mockResolvedValue({ intent: "check", ambiguous: [{ phrase: "a speaker", options: ["Tech Set 2", "MPR"] }] });
-      await h.handleMessage({ event: msg(), client });
-      expect(posts()[0].text).toBe('Which one did you mean by "a speaker": Tech Set 2, MPR? Ask again with its name.');
+      await ask();
+      expect(answer().text).toBe('Which one did you mean by "a speaker": Tech Set 2, MPR? Ask again with its name.');
     });
 
     it("lists across all backends when no item is named", async () => {
       llm.parseReservationRequest.mockResolvedValue({ intent: "list", date: "2026-10-17", toDate: "2026-10-18" });
       adapters.rooms.listReservations.mockResolvedValue({ reservations: [{ category: "rooms", item: "MPR", date: "2026-10-17", start: 600, end: 720, title: "MBS", holder: "Arie", holderUserId: null, holderEmail: null }], errors: [] });
-      await h.handleMessage({ event: msg(), client });
+      await ask();
       for (const a of Object.values(adapters)) expect(a.listReservations).toHaveBeenCalledWith({ from: "2026-10-17", to: "2026-10-18", items: [] });
-      expect(posts()[0].text).toBe("*Sat 10/17*\n• 10:00 AM–12:00 PM · MPR · MBS (Arie)");
+      expect(answer().text).toBe("*Sat 10/17*\n• 10:00 AM–12:00 PM · MPR · MBS (Arie)");
     });
 
     describe("list periods", () => {
@@ -655,28 +731,28 @@ describe("reservations handler", () => {
           R({ date: "2026-11-02", start: 1080, end: 1200, title: "Later" }),
           R({ date: "2026-10-20", start: 1140, end: 1260, title: "Youth night" }),
         ], errors: [] });
-        await h.handleMessage({ event: msg({ text: "who has tech set 2" }), client });
+        await ask("who has tech set 2");
         expect(adapters.rms.listReservations).toHaveBeenCalledWith({ from: "2026-10-14", to: "2027-04-12", items: [SET2] });
-        expect(posts()[0].text).toBe("Next up for Tech Set 2, Tue 10/20:\n• 7:00–9:00 PM · Tech Set 2 · Youth night (Alan)");
+        expect(answer().text).toBe("Next up for Tech Set 2, Tue 10/20:\n• 7:00–9:00 PM · Tech Set 2 · Youth night (Alan)");
       });
 
       it("says when an item has no upcoming reservations", async () => {
         llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"] });
-        await h.handleMessage({ event: msg({ text: "who has tech set 2" }), client });
-        expect(posts()[0].text).toBe("No upcoming reservations for Tech Set 2.");
+        await ask("who has tech set 2");
+        expect(answer().text).toBe("No upcoming reservations for Tech Set 2.");
       });
 
       it("with no items and no period, lists the next 14 days", async () => {
         llm.parseReservationRequest.mockResolvedValue({ intent: "list" });
-        await h.handleMessage({ event: msg({ text: "what's booked" }), client });
+        await ask("what's booked");
         expect(adapters.rooms.listReservations).toHaveBeenCalledWith({ from: "2026-10-14", to: "2026-10-27", items: [] });
-        expect(posts()[0].text).toBe("Nothing booked Wed 10/14 – Tue 10/27.");
+        expect(answer().text).toBe("Nothing booked Wed 10/14 – Tue 10/27.");
       });
 
       it("names the items when a period has nothing booked", async () => {
         llm.parseReservationRequest.mockResolvedValue({ intent: "list", items: ["Tech Set 2"], date: "2026-10-17", toDate: "2026-10-18" });
-        await h.handleMessage({ event: msg({ text: "who has tech set 2 this weekend" }), client });
-        expect(posts()[0].text).toBe("Nothing booked for Tech Set 2, Sat 10/17 – Sun 10/18.");
+        await ask("who has tech set 2 this weekend");
+        expect(answer().text).toBe("Nothing booked for Tech Set 2, Sat 10/17 – Sun 10/18.");
       });
     });
   });
@@ -687,10 +763,10 @@ describe("find intent", () => {
     const llm = { parseReservationRequest: vi.fn().mockResolvedValue(raw) };
     const client = makeClient();
     const h = createReservationsHandler({ llm, adapters: {}, catalog, channelId: "CRES", now: () => NOW });
-    const answers = () => client.chat.postMessage.mock.calls.map((c) => c[0]);
+    const answers = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
     return { h, client, answers };
   };
-  const run = (h, client) => h.handleMessage({ event: msg({ text: "what speakers are there?" }), client });
+  const run = (h, client) => h.handleCommand({ userId: "U9", channel: "CRES", text: "what speakers are there?", client, responseUrl: "https://r" });
 
   it("groups matches by category and says how to book", async () => {
     const cat = [
@@ -700,10 +776,12 @@ describe("find intent", () => {
     const { h, client, answers } = mk(cat, { intent: "find", items: ["Tech Set 1", "MPR", "Tech Set 2"] });
     await run(h, client);
     const [a] = answers();
-    expect(a.thread_ts).toBe(MSG_TS);
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(a).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
+    expect(a.thread_ts).toBeUndefined();
     expect(a.text).toContain("Rooms: MPR");
     expect(a.text).toContain("Tech: Tech Set 1, Tech Set 2");
-    expect(a.text).toContain("To book one, post its name, the day, the time and what it's for.");
+    expect(a.text).toContain("To book one, use `/reserve` with its name, the day, the time and what it's for.");
   });
 
   it("caps at 25 and counts the rest", async () => {
@@ -755,7 +833,7 @@ describe("my reservations", () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
     return () => fetchSpy.mockRestore();
   });
-  const ask = (h) => h.handleMessage({ event: msg({ text: "what do I have booked?" }), client });
+  const ask = (h) => h.handleCommand({ userId: "U9", channel: "CRES", text: "what do I have booked?", client, responseUrl: "https://r" });
   const reply = () => client.chat.postEphemeral.mock.calls[0][0];
   const lines = (m) => m.blocks.filter((b) => b.type === "section" && b.accessory).map((b) => b.text.text);
   const sectionTexts = (m) => m.blocks.filter((b) => b.type === "section").map((b) => b.text.text);
@@ -984,7 +1062,7 @@ describe("my reservations", () => {
 describe("reservations onboarding", () => {
   let llm, client, claimed, claimOnce, h;
   beforeEach(() => {
-    llm = { parseReservationRequest: vi.fn().mockResolvedValue({ ...BOOK, intent: "check" }) };
+    llm = { parseReservationRequest: vi.fn().mockResolvedValue(BOOK) };
     const adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
     client = makeClient();
     claimed = new Set();
@@ -995,12 +1073,16 @@ describe("reservations onboarding", () => {
   const joined = (o = {}) => ({ type: "member_joined_channel", channel: "CRES", user: "U9", event_ts: "500.1", ...o });
 
   describe("welcome on join", () => {
-    it("tells the new member privately how to book and how to ask with /reserve", async () => {
+    it("tells the new member privately that booking and asking both go through /reserve", async () => {
       await h.handleMemberJoined({ event: joined(), client });
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       expect(ephemerals()).toHaveLength(1);
       expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U9", text: WELCOME_TEXT, username: "Reservations" });
       expect(WELCOME_TEXT).toMatch(/\/reserve/);
+      expect(WELCOME_TEXT).toContain("`/reserve Tech Set 2 Sat 2-4pm for youth night`");
+      expect(WELCOME_TEXT).toContain("*Reserve all*");
+      expect(WELCOME_TEXT).not.toContain("post what you need here");
+      expect(WELCOME_TEXT).toMatch(/connect your \*acts2\.network\* Google account/);
       expect(claimOnce).toHaveBeenCalledWith("welcome:U9:500.1", WELCOME_TTL_S);
     });
 
@@ -1026,37 +1108,6 @@ describe("reservations onboarding", () => {
     it("a failed welcome doesn't fail the event", async () => {
       client.chat.postEphemeral.mockRejectedValue(new Error("user_not_in_channel"));
       await expect(h.handleMemberJoined({ event: joined(), client })).resolves.toBeUndefined();
-    });
-  });
-
-  describe("/reserve tip after a question asked in the channel", () => {
-    it("answers in the thread, then tips the asker privately in that thread", async () => {
-      await h.handleMessage({ event: msg(), client });
-      expect(client.chat.postMessage.mock.calls[0][0]).toMatchObject({ thread_ts: MSG_TS, text: "Tech Set 2 is free Sat 10/17, 2:00–4:00 PM." });
-      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U9", thread_ts: MSG_TS, text: COMMAND_TIP })]);
-      expect(claimOnce).toHaveBeenCalledWith("tip:U9", TIP_TTL_S);
-    });
-
-    it("tips a member at most once per claim window", async () => {
-      await h.handleMessage({ event: msg(), client });
-      await h.handleMessage({ event: msg({ ts: "300.1" }), client });
-      expect(ephemerals().filter((m) => m.text === COMMAND_TIP)).toHaveLength(1);
-    });
-
-    it("doesn't tip booking requests, chatter, or /reserve itself", async () => {
-      llm.parseReservationRequest.mockResolvedValueOnce(BOOK).mockResolvedValueOnce({ intent: "other" });
-      await h.handleMessage({ event: msg(), client });
-      await h.handleMessage({ event: msg({ ts: "300.1", text: "see you there" }), client });
-      llm.parseReservationRequest.mockResolvedValue({ ...BOOK, intent: "check" });
-      await h.handleCommand({ userId: "U9", channel: "CRES", text: "is tech set 2 free sat 2-4", client, responseUrl: "https://r" });
-      expect(ephemerals().some((m) => m.text === COMMAND_TIP)).toBe(false);
-      expect(claimOnce).not.toHaveBeenCalled();
-    });
-
-    it("a failed tip leaves the answer standing and the event succeeding", async () => {
-      claimOnce.mockRejectedValue(new Error("throttled"));
-      await h.handleMessage({ event: msg(), client });
-      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
     });
   });
 });

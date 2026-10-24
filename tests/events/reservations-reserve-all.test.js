@@ -641,7 +641,7 @@ describe("Reserve all", () => {
       const prompt = ephemerals().at(-1);
       expect(prompt).toMatchObject({ channel: "CRES", user: "U9" });
       expect(prompt.thread_ts).toBeUndefined();
-      expect(prompt.text).toBe("To book as you, connect your Google account once. I'll reserve your tray as soon as you approve.");
+      expect(prompt.text).toBe("To book as you, connect your acts2.network Google account once. I'll reserve your tray as soon as you approve.");
       expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
       expect(stored().running).toBeNull();
     });

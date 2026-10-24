@@ -154,7 +154,7 @@ export function createSeriesFlow({
       say: { channel: where.channel, threadTs: null, cardTs: null, prompt: tell, done: tell },
       text: revoked
         ? `Your Google connection has expired. Connect again and I'll finish cancelling ${what} as you.`
-        : `To cancel as you, connect your Google account once. I'll cancel ${what} as soon as you approve.`,
+        : `To cancel as you, connect your acts2.network Google account once. I'll cancel ${what} as soon as you approve.`,
       noEmail: (text) => tell(`${text} You can cancel it directly: ${link}`),
     });
   }

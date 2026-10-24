@@ -296,7 +296,7 @@ describe("cancelling from the combined post", () => {
       slackUserId: "U9", slackEmail: "deandra.shim@acts2.network", channel: "CRES",
       request: { kind: "series-cancel", user: "U9", seriesId: SERIES_ID, which: "all", channel: "CRES", postTs: POST_TS },
     });
-    expect(ephemerals()[0]).toMatchObject({ user: "U9", text: "To cancel as you, connect your Google account once. I'll cancel this series as soon as you approve." });
+    expect(ephemerals()[0]).toMatchObject({ user: "U9", text: "To cancel as you, connect your acts2.network Google account once. I'll cancel this series as soon as you approve." });
     expect(ephemerals()[0].blocks[1].elements[0]).toMatchObject({ action_id: "reservations_connect_google" });
 
     client.chat.postEphemeral.mockClear();

@@ -1,12 +1,16 @@
 // src/events/reservations.js
-// Reservations: members post plain messages in #reservations and the bot
-// replies in each message's thread, first come first served. Questions get an
-// answer. A booking request gets a card (what the bot understood, free or not,
-// Book and Edit); the request rides in the card's buttons, so nothing is
-// stored. Book writes; Edit's modal only updates the card; Cancel closes it. A
-// refused card is replaced by its outcome; a booked one keeps a Cancel booking
-// button, whose value says where the booking lives. "What do I have
-// booked?" gets a private list, each line with its own Cancel.
+// Reservations: members ask and book privately with /reserve in
+// #reservations, first come first served. Questions get a private answer; a
+// booking request goes into the member's tray (see reservations-listing.js),
+// booked with Reserve all. A request posted in the channel gets a private
+// nudge to use /reserve instead. "What do I have booked?" gets a private
+// list, each line with its own Cancel.
+//
+// Booking cards posted in threads before /reserve took over still work: the
+// request rides in the card's buttons, so nothing is stored. Book writes;
+// Edit's modal only updates the card; Cancel closes it. A refused card is
+// replaced by its outcome; a booked one keeps a Cancel booking button, whose
+// value says where the booking lives.
 import { randomBytes } from "node:crypto";
 import { log, metric } from "../lib/logger.js";
 import { nyToday, nyParts, addDaysIso, weekdayName, fmtDay, fmtRange } from "../lib/reservation-time.js";
@@ -30,21 +34,27 @@ import { TRAY_RESERVE_ACTION } from "../lib/reservation-listing.js";
 const TECH_NOTE = "Reminder: the booking covers the ENTIRE time you hold the set. Return it to the tech room and charge the speaker and mic receivers after.";
 export const FIND_CAP = 25;
 const ENDED_TEXT = "That booking has already ended.";
-const COMMAND_HELP = "Ask me privately, for example `/reserve what are my reservations`, `/reserve what can I reserve`, `/reserve is the MPR free Saturday 2-4` or `/reserve who has the Transit`.";
-const COMMAND_BOOK_TEXT = "To book, post it in the channel without /reserve, or open `/reserve what can I reserve` and add it there.";
+const COMMAND_HELP = "Book or ask with /reserve, for example `/reserve Tech Set 2 Sat 2-4pm for youth night`, `/reserve what are my reservations`, `/reserve is the MPR free Saturday 2-4` or `/reserve who has the Transit`.";
+const NO_ITEM_TEXT = "What would you like to book? For example `/reserve Tech Set 2 Sat 2-4pm for youth night`, or `/reserve` on its own to see everything.";
 // Shown privately to each member when they join #reservations.
 export const WELCOME_TEXT = [
   "*Welcome to #reservations!* I book rooms, the kitchen, tech sets, vehicles, and sports, outreach and accessories equipment.",
-  "• *To book*, post what you need here, for example `Tech Set 2 Sat 2-4pm for youth night`. I reply in the thread with a card; press *Book* to confirm.",
-  "• *To ask privately*, use `/reserve`, for example `/reserve is the MPR free Saturday 2-4` or `/reserve what do I have booked?`. Only you see the question and the answer.",
-  "• `/reserve` on its own lists everything you can reserve.",
+  "Everything goes through `/reserve`, and only you see your request and my answers:",
+  "• *Book:* `/reserve Tech Set 2 Sat 2-4pm for youth night`. I add it to your tray; check it, then press *Reserve all*.",
+  "• *Ask:* `/reserve is the MPR free Saturday 2-4`, `/reserve who has the Transit` or `/reserve what do I have booked?`",
+  "• *Browse:* `/reserve` on its own lists everything you can reserve.",
+  "*Before your first booking:* bookings are made in your name, so the first time you press *Reserve all* I'll ask you to connect your *acts2.network* Google account. Sign in with the same email as your Slack account. You only do this once.",
 ].join("\n");
-// After a question asked in the open, at most once a week per member.
-export const COMMAND_TIP = "Tip: only you can see this. Next time, you can ask with `/reserve`, for example `/reserve is the MPR free Saturday 2-4`, and nobody else sees the question or the answer.";
-// Long past any SQS redelivery of the same join; only there so old claims are cleared.
+// Long past any SQS redelivery of the same event; only there so old claims are cleared.
 export const WELCOME_TTL_S = 86400;
-export const TIP_TTL_S = 7 * 86400;
-const QUESTION_INTENTS = new Set(["mine", "browse", "find", "check", "list"]);
+export const NUDGE_TTL_S = 86400;
+// A request posted in the open gets this, privately, instead of an answer.
+const NUDGE_EXAMPLE_MAX = 150;
+export function nudgeText(text) {
+  const plain = String(text || "").replace(/[`\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const example = plain.length > NUDGE_EXAMPLE_MAX ? `${plain.slice(0, NUDGE_EXAMPLE_MAX - 1)}…` : plain;
+  return `Only you can see this. Requests in #reservations are private now: use \`/reserve\` and nobody else sees the request or my answer. Try:\n\`/reserve ${example}\``;
+}
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
@@ -171,7 +181,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       request: { req, requester, backend: adapter.backend, cardTs: say.cardTs }, requester, say,
       text: revoked
         ? "Your Google connection has expired. Connect again and I'll finish this booking as you."
-        : "To book as you, connect your Google account once. I'll finish this booking as soon as you approve.",
+        : "To book as you, connect your acts2.network Google account once. I'll finish this booking as soon as you approve.",
       noEmail: (text) => say.done(`${text} You can book directly: ${adapter.link}`),
     });
   }
@@ -182,7 +192,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       request: { kind: "cancel", ref, requester, cardTs: say.cardTs, responseUrl: say.responseUrl ?? null }, requester, say,
       text: revoked
         ? "Your Google connection has expired. Connect again and I'll cancel this booking as you."
-        : "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve.",
+        : "To cancel as you, connect your acts2.network Google account once. I'll cancel this booking as soon as you approve.",
       noEmail: (text) => (say.failed || say.done)(`${text} You can cancel it directly: ${adapter.link}`),
     });
   }
@@ -612,7 +622,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       .filter(([, labels]) => labels.length > 0)
       .map(([name, labels]) => `${name}: ${labels.join(", ")}`);
     const more = req.items.length > FIND_CAP ? `\n+${req.items.length - FIND_CAP} more. Try a narrower word.` : "";
-    return say.done(`${lines.join("\n")}${more}\nTo book one, post its name, the day, the time and what it's for.`);
+    return say.done(`${lines.join("\n")}${more}\nTo book one, use \`/reserve\` with its name, the day, the time and what it's for.`);
   }
 
   async function handleQuery(req, say, client) {
@@ -657,21 +667,20 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return llm.parseReservationRequest(`Member: ${text}`, { catalogText, today, weekday: weekdayName(today) });
   }
 
-  // A top-level message in #reservations. Thread replies belong to people.
+  // A top-level message in #reservations. Requests are made with /reserve
+  // now, so a request posted in the open gets a private nudge, every time,
+  // and nothing in the thread. Chatter, and thread replies, belong to people.
   async function handleMessage({ event, client }) {
     // file_share is a message posted with an attachment; its text still counts.
     if (event.channel !== channelId || event.thread_ts || event.bot_id || (event.subtype && event.subtype !== "file_share")) return;
     const text = String(event.text || "").trim();
     if (isIgnorableChatter(text)) return;
-    // An SQS redelivery: the bot already answered in this message's thread.
-    // If this read fails, the event fails and SQS retries it, rather than risk a second card.
-    const thread = await client.conversations.replies({ channel: event.channel, ts: event.ts, limit: 20 });
-    if ((thread.messages || []).some((m) => m.bot_id && m.ts !== event.ts)) {
-      log.info("reservation message already answered", { channel: event.channel, ts: event.ts });
-      return;
-    }
-    const say = threadSay(client, event.channel, event.ts);
-    return answer({ text, user: event.user, channel: event.channel, say, client, threadTs: event.ts });
+    const raw = await parse(text);
+    if (!raw || normalizeRequest(raw, catalog).intent === "other") return;
+    // An SQS redelivery of the same message must not nudge twice.
+    if (claimOnce && !(await claimOnce(`nudge:${event.channel}:${event.ts}`, NUDGE_TTL_S))) return;
+    await client.chat.postEphemeral({ channel: event.channel, user: event.user, text: nudgeText(text), ...BOT_PERSONA });
+    metric("ReservationsNudged", 1, { dimensions: { Flow: "reservations" } });
   }
 
   // Someone joined #reservations: tell them, privately, how it works. Every
@@ -688,43 +697,25 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     }
   }
 
-  // A question asked in the open could have been asked privately. Never
-  // fails the event: the answer is already posted and must not be repeated.
-  async function tipCommand({ user, channel, threadTs, client }) {
-    if (!claimOnce) return;
-    try {
-      if (!(await claimOnce(`tip:${user}`, TIP_TTL_S))) return;
-      await client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text: COMMAND_TIP, ...BOT_PERSONA });
-    } catch (error) {
-      log.warn("reservations /reserve tip failed", { user, error });
-    }
-  }
-
-  // /reserve: the same questions as chatting in the channel, but nobody else
-  // sees them and every answer is private. Booking itself stays in the
-  // channel (a public card) or on the listing card.
+  // /reserve: asking and booking, all private. It works in #reservations
+  // only, because the private follow-ups (Reserve all, Cancel, the Google
+  // connect prompt) post there.
   async function handleCommand({ userId, channel, text, client, responseUrl }) {
     const tell = (t) => tellPrivately({ userId, channel, client, responseUrl, text: t });
     if (channel !== channelId) return tell(`Use /reserve in <#${channelId}>.`);
     const asked = String(text || "").trim();
     if (!asked) return listing.post({ channel, user: userId, search: null, client });
     const say = privateSay(client, { channel, user: userId, responseUrl });
-    return answer({ text: asked, user: userId, channel, say, client, threadTs: null });
+    return answer({ text: asked, user: userId, channel, say, client });
   }
 
-  // threadTs is the member's message for a chat; null for /reserve, which
-  // answers questions only.
-  async function answer({ text, user, channel, say, client, threadTs }) {
+  // /reserve: answers come privately, and a booking request goes into the
+  // member's tray, booked with Reserve all.
+  async function answer({ text, user, channel, say, client }) {
     const raw = await parse(text);
     if (!raw) return say.done("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
-    const result = await route({ req, text, user, channel, say, client, threadTs });
-    if (threadTs && QUESTION_INTENTS.has(req.intent)) await tipCommand({ user, channel, threadTs, client });
-    return result;
-  }
-
-  async function route({ req, text, user, channel, say, client, threadTs }) {
-    if (req.intent === "other") return threadTs ? undefined : say.done(COMMAND_HELP);
+    if (req.intent === "other") return say.done(COMMAND_HELP);
     if (req.intent === "mine") return postMine({ channel, user, client });
     if (req.intent === "browse") return listing.post({ channel, user, search: req.search, client });
     // "Sat 2-4" is afternoon. The model is told so, but a small-hours time
@@ -738,17 +729,13 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (req.unmatched.length && req.items.length === 0 && req.ambiguous.length === 0) {
       return say.done(`I don't know "${req.unmatched.join('", "')}". I can book rooms, the kitchen, tech sets, vehicles, and sports, outreach and accessories equipment.`);
     }
-    if (req.intent === "check" || req.intent === "list") {
-      if (req.ambiguous.length) {
-        const a = req.ambiguous[0];
-        return say.done(`Which one did you mean by "${a.phrase}": ${a.options.map((o) => o.label).join(", ")}? Ask again with its name.`);
-      }
-      return handleQuery(req, say, client);
+    if (req.ambiguous.length) {
+      const a = req.ambiguous[0];
+      return say.done(`Which one did you mean by "${a.phrase}": ${a.options.map((o) => o.label).join(", ")}? Ask again with its name.`);
     }
-    if (!threadTs) return say.done(COMMAND_BOOK_TEXT);
-
-    const assessment = await assess(req, client);
-    await client.chat.postMessage({ channel, thread_ts: threadTs, ...BOT_PERSONA, ...cardMessage({ user, req, assessment }) });
+    if (req.intent === "check" || req.intent === "list") return handleQuery(req, say, client);
+    if (!req.items.length) return say.done(NO_ITEM_TEXT);
+    return listing.postRequest({ channel, user, req, client });
   }
 
   // Book, Cancel or Cancel booking on a card, or anyone but the requester
@@ -829,7 +816,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     if (!user || payload.user?.id !== user || !channel || !cardTs) return;
     const current = await readCard(client, channel, threadTs, cardTs);
     if (!isOpenCard(current)) {
-      return client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text: "That request is already finished. Post a new message to book again.", ...BOT_PERSONA });
+      return client.chat.postEphemeral({ channel, user, thread_ts: threadTs, text: "That request is already finished. Use `/reserve` to book again.", ...BOT_PERSONA });
     }
     const assessment = await assess(req, client);
     await updateCard(client, { channel, cardTs, user, req, assessment });

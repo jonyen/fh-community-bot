@@ -94,7 +94,7 @@ describe("reservations with connected accounts", () => {
     expect(connect.consentUrl).toHaveBeenCalledWith({ state: "NONCE", loginHint: "deandra.shim@acts2.network" });
     const [prompt] = ephemerals();
     expect(prompt).toMatchObject({ channel: "CRES", user: "U9", thread_ts: MSG_TS, username: "Reservations" });
-    expect(prompt.text).toMatch(/connect your Google account once/);
+    expect(prompt.text).toMatch(/connect your acts2.network Google account once/);
     expect(prompt.blocks[1].elements[0]).toMatchObject({ type: "button", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE", action_id: "reservations_connect_google" });
     // The card stays open, so it can still be edited.
     expect(client.chat.update).not.toHaveBeenCalled();
@@ -200,7 +200,7 @@ describe("reservations with connected accounts", () => {
         request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: CARD_TS, responseUrl: null },
       });
       const [prompt] = ephemerals();
-      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", thread_ts: MSG_TS, text: "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve." });
+      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", thread_ts: MSG_TS, text: "To cancel as you, connect your acts2.network Google account once. I'll cancel this booking as soon as you approve." });
       expect(prompt.blocks[1].elements[0]).toMatchObject({ action_id: "reservations_connect_google", url: "https://accounts.google.com/o/oauth2/v2/auth?state=NONCE" });
 
       // The member approves: the pending row resumes into the cancel, as them.
@@ -231,7 +231,7 @@ describe("reservations with connected accounts", () => {
         request: { kind: "cancel", ref: ROOM_REF, requester: REQUESTER, cardTs: null, responseUrl: "https://hooks.slack/actions/r1" },
       });
       const [prompt] = ephemerals();
-      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", text: "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve." });
+      expect(prompt).toMatchObject({ channel: "CRES", user: "U9", text: "To cancel as you, connect your acts2.network Google account once. I'll cancel this booking as soon as you approve." });
       expect(prompt.thread_ts).toBeUndefined();
 
       client.chat.postEphemeral.mockClear();

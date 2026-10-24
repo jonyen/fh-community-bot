@@ -7,6 +7,7 @@ import {
   LIST_SEARCH_ACTION, LIST_CATEGORY_ACTION, LIST_PAGE_ACTION, LIST_ADD_ACTION, LIST_EDIT_ACTION, TRAY_RESERVE_ACTION, TRAY_CLEAR_ACTION, LIST_CLOSE_ACTION,
 } from "../../src/lib/reservation-listing.js";
 import { FORM_DATE_ACTION, FORM_START_ACTION, FORM_SAVE_ACTION, FORM_REMOVE_ACTION, FORM_BACK_ACTION, FORM_REPEAT_ACTION } from "../../src/lib/reservation-line-form.js";
+import { normalizeRequest } from "../../src/lib/reservation-request.js";
 import { log } from "../../src/lib/logger.js";
 import { createRoomsAdapter } from "../../src/services/reservations/rooms.js";
 import { createKitchenAdapter } from "../../src/services/reservations/kitchen.js";
@@ -74,7 +75,7 @@ describe("listing flow", () => {
     return () => fetchSpy.mockRestore();
   });
   const ask = (text = "list items to reserve") =>
-    h.handleMessage({ event: { type: "message", channel: "CRES", user: "U9", text, ts: "200.1" }, client });
+    h.handleCommand({ userId: "U9", channel: "CRES", text, client, responseUrl: URL });
   const act = (action, values) => h.handleCardAction({ payload: press(action, values), client });
   const sent = () => JSON.parse(fetchSpy.mock.calls.at(-1)[1].body);
   const stored = () => trayStore.rows.get("U9");
@@ -105,7 +106,7 @@ describe("listing flow", () => {
       await ask();
       const m = client.chat.postEphemeral.mock.calls[0][0];
       expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
-      expect(m.text).toBe(`${categoryCounts(CATALOG)}\nTo book, post the item, day, time and what it's for.`);
+      expect(m.text).toBe(`${categoryCounts(CATALOG)}\nBooking from here isn't set up yet. Book directly in the room sheet, kitchen sheet or calendar.`);
       expect(m.blocks).toBeUndefined();
     });
   });
@@ -473,5 +474,96 @@ describe("lineCheck", () => {
     expect(await flow.lineCheck(line("L"), client)).toBe("");
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("postRequest", () => {
+  let adapters, client, trayStore, flow;
+  const make = (store) => createListingFlow({ catalog: CATALOG, adapters, llm: {}, catalogText: "", trayStore: store, now: () => NOW, withMentions: async (c, rs) => rs });
+  beforeEach(() => {
+    adapters = { rooms: makeAdapter("rooms"), kitchen: makeAdapter("kitchen"), rms: makeAdapter("rms") };
+    client = makeClient();
+    trayStore = makeTrayStore();
+    flow = make(trayStore);
+  });
+  const REQ = { intent: "book", items: ["Tech Set 2", "MPR"], date: "2026-10-24", start: "14:00", end: "16:00", title: "Youth night" };
+  const request = (raw = REQ) => flow.postRequest({ channel: "CRES", user: "U9", req: normalizeRequest(raw, CATALOG), client });
+  const stored = () => trayStore.rows.get("U9");
+  const reply = () => client.chat.postEphemeral.mock.calls.at(-1)[0];
+
+  it("adds one line per item with the request's day, time and title, and shows the card privately", async () => {
+    await request();
+    expect(stored().lines).toEqual([
+      expect.objectContaining({ item: "Tech Set 2", date: "2026-10-24", start: 840, end: 960, title: "Youth night", appliances: {}, repeat: null, onlyDates: null, progress: {} }),
+      expect.objectContaining({ item: "MPR", date: "2026-10-24", start: 840, end: 960, title: "Youth night", appliances: {} }),
+    ]);
+    expect(new Set(stored().lines.map((l) => l.id)).size).toBe(2);
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    const m = reply();
+    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations", icon_emoji: ":calendar:" });
+    expect(m.thread_ts).toBeUndefined();
+    expect(sections(m)[0]).toBe("Added to your tray. Check the details, then press *Reserve all*.");
+    expect(sections(m)).toContain("*Your tray (2)*");
+    for (const a of Object.values(adapters)) expect(a.book).not.toHaveBeenCalled();
+  });
+
+  it("an untitled request leaves the title empty", async () => {
+    await request({ ...REQ, items: ["Tech Set 2"], title: undefined });
+    expect(stored().lines[0].title).toBeNull();
+  });
+
+  it("keeps the tray's lines, starts the list from the top and drops an open draft", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L1")], view: { q: "old", c: "rooms", p: 2 }, editing: { ...line("L1"), title: "draft" } }));
+    await request({ ...REQ, items: ["MPR"] });
+    expect(stored().lines.map((l) => l.id === "L1" ? "L1" : l.item)).toEqual(["L1", "MPR"]);
+    expect(stored().view).toEqual({ q: "", c: "all", p: 0 });
+    expect(stored().editing).toBeNull();
+    expect(stored().version).toBe(4);
+  });
+
+  it("gives kitchen appliances to the kitchen line only", async () => {
+    await request({ ...REQ, items: ["Kitchen", "MPR"], appliances: { airFryer: true } });
+    const [kitchen, mpr] = stored().lines;
+    expect(kitchen).toMatchObject({ item: "Kitchen", appliances: { airFryer: true } });
+    expect(mpr).toMatchObject({ item: "MPR", appliances: {} });
+  });
+
+  it("stops at a full tray and says not all of it fit", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: Array.from({ length: 9 }, (_, i) => line(`L${i}`)) }));
+    await request();
+    expect(stored().lines).toHaveLength(10);
+    expect(stored().lines.at(-1).item).toBe("Tech Set 2");
+    expect(sections(reply())[0]).toBe("Your tray is full (10 lines), so I couldn't add all of that. Reserve or remove some first.");
+  });
+
+  it("adds nothing to a tray that is already full", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: Array.from({ length: 10 }, (_, i) => line(`L${i}`)) }));
+    await request({ ...REQ, items: ["MPR"] });
+    expect(stored().lines.map((l) => l.id)).toEqual(Array.from({ length: 10 }, (_, i) => `L${i}`));
+    expect(sections(reply())[0]).toBe("Your tray is full (10 lines), so I couldn't add all of that. Reserve or remove some first.");
+  });
+
+  it("without a tray table, posts the plain listing text", async () => {
+    flow = make(null);
+    await request();
+    expect(reply()).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations", text: `${categoryCounts(CATALOG)}\nBooking from here isn't set up yet. Book directly in the room sheet, kitchen sheet or calendar.` });
+    expect(reply().blocks).toBeUndefined();
+  });
+
+  it("losing the tray race twice says try again and adds nothing", async () => {
+    trayStore.putTray.mockResolvedValue(false);
+    await request();
+    expect(trayStore.getTray).toHaveBeenCalledTimes(2);
+    expect(stored()).toBeUndefined();
+    expect(reply()).toMatchObject({ user: "U9", text: "Something changed. Please try again." });
+  });
+
+  it("a failed tray write tells the member privately instead of throwing", async () => {
+    const err = vi.spyOn(log, "error").mockImplementation(() => {});
+    trayStore.putTray.mockRejectedValue(new Error("ddb down"));
+    await expect(request()).resolves.toBeUndefined();
+    expect(reply()).toMatchObject({ channel: "CRES", user: "U9", text: "⚠️ Something went wrong. Please try again." });
+    expect(err).toHaveBeenCalledWith("adding a request to the tray failed", expect.anything());
+    err.mockRestore();
   });
 });
