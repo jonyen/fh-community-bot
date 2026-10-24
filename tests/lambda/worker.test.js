@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const dispatchMock = vi.fn().mockResolvedValue();
 const handlerMock = vi.fn().mockResolvedValue();
 const genderHandlerMock = vi.fn().mockResolvedValue();
-const slashRefreshHandlerMock = vi.fn().mockResolvedValue();
 const maintenanceFormHandlerMock = vi.fn().mockResolvedValue();
 const fakeClient = { id: "slack" };
 
@@ -16,7 +15,6 @@ vi.mock("../../src/lambda/clients.js", () => ({
     client: fakeClient,
     handler: handlerMock,
     genderHandler: genderHandlerMock,
-    slashRefreshHandler: slashRefreshHandlerMock,
     maintenanceFormHandler: maintenanceFormHandlerMock,
   }),
 }));
@@ -26,7 +24,6 @@ describe("worker.handler", () => {
     dispatchMock.mockClear();
     handlerMock.mockClear();
     genderHandlerMock.mockClear();
-    slashRefreshHandlerMock.mockClear();
     maintenanceFormHandlerMock.mockClear();
   });
 
@@ -35,7 +32,7 @@ describe("worker.handler", () => {
 
     const body1 = JSON.stringify({ event: { type: "app_mention", channel: "C1", ts: "1" } });
     const body2 = JSON.stringify({ event: { type: "message", channel: "C1", text: "!bros", user: "U1", ts: "1" } });
-    const body3 = JSON.stringify({ type: "slash_command", command: "/refresh-genders" });
+    const body3 = JSON.stringify({ type: "slash_command", command: "/reserve" });
 
     await handler({ Records: [{ body: body1 }, { body: body2 }, { body: body3 }] });
 
@@ -45,7 +42,6 @@ describe("worker.handler", () => {
     expect(dispatchMock.mock.calls[2][0].slackEnvelope.type).toBe("slash_command");
     expect(dispatchMock.mock.calls[0][0].handler).toBe(handlerMock);
     expect(dispatchMock.mock.calls[0][0].genderHandler).toBe(genderHandlerMock);
-    expect(dispatchMock.mock.calls[0][0].slashRefreshHandler).toBe(slashRefreshHandlerMock);
     expect(dispatchMock.mock.calls[0][0].maintenanceFormHandler).toBe(maintenanceFormHandlerMock);
     expect(dispatchMock.mock.calls[0][0].client).toBe(fakeClient);
   });

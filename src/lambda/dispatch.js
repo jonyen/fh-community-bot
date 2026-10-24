@@ -15,11 +15,8 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler, client }) {
   if (slackEnvelope.type === "slash_command") {
-    if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
-      await slashRefreshHandler({ envelope: slackEnvelope, client });
-    }
     if (reservationsHandler?.handleCommand && slackEnvelope.command === "/reserve") {
       await reservationsHandler.handleCommand({
         userId: slackEnvelope.user_id, channel: slackEnvelope.channel_id, text: slackEnvelope.text, client, responseUrl: slackEnvelope.response_url,

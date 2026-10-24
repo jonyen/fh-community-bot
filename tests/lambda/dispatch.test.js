@@ -128,7 +128,7 @@ describe("dispatchSlackEvent", () => {
     });
   });
 
-  it("does NOT route !refresh-genders typed in chat (slash command is the refresh path now)", async () => {
+  it("does NOT route !refresh-genders typed in chat to the gender handler", async () => {
     const handler = vi.fn();
     const genderHandler = vi.fn();
     await dispatchSlackEvent({
@@ -177,49 +177,14 @@ describe("dispatchSlackEvent", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("routes /refresh-genders slash envelope to slashRefreshHandler", async () => {
+  it("ignores unknown slash commands, /refresh-genders included", async () => {
     const handler = vi.fn();
     const genderHandler = vi.fn();
-    const slashRefreshHandler = vi.fn().mockResolvedValue();
-    const envelope = {
-      type: "slash_command",
-      command: "/refresh-genders",
-      user_id: "U1",
-      response_url: "https://hooks.slack.com/commands/T/1/x",
-    };
-    await dispatchSlackEvent({
-      slackEnvelope: envelope,
-      handler,
-      genderHandler,
-      slashRefreshHandler,
-      client: makeClient(),
-    });
-    expect(slashRefreshHandler).toHaveBeenCalledTimes(1);
-    expect(slashRefreshHandler.mock.calls[0][0].envelope).toBe(envelope);
+    for (const command of ["/something-else", "/refresh-genders"]) {
+      await dispatchSlackEvent({ slackEnvelope: { type: "slash_command", command }, handler, genderHandler, client: makeClient() });
+    }
     expect(handler).not.toHaveBeenCalled();
     expect(genderHandler).not.toHaveBeenCalled();
-  });
-
-  it("ignores unknown slash commands", async () => {
-    const slashRefreshHandler = vi.fn();
-    await dispatchSlackEvent({
-      slackEnvelope: { type: "slash_command", command: "/something-else" },
-      handler: vi.fn(),
-      genderHandler: vi.fn(),
-      slashRefreshHandler,
-      client: makeClient(),
-    });
-    expect(slashRefreshHandler).not.toHaveBeenCalled();
-  });
-
-  it("is a no-op for slash_command when no slashRefreshHandler provided", async () => {
-    const handler = vi.fn();
-    await dispatchSlackEvent({
-      slackEnvelope: { type: "slash_command", command: "/refresh-genders" },
-      handler,
-      client: makeClient(),
-    });
-    expect(handler).not.toHaveBeenCalled();
   });
 
   it("passes a file_share thread reply (no @mention) through to the handler", async () => {

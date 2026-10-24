@@ -153,7 +153,7 @@ describe("receiver.handler", () => {
   it("enqueues a slash command envelope from a form-encoded payload", async () => {
     const { handler } = await import("../../src/lambda/receiver.js");
     const body =
-      "token=secret&team_id=T1&channel_id=C1&user_id=U1&command=%2Frefresh-genders" +
+      "token=secret&team_id=T1&channel_id=C1&user_id=U1&command=%2Freserve" +
       "&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1%2F123%2Fabc&trigger_id=TR1";
     const ts = Math.floor(Date.now() / 1000).toString();
     const res = await handler({
@@ -170,7 +170,7 @@ describe("receiver.handler", () => {
     expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("U1");
     expect(enqueued).toEqual({
       type: "slash_command",
-      command: "/refresh-genders",
+      command: "/reserve",
       user_id: "U1",
       channel_id: "C1",
       team_id: "T1",

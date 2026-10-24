@@ -5,7 +5,7 @@ import { log, metric, withCorrelationId } from "../lib/logger.js";
 const DIMENSIONS = { Lambda: "worker" };
 
 export async function handler(sqsEvent) {
-  const { client, handler: mentionHandler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler } = getDeps();
+  const { client, handler: mentionHandler, genderHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler } = getDeps();
 
   for (const record of sqsEvent.Records || []) {
     // The SQS message id ties every line from this event back together, and it
@@ -22,7 +22,6 @@ export async function handler(sqsEvent) {
           slackEnvelope,
           handler: mentionHandler,
           genderHandler,
-          slashRefreshHandler,
           maintenanceFormHandler,
           creaTicketHandler,
           reservationsHandler,

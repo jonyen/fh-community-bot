@@ -12,7 +12,6 @@ import { createMentionHandler } from "../events/mention.js";
 import { createMaintenanceFormHandler } from "../events/maintenanceForm.js";
 import { createGenderMapService } from "../services/genderMap.js";
 import { createGenderHandler } from "../events/gender.js";
-import { createSlashRefreshHandler } from "../events/slashRefresh.js";
 import { createRentManagerTwaService } from "../services/rentManagerTwa.js";
 import { createCreaTicketHandler } from "../events/creaTicket.js";
 import { createRoomsAdapter } from "../services/reservations/rooms.js";
@@ -88,7 +87,6 @@ export function getDeps() {
   }
 
   let genderHandler;
-  let slashRefreshHandler;
   if (config.genderSheetId) {
     const genderMapService = createGenderMapService({
       sheetsClient,
@@ -97,7 +95,6 @@ export function getDeps() {
       tabName: config.genderSheetTab,
     });
     genderHandler = createGenderHandler({ genderMapService });
-    slashRefreshHandler = createSlashRefreshHandler({ genderMapService });
   }
 
   let reservationsHandler;
@@ -156,7 +153,7 @@ export function getDeps() {
     });
   }
 
-  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters, livingDigest };
+  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, reservationsHandler, reservationAdapters, livingDigest };
   return cached;
 }
 

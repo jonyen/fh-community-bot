@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   GENDER_TRIGGER_RE,
-  GENDER_REFRESH_RE,
   matchesGenderEvent,
   referencedGenders,
 } from "../../src/lib/gender-triggers.js";
@@ -26,19 +25,6 @@ describe("GENDER_TRIGGER_RE", () => {
     ["", false],
   ])("matches %p -> %p", (text, expected) => {
     expect(GENDER_TRIGGER_RE.test(text)).toBe(expected);
-  });
-});
-
-describe("GENDER_REFRESH_RE", () => {
-  it.each([
-    ["!refresh-genders", true],
-    ["@refresh-genders", true],
-    [" @REFRESH-genders ", true],
-    ["refresh-genders no prefix", false],
-    ["!refresh-gendersX", false],
-    ["", false],
-  ])("matches %p -> %p", (text, expected) => {
-    expect(GENDER_REFRESH_RE.test(text)).toBe(expected);
   });
 });
 

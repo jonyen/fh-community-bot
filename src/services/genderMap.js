@@ -29,11 +29,5 @@ export function createGenderMapService({ sheetsClient, spreadsheetId, ttlMs, tab
     return data;
   }
 
-  async function invalidate() {
-    cache = { fetchedAt: 0, data: null };
-    const data = await getMap();
-    return Object.keys(data).length;
-  }
-
-  return { getMap, invalidate };
+  return { getMap };
 }
