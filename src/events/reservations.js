@@ -41,7 +41,8 @@ export const WELCOME_TEXT = [
 ].join("\n");
 // After a question asked in the open, at most once a week per member.
 export const COMMAND_TIP = "Tip: only you can see this. Next time, you can ask with `/reserve`, for example `/reserve is the MPR free Saturday 2-4`, and nobody else sees the question or the answer.";
-export const WELCOME_TTL_S = 365 * 86400;
+// Long past any SQS redelivery of the same join; only there so old claims are cleared.
+export const WELCOME_TTL_S = 86400;
 export const TIP_TTL_S = 7 * 86400;
 const QUESTION_INTENTS = new Set(["mine", "browse", "find", "check", "list"]);
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
@@ -673,11 +674,12 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     return answer({ text, user: event.user, channel: event.channel, say, client, threadTs: event.ts });
   }
 
-  // Someone joined #reservations: tell them, privately, how it works. Once per
-  // member a year, so a redelivery or leaving and rejoining doesn't repeat it.
+  // Someone joined #reservations: tell them, privately, how it works. Every
+  // join, rejoins included; the claim is per join so an SQS redelivery of the
+  // same one doesn't repeat it.
   async function handleMemberJoined({ event, client }) {
     if (event.channel !== channelId || !event.user || !claimOnce) return;
-    if (!(await claimOnce(`welcome:${event.user}`, WELCOME_TTL_S))) return;
+    if (!(await claimOnce(`welcome:${event.user}:${event.event_ts || ""}`, WELCOME_TTL_S))) return;
     try {
       await client.chat.postEphemeral({ channel: channelId, user: event.user, text: WELCOME_TEXT, ...BOT_PERSONA });
       metric("ReservationsWelcomed", 1, { dimensions: { Flow: "reservations" } });

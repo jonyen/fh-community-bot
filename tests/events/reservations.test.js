@@ -992,7 +992,7 @@ describe("reservations onboarding", () => {
     h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW, claimOnce });
   });
   const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
-  const joined = (o = {}) => ({ type: "member_joined_channel", channel: "CRES", user: "U9", ...o });
+  const joined = (o = {}) => ({ type: "member_joined_channel", channel: "CRES", user: "U9", event_ts: "500.1", ...o });
 
   describe("welcome on join", () => {
     it("tells the new member privately how to book and how to ask with /reserve", async () => {
@@ -1001,13 +1001,19 @@ describe("reservations onboarding", () => {
       expect(ephemerals()).toHaveLength(1);
       expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U9", text: WELCOME_TEXT, username: "Reservations" });
       expect(WELCOME_TEXT).toMatch(/\/reserve/);
-      expect(claimOnce).toHaveBeenCalledWith("welcome:U9", WELCOME_TTL_S);
+      expect(claimOnce).toHaveBeenCalledWith("welcome:U9:500.1", WELCOME_TTL_S);
     });
 
-    it("welcomes a member once, however often the join arrives", async () => {
+    it("welcomes a join once, however often Slack delivers it", async () => {
       await h.handleMemberJoined({ event: joined(), client });
       await h.handleMemberJoined({ event: joined(), client });
       expect(ephemerals()).toHaveLength(1);
+    });
+
+    it("welcomes a member again when they leave and rejoin", async () => {
+      await h.handleMemberJoined({ event: joined(), client });
+      await h.handleMemberJoined({ event: joined({ event_ts: "900.1" }), client });
+      expect(ephemerals()).toHaveLength(2);
     });
 
     it("ignores joins to other channels, and says nothing without a claim store", async () => {
