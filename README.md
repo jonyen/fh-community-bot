@@ -264,7 +264,8 @@ Booking cards the bot posted in threads before this change still work:
 
 When someone joins #reservations, the bot tells them privately (an ephemeral
 message, visible only to them) that everything goes through `/reserve`, with
-examples for booking, asking and browsing. Every join, rejoins included; a
+examples for booking, asking and browsing, and that the first booking asks them
+to connect their acts2.network Google account. Every join, rejoins included; a
 redelivery of the same join is dropped (`once#welcome:<user>:<event_ts>`).
 
 The welcome and the nudge's redelivery check use the reservations table and

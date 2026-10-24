@@ -1082,6 +1082,7 @@ describe("reservations onboarding", () => {
       expect(WELCOME_TEXT).toContain("`/reserve Tech Set 2 Sat 2-4pm for youth night`");
       expect(WELCOME_TEXT).toContain("*Reserve all*");
       expect(WELCOME_TEXT).not.toContain("post what you need here");
+      expect(WELCOME_TEXT).toMatch(/connect your \*acts2\.network\* Google account/);
       expect(claimOnce).toHaveBeenCalledWith("welcome:U9:500.1", WELCOME_TTL_S);
     });
 

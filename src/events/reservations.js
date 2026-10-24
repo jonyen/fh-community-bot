@@ -43,6 +43,7 @@ export const WELCOME_TEXT = [
   "• *Book:* `/reserve Tech Set 2 Sat 2-4pm for youth night`. I add it to your tray; check it, then press *Reserve all*.",
   "• *Ask:* `/reserve is the MPR free Saturday 2-4`, `/reserve who has the Transit` or `/reserve what do I have booked?`",
   "• *Browse:* `/reserve` on its own lists everything you can reserve.",
+  "*Before your first booking:* bookings are made in your name, so the first time you press *Reserve all* I'll ask you to connect your *acts2.network* Google account. Sign in with the same email as your Slack account. You only do this once.",
 ].join("\n");
 // Long past any SQS redelivery of the same event; only there so old claims are cleared.
 export const WELCOME_TTL_S = 86400;
@@ -180,7 +181,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       request: { req, requester, backend: adapter.backend, cardTs: say.cardTs }, requester, say,
       text: revoked
         ? "Your Google connection has expired. Connect again and I'll finish this booking as you."
-        : "To book as you, connect your Google account once. I'll finish this booking as soon as you approve.",
+        : "To book as you, connect your acts2.network Google account once. I'll finish this booking as soon as you approve.",
       noEmail: (text) => say.done(`${text} You can book directly: ${adapter.link}`),
     });
   }
@@ -191,7 +192,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
       request: { kind: "cancel", ref, requester, cardTs: say.cardTs, responseUrl: say.responseUrl ?? null }, requester, say,
       text: revoked
         ? "Your Google connection has expired. Connect again and I'll cancel this booking as you."
-        : "To cancel as you, connect your Google account once. I'll cancel this booking as soon as you approve.",
+        : "To cancel as you, connect your acts2.network Google account once. I'll cancel this booking as soon as you approve.",
       noEmail: (text) => (say.failed || say.done)(`${text} You can cancel it directly: ${adapter.link}`),
     });
   }
