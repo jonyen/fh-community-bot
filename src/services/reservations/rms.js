@@ -80,7 +80,7 @@ function toReservation(entry, e) {
   };
 }
 
-const BOOK_IN_CALENDAR_TEXT = "Please book this one in Google Calendar (RMS) for now.";
+const BOOK_IN_CALENDAR_TEXT = "You haven't connected your Google account yet. Connect it to book this as you, or book it yourself in Google Calendar (RMS).";
 const isGone = (err) => [404, 410].includes(err?.code) || [404, 410].includes(err?.response?.status);
 
 export function createRmsAdapter({
