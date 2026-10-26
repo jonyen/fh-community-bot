@@ -81,14 +81,42 @@ export function combinedMessage({ user, booked, skipped = [] }) {
 
 // The booked entry at `index` gets `text` on a new line and loses its Cancel;
 // every other block is untouched. `text` is mrkdwn the caller has already made safe.
-export function markLineCancelled(message, index, text) {
+// A line that is `done` (nothing of it is left booked) is struck through, and
+// once every booked line is struck the header reads cancelled, not reserved.
+export function markLineCancelled(message, index, text, { done = true } = {}) {
   const at = index + 1; // block 0 is the header
-  const blocks = message.blocks.map((b, i) => {
+  let blocks = message.blocks.map((b, i) => {
     if (i !== at) return b;
     const { accessory, ...rest } = b;
-    return { ...rest, text: { ...b.text, text: fitSection(`${b.text.text}\n${text}`) } };
+    const line = done ? strike(b.text.text) : b.text.text;
+    return { ...rest, text: { ...b.text, text: fitSection(`${line}\n${text}`) } };
   });
-  return { text: message.text, blocks, metadata: message.metadata };
+  // Read back from Slack, ✅ arrives as :white_check_mark:.
+  let fallback = message.text;
+  const lines = bookedLines(blocks);
+  if (lines.length && lines.every((b) => b.text.text.startsWith("• ~"))) {
+    blocks = blocks.map((b, i) => (i === 0 ? { ...b, text: { ...b.text, text: b.text.text.replace(/^(?:✅|:white_check_mark:) (.*) reserved:$/, "🚫 $1 cancelled:") } } : b));
+    fallback = fallback.replace(/^(?:✅|:white_check_mark:) Reserved:/, "🚫 Cancelled:");
+  }
+  return { text: fallback, blocks, metadata: message.metadata };
+}
+
+// "• summary…" becomes "• ~summary~…": only the summary, the entry's first line.
+function strike(text) {
+  if (!text.startsWith("• ") || text.startsWith("• ~")) return text;
+  const end = text.indexOf("\n");
+  const summary = end < 0 ? text.slice(2) : text.slice(2, end);
+  return `• ~${summary}~${end < 0 ? "" : text.slice(end)}`;
+}
+
+// The booked entries: the "• " sections after the header, before any skips.
+function bookedLines(blocks) {
+  const out = [];
+  for (const b of blocks.slice(1)) {
+    if (b.type !== "section" || !b.text?.text?.startsWith("• ")) break;
+    out.push(b);
+  }
+  return out;
 }
 
 // Asked privately when a series line's Cancel is pressed. `today` (ISO, default

@@ -74,13 +74,42 @@ describe("markLineCancelled", () => {
   it("changes only that section", () => {
     const m = combinedMessage({ user: "U1", booked, skipped: [{ text: "Room" }] });
     const out = markLineCancelled(m, 1, "❌ Cancelled");
-    expect(out.blocks[2].text.text).toBe("• Kitchen · Sat 11/7 · 9–11am\n❌ Cancelled");
+    expect(out.blocks[2].text.text).toBe("• ~Kitchen · Sat 11/7 · 9–11am~\n❌ Cancelled");
     expect(out.blocks[2].accessory).toBeUndefined();
     expect(out.blocks[1]).toEqual(m.blocks[1]);
     expect(out.blocks[0]).toEqual(m.blocks[0]);
     expect(out.blocks[3]).toEqual(m.blocks[3]);
     expect(out.metadata).toEqual(m.metadata);
     expect(m.blocks[2].accessory).toBeDefined();
+  });
+
+  it("keeps a line that is not done unstruck", () => {
+    const m = combinedMessage({ user: "U1", booked });
+    const out = markLineCancelled(m, 1, "🚫 Sat 11/7 cancelled.", { done: false });
+    expect(out.blocks[2].text.text).toBe("• Kitchen · Sat 11/7 · 9–11am\n🚫 Sat 11/7 cancelled.");
+  });
+
+  it("reads cancelled once every booked line is struck", () => {
+    const m = combinedMessage({ user: "U1", booked, skipped: [{ text: "Room" }] });
+    const once = markLineCancelled(m, 0, "🚫 Cancelled by <@U1>.");
+    expect(once.blocks[0].text.text).toBe("✅ <@U1> reserved:");
+    expect(once.text).toMatch(/^✅ Reserved:/);
+    const twice = markLineCancelled(once, 1, "🚫 Cancelled by <@U1>.");
+    expect(twice.blocks[0].text.text).toBe("🚫 <@U1> cancelled:");
+    expect(twice.text).toMatch(/^🚫 Cancelled:/);
+    expect(twice.blocks[3]).toEqual(m.blocks[3]);
+  });
+
+  it("matches the header as Slack returns it", () => {
+    const m = combinedMessage({ user: "U1", booked: booked.slice(0, 1) });
+    const read = {
+      ...m,
+      text: m.text.replace("✅", ":white_check_mark:"),
+      blocks: m.blocks.map((b, i) => (i === 0 ? { ...b, text: { ...b.text, text: ":white_check_mark: <@U1> reserved:" } } : b)),
+    };
+    const out = markLineCancelled(read, 0, "🚫 Cancelled by <@U1>.");
+    expect(out.blocks[0].text.text).toBe("🚫 <@U1> cancelled:");
+    expect(out.text).toMatch(/^🚫 Cancelled:/);
   });
 });
 

@@ -155,7 +155,7 @@ describe("cancelling from the combined post", () => {
     expect(client.conversations.history).toHaveBeenCalledWith({ channel: "CRES", latest: POST_TS, inclusive: true, limit: 1, include_all_metadata: true });
     const [u] = updates();
     expect(u).toMatchObject({ channel: "CRES", ts: POST_TS });
-    expect(u.blocks[1].text.text).toBe("• Tech Set 2 · Sat 10/24 · 10:00 AM–12:00 PM · Youth night\n🚫 Cancelled by <@U9>.");
+    expect(u.blocks[1].text.text).toBe("• ~Tech Set 2 · Sat 10/24 · 10:00 AM–12:00 PM · Youth night~\n🚫 Cancelled by <@U9>.");
     expect(u.blocks[1].accessory).toBeUndefined();
     expect(u.blocks[0]).toEqual(POST.blocks[0]);
     expect(u.blocks[2]).toEqual(POST.blocks[2]);
@@ -222,7 +222,7 @@ describe("cancelling from the combined post", () => {
     expect(ledger.state.series[0].refs).toEqual([ENDED_REF]);
     const [u] = updates();
     expect(u).toMatchObject({ channel: "CRES", ts: POST_TS });
-    expect(u.blocks[2].text.text).toBe("• MPR · every Sat 10/24 – 11/7 (4 dates) · 2:00–4:00 PM · MBS\n🚫 Series cancelled by <@U9> (3 dates).");
+    expect(u.blocks[2].text.text).toBe("• ~MPR · every Sat 10/24 – 11/7 (4 dates) · 2:00–4:00 PM · MBS~\n🚫 Series cancelled by <@U9> (3 dates).");
     expect(u.blocks[2].accessory).toBeUndefined();
     expect(u.blocks[1]).toEqual(POST.blocks[1]);
     // The private summary replaces the chooser.

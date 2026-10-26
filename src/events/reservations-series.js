@@ -106,7 +106,7 @@ export function createSeriesFlow({
 
   // Appends `text` to line `index`; its Cancel stays only while `keep`.
   async function markLine(client, { channel, ts, post, index, text, keep }) {
-    const message = markLineCancelled(post, index, text);
+    const message = markLineCancelled(post, index, text, { done: !keep });
     const accessory = post.blocks[index + 1]?.accessory;
     if (keep && accessory) message.blocks[index + 1] = { ...message.blocks[index + 1], accessory };
     try {
