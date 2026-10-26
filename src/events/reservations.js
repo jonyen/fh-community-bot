@@ -55,6 +55,7 @@ export function nudgeText(text) {
   const example = plain.length > NUDGE_EXAMPLE_MAX ? `${plain.slice(0, NUDGE_EXAMPLE_MAX - 1)}…` : plain;
   return `Only you can see this. Requests in #reservations are private now: use \`/reserve\` and nobody else sees the request or my answer. Try:\n\`/reserve ${example}\``;
 }
+const CONNECT_ACTION = "reservations_connect_google";
 const CARD_ACTIONS = new Set([BOOK_ACTION, EDIT_ACTION, CANCEL_ACTION, CANCEL_BOOKING_ACTION, MINE_CANCEL_ACTION]);
 const MINE_DAYS = 60;
 const MINE_CAP = 20;
@@ -165,15 +166,41 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   // The pending row holds what to do once the member approves; resume reads it.
   async function promptConnect({ request, requester, say, text, noEmail }) {
     if (!requester.slackEmail) return noEmail(`I can't see an email on your Slack profile, so I can't connect your Google account.`);
-    const { nonce } = await connect.authStore.createPending({
+    const { pendingId, nonce } = await connect.authStore.createPending({
       slackUserId: requester.requesterUserId, slackEmail: requester.slackEmail,
       request, channel: say.channel, threadTs: say.threadTs,
     });
     const url = connect.consentUrl({ state: nonce, loginHint: requester.slackEmail });
     await say.prompt(text, [
       { type: "section", text: { type: "mrkdwn", text } },
-      { type: "actions", elements: [{ type: "button", action_id: "reservations_connect_google", style: "primary", text: { type: "plain_text", text: "Connect Google" }, url }] },
+      { type: "actions", elements: [{ type: "button", action_id: CONNECT_ACTION, style: "primary", text: { type: "plain_text", text: "Connect Google" }, url, value: pendingId }] },
     ]);
+  }
+
+  // A press on Connect Google opens Google; its response_url is kept so the
+  // prompt can be closed once the member has connected.
+  async function rememberConnectPress({ payload, action }) {
+    const pendingId = action.value;
+    const responseUrl = payload.response_url;
+    if (!connect || !pendingId || !responseUrl) return;
+    const pending = await connect.authStore.getPending(pendingId);
+    if (!pending || pending.slackUserId !== payload.user?.id) return;
+    await connect.authStore.setPromptResponseUrl(pendingId, responseUrl);
+  }
+
+  // The connect prompt, once the member has connected: its button is gone.
+  async function closeConnectPrompt(responseUrl) {
+    const text = "✅ Google connected.";
+    try {
+      const res = await fetch(responseUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ replace_original: true, text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }] }),
+      });
+      if (!res.ok) log.warn("closing the connect prompt failed", { status: res.status });
+    } catch (error) {
+      log.warn("closing the connect prompt failed", { error });
+    }
   }
 
   function promptBookConnect({ req, adapter, requester, say, revoked }) {
@@ -518,6 +545,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     // Deleted before booking: an SQS retry of this message finds nothing and
     // can never book twice.
     await connect.authStore.deletePending(pendingId);
+    if (pending.promptResponseUrl) await closeConnectPrompt(pending.promptResponseUrl);
     if (pending.request.kind === "cancel") return resumeCancel(pending, client);
     if (pending.request.kind === "series-cancel") return seriesFlow.resume(pending, client);
     if (pending.request.kind === "tray") {
@@ -742,6 +770,8 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
   // pressing a card button. The requester's Edit is opened by the receiver,
   // which has the trigger_id.
   async function handleCardAction({ payload, client }) {
+    const connectPress = (payload.actions || []).find((a) => a.action_id === CONNECT_ACTION);
+    if (connectPress) return rememberConnectPress({ payload, action: connectPress });
     const reserve = (payload.actions || []).find((a) => a.action_id === TRAY_RESERVE_ACTION);
     if (reserve) {
       // The press's action_ts names the run: an SQS redelivery of this press carries the same one.

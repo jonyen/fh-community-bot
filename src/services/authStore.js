@@ -94,7 +94,23 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
   async function getPending(pendingId) {
     const { Item } = await ddb.send(new GetCommand({ TableName: tableName, Key: { pk: `pending#${pendingId}` } }));
     if (!live(Item)) return null;
-    return { slackUserId: Item.slackUserId, slackEmail: Item.slackEmail, request: Item.request, channel: Item.channel, threadTs: Item.threadTs };
+    const out = { slackUserId: Item.slackUserId, slackEmail: Item.slackEmail, request: Item.request, channel: Item.channel, threadTs: Item.threadTs };
+    if (Item.promptResponseUrl) out.promptResponseUrl = Item.promptResponseUrl;
+    return out;
+  }
+
+  // The Connect Google press's response_url, so the prompt can be closed once
+  // the member has connected. A row already gone (used or expired) is left alone.
+  async function setPromptResponseUrl(pendingId, url) {
+    try {
+      await ddb.send(new UpdateCommand({
+        TableName: tableName, Key: { pk: `pending#${pendingId}` },
+        UpdateExpression: "SET promptResponseUrl = :u", ExpressionAttributeValues: { ":u": url },
+        ConditionExpression: "attribute_exists(pk)",
+      }));
+    } catch (err) {
+      if (err.name !== "ConditionalCheckFailedException") throw err;
+    }
   }
 
   async function deletePending(pendingId) {
@@ -232,5 +248,5 @@ export function createAuthStore({ ddb, kms, tableName, keyId, now = () => Date.n
     await ddb.send(new DeleteCommand({ TableName: tableName, Key: { pk: `tray#${slackUserId}` } }));
   }
 
-  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, deletePending, claimBooking, claimOnce, recordBooking, recordSeries, seriesFor, dropSeriesRefs, bookingsFor, getTray, putTray, deleteTray };
+  return { saveUser, getUser, decryptToken, markRevoked, deleteUser, createPending, consumeState, getPending, setPromptResponseUrl, deletePending, claimBooking, claimOnce, recordBooking, recordSeries, seriesFor, dropSeriesRefs, bookingsFor, getTray, putTray, deleteTray };
 }

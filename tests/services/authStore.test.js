@@ -135,6 +135,15 @@ describe("authStore", () => {
     expect(await store.getPending(pendingId)).toBeNull();
   });
 
+  it("keeps the Connect Google press's response_url on a live pending row only", async () => {
+    const { pendingId } = await store.createPending({ slackUserId: "U1", slackEmail: "e", request: {}, channel: "C", threadTs: "1" });
+    await store.setPromptResponseUrl(pendingId, "https://hooks.slack.com/actions/1");
+    expect((await store.getPending(pendingId)).promptResponseUrl).toBe("https://hooks.slack.com/actions/1");
+    await store.deletePending(pendingId);
+    await store.setPromptResponseUrl(pendingId, "https://hooks.slack.com/actions/2");
+    expect(ddb.items.has(`pending#${pendingId}`)).toBe(false);
+  });
+
   it("deletes a pending booking", async () => {
     const { pendingId } = await store.createPending({ slackUserId: "U1", slackEmail: "e", request: {}, channel: "C", threadTs: "1" });
     await store.deletePending(pendingId);
