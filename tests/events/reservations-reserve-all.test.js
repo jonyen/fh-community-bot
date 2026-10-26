@@ -173,6 +173,8 @@ describe("Reserve all", () => {
     expect(card.replace_original).toBe(true);
     expect(sections(card)[0]).toContain("✅ Reserved 5 bookings. It's posted in the channel.");
     expect(sections(card)[0]).toContain("MPR · Sat 10/31 · 2:00–4:00 PM (Alan · Fall rally)");
+    // Something was booked, so the card closes: the result, no buttons.
+    expect(card.blocks).toEqual([{ type: "section", text: { type: "mrkdwn", text: expect.stringContaining("✅ Reserved 5 bookings.") } }]);
   });
 
   it("posts nothing publicly when nothing is free", async () => {
@@ -182,6 +184,8 @@ describe("Reserve all", () => {
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
     expect(sections(sent())[0]).toContain("Nothing could be booked.");
+    // Nothing booked: the listing stays open so the tray can be fixed.
+    expect(sent().blocks.length).toBeGreaterThan(1);
     expect(livingDigest.refresh).not.toHaveBeenCalled();
     expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
     expect(stored().running).toBeNull();

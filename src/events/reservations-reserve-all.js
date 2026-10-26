@@ -23,6 +23,7 @@ import { findItem } from "../lib/reservation-catalog.js";
 import { BOT_PERSONA } from "../lib/reservation-format.js";
 import { emptyTray, expandDates, trayProblems, repeatText } from "../lib/reservation-tray.js";
 import { combinedMessage } from "../lib/reservation-combined.js";
+import { fitSection } from "../lib/reservation-card.js";
 
 // A run that has held the tray this long is taken to have died.
 const RUN_STALE_MS = 15 * 60 * 1000;
@@ -199,6 +200,11 @@ export function createReserveAll({
       log.error("drawing the listing failed", { error });
       return { text: notice };
     }
+  }
+
+  // The listing card after a booking: the result, and no buttons.
+  function closedCard(notice) {
+    return { text: notice, blocks: [{ type: "section", text: { type: "mrkdwn", text: fitSection(notice) } }] };
   }
 
   // Saves a change that must survive a press elsewhere (a page turn, an
@@ -675,7 +681,10 @@ export function createReserveAll({
       const lines = problems.length ? [problemsText(problems)] : [];
       lines.push(...skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.detail ?? s.text).slice(0, NOTICE_SKIP_MAX))}`));
       if (skipped.length > NOTICE_SKIPS) lines.push(`…and ${skipped.length - NOTICE_SKIPS} more.`);
-      await replyCard(client, where, await cardWith(state.tray, [head, ...lines].join("\n"), client));
+      const notice = [head, ...lines].join("\n");
+      // Once something is booked the card closes to just the result; with
+      // nothing booked it stays, so the member can fix the tray and try again.
+      await replyCard(client, where, total ? closedCard(notice) : await cardWith(state.tray, notice, client));
     } catch (error) {
       log.error("reserve all result failed", { error });
     }
