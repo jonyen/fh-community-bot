@@ -127,7 +127,7 @@ describe("reservations handler", () => {
 
     it("nudges a booking request privately, with the request as a /reserve example, and books nothing", async () => {
       await h.handleMessage({ event: msg(), client });
-      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: nudgeText("book tech set 2 sat 2-4 for youth night"), username: "Reservations", icon_emoji: ":calendar:" }]);
+      expect(ephemerals()).toEqual([{ channel: "CRES", user: "U9", text: nudgeText("book tech set 2 sat 2-4 for youth night"), username: "Reservations (beta)", icon_emoji: ":calendar:" }]);
       expect(ephemerals()[0].text).toContain("`/reserve book tech set 2 sat 2-4 for youth night`");
       expect(ephemerals()[0].thread_ts).toBeUndefined();
       for (const a of Object.values(adapters)) {
@@ -347,7 +347,7 @@ describe("reservations handler", () => {
     it("Cancel by someone else is answered privately", async () => {
       await h.handleCardAction({ payload: press({ user: { id: "U7" } }), client });
       expect(client.chat.update).not.toHaveBeenCalled();
-      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U7", thread_ts: MSG_TS, text: "Only <@U9> can cancel this.", username: "Reservations" });
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toMatchObject({ channel: "CRES", user: "U7", thread_ts: MSG_TS, text: "Only <@U9> can cancel this.", username: "Reservations (beta)" });
     });
 
     it("Cancel on an already closed card does nothing", async () => {
@@ -577,7 +577,7 @@ describe("reservations handler", () => {
       await command("what can i reserve");
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       expect(ephemerals()).toHaveLength(2);
-      for (const m of ephemerals()) expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations" });
+      for (const m of ephemerals()) expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations (beta)" });
     });
 
     it("something that is not a reservation question gets examples instead of silence", async () => {
@@ -591,7 +591,7 @@ describe("reservations handler", () => {
       llm.parseReservationRequest.mockResolvedValue(null);
       await command("tech set 2 sat 2-4 youth night");
       expect(client.chat.postMessage).not.toHaveBeenCalled();
-      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", text: "Sorry, I couldn't read that. Please try again.", username: "Reservations" })]);
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", text: "Sorry, I couldn't read that. Please try again.", username: "Reservations (beta)" })]);
     });
 
     it("says when it doesn't know an item", async () => {
@@ -619,7 +619,7 @@ describe("reservations handler", () => {
       await command("tech set 2 sat 2-4 youth night");
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       expect(adapters.rms.book).not.toHaveBeenCalled();
-      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", username: "Reservations" })]);
+      expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", username: "Reservations (beta)" })]);
       expect(ephemerals()[0].blocks).toBeUndefined();
     });
 
@@ -636,7 +636,7 @@ describe("reservations handler", () => {
         expect(stored().lines).toEqual([expect.objectContaining({ item: "Tech Set 2", date: "2026-10-17", start: 840, end: 960, title: "Youth night", appliances: {} })]);
         expect(client.chat.postMessage).not.toHaveBeenCalled();
         const [m] = ephemerals();
-        expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations" });
+        expect(m).toMatchObject({ channel: "CRES", user: "U1", username: "Reservations (beta)" });
         expect(m.thread_ts).toBeUndefined();
         expect(sectionText(m).split("\n")[0]).toBe("Added to your tray. Check the details, then press *Reserve all*.");
         expect(sectionText(m)).toContain("*Your tray (1)*");
@@ -686,7 +686,7 @@ describe("reservations handler", () => {
     const answer = () => {
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       const [m] = client.chat.postEphemeral.mock.calls.map((c) => c[0]);
-      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
+      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)" });
       expect(m.thread_ts).toBeUndefined();
       return m;
     };
@@ -777,7 +777,7 @@ describe("find intent", () => {
     await run(h, client);
     const [a] = answers();
     expect(client.chat.postMessage).not.toHaveBeenCalled();
-    expect(a).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
+    expect(a).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)" });
     expect(a.thread_ts).toBeUndefined();
     expect(a.text).toContain("Rooms: MPR");
     expect(a.text).toContain("Tech: Tech Set 1, Tech Set 2");
@@ -859,7 +859,7 @@ describe("my reservations", () => {
     for (const a of Object.values(adapters)) expect(a.listReservations).toHaveBeenCalledWith({ from: "2026-10-20", to: "2026-12-19" });
     expect(client.chat.postMessage).not.toHaveBeenCalled();
     const m = reply();
-    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
+    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)" });
     expect(m.thread_ts).toBeUndefined();
     expect(lines(m)).toEqual([
       "📅 *Tech Set 2* · Tue 10/20 · 11:00 AM–1:00 PM · Now",
@@ -1040,7 +1040,7 @@ describe("my reservations", () => {
       expect(adapters.rooms.cancel).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(client.users.info).toHaveBeenCalledTimes(1);
-      expect(client.chat.postEphemeral.mock.calls[0][0]).toEqual({ channel: "CRES", user: "U7", text: "Only <@U9> can cancel this.", username: "Reservations", icon_emoji: ":calendar:" });
+      expect(client.chat.postEphemeral.mock.calls[0][0]).toEqual({ channel: "CRES", user: "U7", text: "Only <@U9> can cancel this.", username: "Reservations (beta)", icon_emoji: ":calendar:" });
     });
 
     it("a press after the booking ended says so privately", async () => {
@@ -1077,7 +1077,7 @@ describe("reservations onboarding", () => {
       await h.handleMemberJoined({ event: joined(), client });
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       expect(ephemerals()).toHaveLength(1);
-      expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U9", text: WELCOME_TEXT, username: "Reservations" });
+      expect(ephemerals()[0]).toMatchObject({ channel: "CRES", user: "U9", text: WELCOME_TEXT, username: "Reservations (beta)" });
       expect(WELCOME_TEXT).toMatch(/\/reserve/);
       expect(WELCOME_TEXT).toContain("`/reserve Tech Set 2 Sat 2-4pm for youth night`");
       expect(WELCOME_TEXT).toContain("*Reserve all*");

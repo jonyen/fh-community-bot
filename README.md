@@ -308,7 +308,7 @@ with a search, such as `list speakers to reserve`.
   "What do I have booked?" shows a series as one line with the same choice.
 
 Typed requests still work as before. The bot now posts in #reservations as
-"Reservations".
+"Reservations (beta)".
 
 The request rides in the card's buttons, so the bot stores nothing. A second
 press, or a press on a card that was edited since, does nothing. Bookings are

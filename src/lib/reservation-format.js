@@ -2,7 +2,7 @@
 import { fmtRange, fmtDay } from "./reservation-time.js";
 import { CATEGORY_NAMES } from "./reservation-catalog.js";
 
-export const BOT_PERSONA = { username: "Reservations", icon_emoji: ":calendar:" };
+export const BOT_PERSONA = { username: "Reservations (beta)", icon_emoji: ":calendar:" };
 
 // Marks a reservation card as finished: booked or refused, no buttons left.
 export const CLOSED_METADATA = { event_type: "reservation_closed", event_payload: {} };

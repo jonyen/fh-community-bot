@@ -142,7 +142,7 @@ describe("Reserve all", () => {
 
     expect(publicPosts()).toHaveLength(1);
     const post = publicPosts()[0];
-    expect(post).toMatchObject({ channel: "CRES", username: "Reservations" });
+    expect(post).toMatchObject({ channel: "CRES", username: "Reservations (beta)" });
     expect(post.thread_ts).toBeUndefined();
     expect(post.metadata.event_type).toBe(COMBINED_EVENT_TYPE);
     const text = sections(post).join("\n");
