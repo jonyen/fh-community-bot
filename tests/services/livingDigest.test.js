@@ -30,7 +30,7 @@ describe("createLivingDigest", () => {
     const p = client.chat.postMessage.mock.calls[0][0];
     expect(p).toMatchObject({
       channel: "CRES",
-      username: "Reservations",
+      username: "Reservations (beta)",
       metadata: { event_type: "reservation_digest", event_payload: { from: "2026-10-19", to: "2026-10-22" } },
     });
     expect(p.text).toContain("• 7:00–10:00 PM · MPR · Equipping (John)");

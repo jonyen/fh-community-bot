@@ -85,7 +85,7 @@ describe("listing flow", () => {
       await ask();
       expect(client.chat.postMessage).not.toHaveBeenCalled();
       const m = client.chat.postEphemeral.mock.calls[0][0];
-      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations", icon_emoji: ":calendar:" });
+      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)", icon_emoji: ":calendar:" });
       expect(m.thread_ts).toBeUndefined();
       expect(sections(m)[0]).toBe(`📋 Things you can reserve · ${CATALOG.length} items`);
       expect(stored().view).toEqual({ q: "", c: "all", p: 0 });
@@ -105,7 +105,7 @@ describe("listing flow", () => {
       h = createReservationsHandler({ llm, adapters, catalog: CATALOG, channelId: "CRES", now: () => NOW });
       await ask();
       const m = client.chat.postEphemeral.mock.calls[0][0];
-      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations" });
+      expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)" });
       expect(m.text).toBe(`${categoryCounts(CATALOG)}\nBooking from here isn't set up yet. Book directly in the room sheet, kitchen sheet or calendar.`);
       expect(m.blocks).toBeUndefined();
     });
@@ -500,7 +500,7 @@ describe("postRequest", () => {
     expect(new Set(stored().lines.map((l) => l.id)).size).toBe(2);
     expect(client.chat.postMessage).not.toHaveBeenCalled();
     const m = reply();
-    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations", icon_emoji: ":calendar:" });
+    expect(m).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)", icon_emoji: ":calendar:" });
     expect(m.thread_ts).toBeUndefined();
     expect(sections(m)[0]).toBe("Added to your tray. Check the details, then press *Reserve all*.");
     expect(sections(m)).toContain("*Your tray (2)*");
@@ -546,7 +546,7 @@ describe("postRequest", () => {
   it("without a tray table, posts the plain listing text", async () => {
     flow = make(null);
     await request();
-    expect(reply()).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations", text: `${categoryCounts(CATALOG)}\nBooking from here isn't set up yet. Book directly in the room sheet, kitchen sheet or calendar.` });
+    expect(reply()).toMatchObject({ channel: "CRES", user: "U9", username: "Reservations (beta)", text: `${categoryCounts(CATALOG)}\nBooking from here isn't set up yet. Book directly in the room sheet, kitchen sheet or calendar.` });
     expect(reply().blocks).toBeUndefined();
   });
 
