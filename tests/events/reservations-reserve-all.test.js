@@ -870,7 +870,7 @@ describe("Reserve all", () => {
       trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
       await reserve(handler({ connect: null }), "bot account");
       expect(cal.events.insert).toHaveBeenCalledTimes(1);
-      expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · Please book this one in Google Calendar (RMS) for now.");
+      expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · You haven't connected your Google account yet. Connect it to allow the Reservations bot to book it on your behalf, or book it yourself in Google Calendar (RMS).");
     });
   });
 });

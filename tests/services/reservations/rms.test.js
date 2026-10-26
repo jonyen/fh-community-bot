@@ -126,7 +126,7 @@ describe("rms adapter", () => {
 
   it("with booking on the bot's calendar off, says where to book for each date unless the member's account will book", async () => {
     const off = createRmsAdapter({ calendarClient: cal, catalog: [SET2], bookingEnabled: false, sleep: async () => {} });
-    const text = "Please book this one in Google Calendar (RMS) for now.";
+    const text = "You haven't connected your Google account yet. Connect it to allow the Reservations bot to book it on your behalf, or book it yourself in Google Calendar (RMS).";
     expect(await off.checkDates({ dates: ["2026-10-24", "2026-10-31"], start: 900, end: 960, items: [SET2] })).toEqual({
       "2026-10-24": { conflicts: [], unavailable: text }, "2026-10-31": { conflicts: [], unavailable: text },
     });
