@@ -45,6 +45,7 @@ function makeConnect(status = "none") {
     authStore: {
       createPending: vi.fn().mockResolvedValue({ pendingId: "P1", nonce: "NONCE" }),
       getPending: vi.fn(),
+      setPromptResponseUrl: vi.fn().mockResolvedValue(),
       deletePending: vi.fn().mockResolvedValue(),
       markRevoked: vi.fn().mockResolvedValue(),
     },
@@ -213,6 +214,37 @@ describe("reservations with connected accounts", () => {
       expect(adapters.rooms.book).not.toHaveBeenCalled();
       expect(updates()).toEqual([expect.objectContaining({ channel: "CRES", ts: CARD_TS, metadata: CLOSED_METADATA, text: `${SUMMARY}\n🚫 Booking cancelled by <@U9>.` })]);
       expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-17");
+    });
+
+    it("keeps the Connect Google press's response_url, and closes the prompt once connected", async () => {
+      const connect = makeConnect("none");
+      await pressCancel(handler(connect), ROOM_REF);
+      const row = connect.authStore.createPending.mock.calls[0][0];
+      const button = ephemerals()[0].blocks[1].elements[0];
+      expect(button.value).toBe("P1");
+
+      // Someone else's press, or one on a used row, saves nothing.
+      connect.authStore.getPending.mockResolvedValue({ ...row });
+      await handler(connect).handleCardAction({ client, payload: { user: { id: "U7" }, response_url: "https://hooks/x", actions: [button] } });
+      expect(connect.authStore.setPromptResponseUrl).not.toHaveBeenCalled();
+      await handler(connect).handleCardAction({ client, payload: { user: { id: "U9" }, response_url: "https://hooks/1", actions: [button] } });
+      expect(connect.authStore.setPromptResponseUrl).toHaveBeenCalledWith("P1", "https://hooks/1");
+      expect(adapters.rooms.cancel).not.toHaveBeenCalled();
+
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+      try {
+        const after = makeConnect("active");
+        after.authStore.getPending.mockResolvedValue({ ...row, promptResponseUrl: "https://hooks/1" });
+        await handler(after).resume({ pendingId: "P1", client });
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe("https://hooks/1");
+        const body = JSON.parse(init.body);
+        expect(body).toMatchObject({ replace_original: true, text: "✅ Google connected." });
+        expect(JSON.stringify(body.blocks)).not.toContain("button");
+        expect(adapters.rooms.cancel).toHaveBeenCalled();
+      } finally {
+        fetchMock.mockRestore();
+      }
     });
 
     it("a cancel from the list prompts privately, then resumes and answers privately, never in public", async () => {
