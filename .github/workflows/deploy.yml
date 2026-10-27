@@ -92,6 +92,7 @@ jobs:
           RMS_BOOKING_ENABLED: ${{ vars.RMS_BOOKING_ENABLED }}
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.GOOGLE_WEB_CLIENT_SECRET }}
+          GOOGLE_BOT_EMAIL: ${{ vars.GOOGLE_BOT_EMAIL }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
@@ -134,6 +135,9 @@ jobs:
           fi
           if [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
             OPTIONAL_PARAMS+=("GoogleWebClientId=$GOOGLE_WEB_CLIENT_ID" "GoogleWebClientSecret=$GOOGLE_WEB_CLIENT_SECRET")
+          fi
+          if [ -n "$GOOGLE_BOT_EMAIL" ]; then
+            OPTIONAL_PARAMS+=("GoogleBotEmail=$GOOGLE_BOT_EMAIL")
           fi
           sam deploy \
             --no-confirm-changeset \

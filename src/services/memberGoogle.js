@@ -3,6 +3,7 @@
 // token. Only bookings use them; every read stays on the bot's token.
 import { google } from "googleapis";
 import { log } from "../lib/logger.js";
+import { mayRevoke } from "../lib/google-oauth.js";
 
 export function isInvalidGrant(err) {
   return err?.response?.data?.error === "invalid_grant" || /invalid_grant/.test(err?.message || "");
@@ -22,7 +23,7 @@ export function isForbidden(err) {
   return Number(err?.code ?? err?.status ?? err?.response?.status) === 403;
 }
 
-export function createMemberGoogle({ authStore, clientId, clientSecret, googleLib = google }) {
+export function createMemberGoogle({ authStore, clientId, clientSecret, botEmail = null, googleLib = google }) {
   // Warm containers keep the OAuth2 client, which caches its access token.
   const cache = new Map();
 
@@ -54,6 +55,12 @@ export function createMemberGoogle({ authStore, clientId, clientSecret, googleLi
   async function revoke(slackUserId) {
     const user = await authStore.getUser(slackUserId);
     if (!user) return false;
+    if (!mayRevoke(user.googleEmail, botEmail)) {
+      log.info("google token revoke skipped", { reason: botEmail ? "bot account" : "bot account unknown" });
+      await authStore.deleteUser(slackUserId);
+      forget(slackUserId);
+      return true;
+    }
     try {
       const token = await authStore.decryptToken(slackUserId, user.ciphertext);
       await new googleLib.auth.OAuth2(clientId, clientSecret).revokeToken(token);

@@ -131,7 +131,7 @@ export function getDeps() {
       });
       connect = {
         authStore,
-        memberGoogle: createMemberGoogle({ authStore, clientId: gc.clientId, clientSecret: gc.clientSecret }),
+        memberGoogle: createMemberGoogle({ authStore, clientId: gc.clientId, clientSecret: gc.clientSecret, botEmail: gc.botEmail }),
         consentUrl: ({ state, loginHint }) => buildConsentUrl({ clientId: gc.clientId, redirectUri: gc.redirectUri, state, loginHint }),
       };
       ledger = authStore;

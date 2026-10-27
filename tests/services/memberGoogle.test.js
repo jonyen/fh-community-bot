@@ -65,7 +65,7 @@ describe("memberGoogle", () => {
 
   it("revokes with Google, deletes the record, and survives a Google failure", async () => {
     const store = fakeStore({ googleEmail: "e", status: "active", ciphertext: "CT" });
-    const mg = createMemberGoogle({ authStore: store, clientId: "C", clientSecret: "S", googleLib: g.lib });
+    const mg = createMemberGoogle({ authStore: store, clientId: "C", clientSecret: "S", botEmail: "bot@acts2.network", googleLib: g.lib });
     expect(await mg.revoke("U1")).toBe(true);
     expect(g.made.at(-1).revokeToken).toHaveBeenCalledWith("1//refresh");
     expect(store.deleteUser).toHaveBeenCalledWith("U1");
@@ -76,6 +76,25 @@ describe("memberGoogle", () => {
 
     store.getUser.mockResolvedValue(null);
     expect(await mg.revoke("U1")).toBe(false);
+  });
+
+  // Revoking cancels the account's whole grant to the GCP project, which
+  // would also kill the bot's own refresh token (2026-10-27).
+  it("deletes but never revokes the bot's own account", async () => {
+    const store = fakeStore({ googleEmail: "Bot@acts2.network", status: "active", ciphertext: "CT" });
+    const mg = createMemberGoogle({ authStore: store, clientId: "C", clientSecret: "S", botEmail: "bot@acts2.network", googleLib: g.lib });
+    expect(await mg.revoke("U1")).toBe(true);
+    expect(store.decryptToken).not.toHaveBeenCalled();
+    expect(g.made.some((c) => c.revokeToken.mock.calls.length)).toBe(false);
+    expect(store.deleteUser).toHaveBeenCalledWith("U1");
+  });
+
+  it("deletes but never revokes while the bot's account is unknown", async () => {
+    const store = fakeStore({ googleEmail: "e", status: "active", ciphertext: "CT" });
+    const mg = createMemberGoogle({ authStore: store, clientId: "C", clientSecret: "S", googleLib: g.lib });
+    expect(await mg.revoke("U1")).toBe(true);
+    expect(g.made.some((c) => c.revokeToken.mock.calls.length)).toBe(false);
+    expect(store.deleteUser).toHaveBeenCalledWith("U1");
   });
 });
 

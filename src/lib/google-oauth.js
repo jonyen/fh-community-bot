@@ -37,6 +37,14 @@ export function checkIdentity(payload, expectedEmail) {
   return { ok: true, email };
 }
 
+// Revoking a token cancels the account's whole grant to the GCP project, and
+// the bot's own refresh token sits in that project too. Revoke only an account
+// known not to be the bot's; with the bot's account unset, never revoke.
+export function mayRevoke(email, botEmail) {
+  if (!email || !botEmail) return false;
+  return String(email).toLowerCase() !== String(botEmail).toLowerCase();
+}
+
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 

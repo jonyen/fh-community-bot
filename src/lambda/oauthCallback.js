@@ -4,7 +4,7 @@
 // exchange never slow the receiver against Slack's 3 s deadline. Nothing
 // secret ever goes into the page, the logs or the queue: the queue only gets
 // the pending booking id.
-import { checkIdentity, htmlPage, OAUTH_CALLBACK_PATH, HOSTED_DOMAIN } from "../lib/google-oauth.js";
+import { checkIdentity, htmlPage, mayRevoke, OAUTH_CALLBACK_PATH, HOSTED_DOMAIN } from "../lib/google-oauth.js";
 import { log, metric } from "../lib/logger.js";
 
 const DIMENSIONS = { Flow: "connect" };
@@ -13,7 +13,7 @@ const RETRY = "Then send your request again in #reservations.";
 // booking of that kind would fail, so the grant is refused up front.
 const REQUIRED_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/spreadsheets"];
 
-export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue }) {
+export function createOAuthCallback({ authStore, oauth2Client, clientId, botEmail = null, enqueue }) {
   return async function handle({ query = {}, redirectUri }) {
     const { code, state, error } = query;
     if (!state) return htmlPage(400, "This link isn't valid", "Ask again in #reservations.");
@@ -41,10 +41,12 @@ export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue
 
     const identity = checkIdentity(payload, consumed.slackEmail);
     if (!identity.ok) {
-      try {
-        await oauth2Client.revokeToken(tokens.refresh_token || tokens.access_token);
-      } catch (err) {
-        log.warn("revoking a rejected token failed", { error: err });
+      if (mayRevoke(identity.email, botEmail)) {
+        try {
+          await oauth2Client.revokeToken(tokens.refresh_token || tokens.access_token);
+        } catch (err) {
+          log.warn("revoking a rejected token failed", { error: err });
+        }
       }
       metric("ConnectRejected", 1, { dimensions: DIMENSIONS, fields: { reason: identity.reason } });
       const message = identity.reason === "mismatch"
@@ -60,10 +62,12 @@ export function createOAuthCallback({ authStore, oauth2Client, clientId, enqueue
 
     const granted = String(tokens.scope || "").split(/\s+/);
     if (!REQUIRED_SCOPES.every((s) => granted.includes(s))) {
-      try {
-        await oauth2Client.revokeToken(tokens.refresh_token);
-      } catch (err) {
-        log.warn("revoking a partial grant failed", { error: err });
+      if (mayRevoke(identity.email, botEmail)) {
+        try {
+          await oauth2Client.revokeToken(tokens.refresh_token);
+        } catch (err) {
+          log.warn("revoking a partial grant failed", { error: err });
+        }
       }
       metric("ConnectRejected", 1, { dimensions: DIMENSIONS, fields: { reason: "scopes" } });
       return htmlPage(403, "Both permissions are needed", `Please allow both Google Calendar and Google Sheets so bookings can be made as you. ${RETRY}`);
@@ -115,6 +119,7 @@ async function getCallback() {
     }),
     oauth2Client: new OAuth2Client(GOOGLE_WEB_CLIENT_ID, GOOGLE_WEB_CLIENT_SECRET),
     clientId: GOOGLE_WEB_CLIENT_ID,
+    botEmail: process.env.GOOGLE_BOT_EMAIL || null,
     // Grouped with the member's DM messages on the FIFO queue, so the
     // booking resumes in order with them.
     enqueue: (body) => sqs.send(new SendMessageCommand({
