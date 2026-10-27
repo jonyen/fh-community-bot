@@ -33,7 +33,7 @@ function makeClient() {
   return {
     chat: {
       postMessage: vi.fn().mockResolvedValue({ ok: true, ts: POST_TS }),
-      postEphemeral: vi.fn().mockResolvedValue({ ok: true }),
+      postEphemeral: vi.fn().mockResolvedValue({ ok: true, message_ts: POST_TS }),
       update: vi.fn(),
     },
     conversations: { replies: vi.fn().mockResolvedValue({ messages: [] }) },
@@ -112,8 +112,16 @@ describe("Reserve all", () => {
   const reserve = (h = handler(), actionTs) => h.handleCardAction({ payload: press(actionTs), client });
   const sent = () => JSON.parse(fetchSpy.mock.calls.at(-1)[1].body);
   const stored = () => trayStore.rows.get("U9");
-  const publicPosts = () => client.chat.postMessage.mock.calls.map((c) => c[0]);
-  const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]);
+  // Reserve all's combined confirmation, shown privately to the member.
+  const confirmations = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]).filter((m) => String(m.text).startsWith("✅ Reserved:"));
+  const ephemerals = () => client.chat.postEphemeral.mock.calls.map((c) => c[0]).filter((m) => !String(m.text).startsWith("✅ Reserved:"));
+
+  it("shows the combined confirmation only to the member, never in the channel", async () => {
+    trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
+    await reserve();
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(confirmations()).toEqual([expect.objectContaining({ channel: "CRES", user: "U9" })]);
+  });
 
   it("books a mixed tray once per backend, posts one combined message, records the ledger and keeps only the taken date", async () => {
     trayStore.rows.set("U9", trayRow({
@@ -140,8 +148,8 @@ describe("Reserve all", () => {
     expect(adapters.rms.bookMany.mock.calls[0][0]).toEqual([expect.objectContaining({ date: "2026-10-24", items: [SET2] })]);
     expect(adapters.kitchen.bookMany.mock.calls[0][0]).toEqual([expect.objectContaining({ date: "2026-10-22", appliances: { oven: true } })]);
 
-    expect(publicPosts()).toHaveLength(1);
-    const post = publicPosts()[0];
+    expect(confirmations()).toHaveLength(1);
+    const post = confirmations()[0];
     expect(post).toMatchObject({ channel: "CRES", username: "Reservations (beta)" });
     expect(post.thread_ts).toBeUndefined();
     expect(post.metadata.event_type).toBe(COMBINED_EVENT_TYPE);
@@ -171,7 +179,7 @@ describe("Reserve all", () => {
 
     const card = sent();
     expect(card.replace_original).toBe(true);
-    expect(sections(card)[0]).toContain("✅ Reserved 5 bookings. It's posted in the channel.");
+    expect(sections(card)[0]).toContain("✅ Reserved 5 bookings. The details, with Cancel, are in the message below.");
     expect(sections(card)[0]).toContain("MPR · Sat 10/31 · 2:00–4:00 PM (Alan · Fall rally)");
     // Something was booked, so the card closes: the result, no buttons.
     expect(card.blocks).toEqual([{ type: "section", text: { type: "mrkdwn", text: expect.stringContaining("✅ Reserved 5 bookings.") } }]);
@@ -182,7 +190,7 @@ describe("Reserve all", () => {
     adapters.rms.checkDates.mockResolvedValue({ "2026-10-24": { conflicts: [{ holder: "Alan", title: "Rally" }], unavailable: null } });
     await reserve();
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
-    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(confirmations()).toEqual([]);
     expect(sections(sent())[0]).toContain("Nothing could be booked.");
     // Nothing booked: the listing stays open so the tray can be fixed.
     expect(sent().blocks.length).toBeGreaterThan(1);
@@ -196,7 +204,7 @@ describe("Reserve all", () => {
     await reserve();
     expect(sections(sent())[0]).toBe("Can't reserve yet:\n• Tech Set 2: Add what it's for.");
     for (const a of Object.values(adapters)) expect(a.bookMany).not.toHaveBeenCalled();
-    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(confirmations()).toEqual([]);
     expect(stored().running).toBeNull();
   });
 
@@ -204,7 +212,7 @@ describe("Reserve all", () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2", { item: "Old Bus" }), line("L3", { item: "MPR" })] }));
     await reserve();
     expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("MPR · Sat 10/24");
     expect(text).toContain("Old Bus can no longer be booked.");
     expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
@@ -236,7 +244,7 @@ describe("Reserve all", () => {
     await reserve();
     expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
     expect(adapters.rooms.bookMany.mock.calls[0][0].map((b) => b.date)).toEqual(["2026-11-07", "2026-11-14"]);
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     // The crashed run's booking is posted by whichever run finishes.
     expect(text).toContain("MPR · every Sat 10/24 – 11/14 (3 dates)");
     expect(text).toContain("MPR · Sat 10/31 · may already be booked, please check before booking again");
@@ -275,7 +283,7 @@ describe("Reserve all", () => {
     });
     await reserve();
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
-    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(confirmations()).toEqual([]);
     // Take the run, one claim that loses; no needless save after.
     expect(trayStore.putTray).toHaveBeenCalledTimes(2);
   });
@@ -302,7 +310,7 @@ describe("Reserve all", () => {
 
     expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
     expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
-    const posted = publicPosts().map((p) => sections(p).filter((t) => t.startsWith("• ")).join("\n"));
+    const posted = confirmations().map((p) => sections(p).filter((t) => t.startsWith("• ")).join("\n"));
     expect(posted).toHaveLength(2);
     expect(posted.filter((t) => t.includes("Tech Set 2 · Sat 10/24"))).toHaveLength(1);
     expect(posted.filter((t) => t.includes("MPR · Sat 10/24"))).toHaveLength(1);
@@ -326,7 +334,7 @@ describe("Reserve all", () => {
     const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
     await expect(reserve()).resolves.toBeUndefined();
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("MPR · Sat 10/24");
     expect(text).toContain("Tech Set 2 · Sat 10/24 · not booked, please press Reserve all again");
     expect(ledger.recordBooking).toHaveBeenCalledTimes(1);
@@ -349,7 +357,7 @@ describe("Reserve all", () => {
     const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
     await reserve();
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
-    expect(sections(publicPosts()[0]).join("\n")).toContain("MPR · Sat 10/24");
+    expect(sections(confirmations()[0]).join("\n")).toContain("MPR · Sat 10/24");
     expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · not booked, please press Reserve all again");
     expect(stored().running).toBeNull();
     expect(stored().lines.map((l) => l.id)).toEqual(["L2"]);
@@ -400,12 +408,12 @@ describe("Reserve all", () => {
     });
     const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
     await reserve();
-    expect(publicPosts()).toHaveLength(1);
+    expect(confirmations()).toHaveLength(1);
     expect(ledger.recordBooking).toHaveBeenCalledTimes(1);
     expect(stored().posts[RUN]).toMatchObject({ ts: POST_TS, ledger: true });
     failFinish = false;
     await reserve();
-    expect(publicPosts()).toHaveLength(1);
+    expect(confirmations()).toHaveLength(1);
     expect(ledger.recordBooking).toHaveBeenCalledTimes(1);
     expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
     expect(stored().lines).toEqual([]);
@@ -425,7 +433,7 @@ describe("Reserve all", () => {
       posts: { [RUN]: { ts: POST_TS, ledger: ledgerDone, entries: [{ lineId: "L2", item: "Tech Set 2", start: 600, end: 720, title: "Youth night", repeat: null, refs: [["2026-10-24", ref]] }] } },
     }));
     await reserve();
-    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(confirmations()).toEqual([]);
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
     expect(ledger.recordBooking).toHaveBeenCalledTimes(writes);
     expect(stored().lines).toEqual([]);
@@ -483,8 +491,8 @@ describe("Reserve all", () => {
     await reserve();
     expect(adapters.rooms.bookMany.mock.calls[0][0].map((b) => b.date)).toEqual(["2026-11-07", "2026-11-14"]);
     expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
-    expect(publicPosts()).toHaveLength(1);
-    const text = sections(publicPosts()[0]).join("\n");
+    expect(confirmations()).toHaveLength(1);
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("MPR · every Sat 10/24 – 11/14 (3 dates)");
     expect(text).toContain("Tech Set 2 · Sat 10/24");
     expect(text).toContain("MPR · Sat 10/31 · may already be booked, please check before booking again");
@@ -493,7 +501,7 @@ describe("Reserve all", () => {
     expect(stored().running).toBeNull();
 
     await reserve(handler(), "again");
-    expect(publicPosts()).toHaveLength(1);
+    expect(confirmations()).toHaveLength(1);
     expect(ledger.recordSeries).toHaveBeenCalledTimes(1);
   });
 
@@ -511,7 +519,7 @@ describe("Reserve all", () => {
     expect(adapters.rms.bookMany).not.toHaveBeenCalled();
     expect(ledger.recordBooking).toHaveBeenCalledWith("U9", ref, { today: "2026-10-20" });
     expect(ledger.recordBooking).toHaveBeenCalledTimes(2); // the dead run's, and this run's MPR
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("MPR · Sat 10/24");
     expect(text).not.toContain("Tech Set 2");
     expect(stored().lines).toEqual([]);
@@ -545,16 +553,16 @@ describe("Reserve all", () => {
       // The take-over already moved A's claims to L and remembered A as ended.
       expect(stored().lines[0].claims).toEqual({ "2026-10-24": "L" });
       expect(stored().ended).toHaveProperty("A");
-      const before = { posts: publicPosts().length, eph: ephemerals().length, fetches: fetchSpy.mock.calls.length };
+      const before = { posts: confirmations().length, eph: ephemerals().length, fetches: fetchSpy.mock.calls.length };
       await reserve(h, "A");
-      expect(publicPosts()).toHaveLength(before.posts);
+      expect(confirmations()).toHaveLength(before.posts);
       expect(ephemerals()).toHaveLength(before.eph);
       expect(fetchSpy.mock.calls).toHaveLength(before.fetches);
       open();
       await runL;
 
-      expect(publicPosts()).toHaveLength(1);
-      const text = sections(publicPosts()[0]).join("\n");
+      expect(confirmations()).toHaveLength(1);
+      const text = sections(confirmations()[0]).join("\n");
       expect(text).toContain("Tech Set 2 · Sat 10/24");
       expect(text).toContain("MPR · Sat 10/24");
       expect(ledger.recordBooking).toHaveBeenCalledTimes(2);
@@ -567,7 +575,7 @@ describe("Reserve all", () => {
       trayStore.rows.set("U9", deadTray());
       const h = handler();
       await reserve(h, "L");
-      expect(publicPosts()).toHaveLength(1);
+      expect(confirmations()).toHaveLength(1);
       const row = trayStore.rows.get("U9");
       row.lines.push(line("L4", { item: "Kitchen", date: "2026-10-22", start: 1020, end: 1140, title: "Dinner" }));
       row.version += 1;
@@ -576,7 +584,7 @@ describe("Reserve all", () => {
       // And a redelivery of the finished run L itself.
       await reserve(h, "L");
       expect(adapters.kitchen.bookMany).not.toHaveBeenCalled();
-      expect(publicPosts()).toHaveLength(1);
+      expect(confirmations()).toHaveLength(1);
       expect(ledger.recordBooking).toHaveBeenCalledTimes(2);
       expect(trayStore.putTray.mock.calls).toHaveLength(puts);
       expect(stored().lines.map((l) => l.id)).toEqual(["L4"]);
@@ -595,7 +603,7 @@ describe("Reserve all", () => {
     }));
     await reserve();
     expect(sections(sent())[0]).not.toContain("Can't reserve yet");
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("Tech Set 2 · Sun 10/18");
     expect(text).toContain("MPR · Sat 10/24");
     expect(text).toContain("Kitchen · Sat 10/17 · may already be booked, please check before booking again");
@@ -614,22 +622,22 @@ describe("Reserve all", () => {
     }));
     await reserve();
     expect(adapters.rooms.bookMany).not.toHaveBeenCalled();
-    expect(sections(publicPosts()[0]).join("\n")).toContain("Tech Set 2 · Sat 10/24");
+    expect(sections(confirmations()[0]).join("\n")).toContain("Tech Set 2 · Sat 10/24");
     const head = sections(sent())[0];
-    expect(head).toContain("✅ Reserved 1 booking. It's posted in the channel.");
+    expect(head).toContain("✅ Reserved 1 booking. The details, with Cancel, are in the message below.");
     expect(head).toContain("Can't reserve yet:\n• MPR: Add what it's for.");
     expect(stored().lines.map((l) => l.id)).toEqual(["L3"]);
     expect(stored().running).toBeNull();
   });
 
-  it("when the public post fails, the private result doesn't claim it was posted", async () => {
+  it("when the confirmation fails, the private result says where to find the bookings", async () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
-    client.chat.postMessage.mockRejectedValue(new Error("slack down"));
+    client.chat.postEphemeral.mockImplementation(async (m) => { if (String(m.text).startsWith("✅ Reserved:")) throw new Error("slack down"); return { ok: true }; });
     const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
     await reserve();
     const head = sections(sent())[0];
-    expect(head).toContain("✅ Reserved 1 booking, but I couldn't post them in the channel.");
-    expect(head).not.toContain("It's posted");
+    expect(head).toContain("✅ Reserved 1 booking, but I couldn't show the details. `/reserve what do I have booked?` lists them, with Cancel.");
+    expect(head).not.toContain("in the message below");
     errSpy.mockRestore();
   });
 
@@ -650,17 +658,17 @@ describe("Reserve all", () => {
       expect(stored().running).toBeNull();
     });
 
-    it("after connecting, resume books, posts publicly and replies privately", async () => {
+    it("after connecting, resume books and shows the confirmation privately", async () => {
       trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
       connect.authStore.getPending.mockResolvedValue({ slackUserId: "U9", request: { kind: "tray", user: "U9", channel: "CRES" }, channel: "CRES", threadTs: null });
       await handler().resume({ pendingId: "P1", client });
       expect(connect.authStore.deletePending).toHaveBeenCalledWith("P1");
       expect(adapters.rms.bookMany).toHaveBeenCalledTimes(1);
-      expect(publicPosts()).toHaveLength(1);
+      expect(confirmations()).toHaveLength(1);
       expect(fetchSpy).not.toHaveBeenCalled();
       const reply = ephemerals().at(-1);
       expect(reply).toMatchObject({ channel: "CRES", user: "U9" });
-      expect(sections(reply)[0]).toContain("✅ Reserved 1 booking. It's posted in the channel.");
+      expect(sections(reply)[0]).toContain("✅ Reserved 1 booking. The details, with Cancel, are in the message below.");
       expect(stored().running).toBeNull();
       expect(stored().lines).toEqual([]);
     });
@@ -681,8 +689,8 @@ describe("Reserve all", () => {
       adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: "invalid_grant" }]);
       await reserve();
       expect(adapters.rooms.bookMany).toHaveBeenCalledTimes(1);
-      expect(publicPosts()).toHaveLength(1);
-      expect(sections(publicPosts()[0]).join("\n")).toContain("MPR · Sat 10/24");
+      expect(confirmations()).toHaveLength(1);
+      expect(sections(confirmations()[0]).join("\n")).toContain("MPR · Sat 10/24");
       expect(connect.authStore.markRevoked).toHaveBeenCalledWith("U9");
       expect(connect.memberGoogle.forget).toHaveBeenCalledWith("U9");
       expect(connect.authStore.createPending).toHaveBeenCalledWith(expect.objectContaining({ request: { kind: "tray", user: "U9", channel: "CRES" } }));
@@ -696,7 +704,7 @@ describe("Reserve all", () => {
       adapters.rooms.bookMany.mockResolvedValue([{ status: "error", error: Object.assign(new Error("invalid_grant"), { response: { data: { error: "invalid_grant" } } }) }]);
       await reserve();
       expect(adapters.rms.bookMany).not.toHaveBeenCalled();
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(confirmations()).toEqual([]);
       expect(stored().lines.map((l) => l.id)).toEqual(["L3", "L2"]);
     });
   });
@@ -712,7 +720,7 @@ describe("Reserve all", () => {
     adapters.rooms.bookMany.mockImplementation(async (bookings) => bookings.map(() => ({ status: "error", error: denied })));
     await reserve();
     expect(adapters.kitchen.bookMany).toHaveBeenCalledTimes(1);
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("Kitchen · Thu 10/22");
     expect(text).toContain("You don't have edit access to the room request sheet.");
     // Refused before writing, so the dates stay bookable.
@@ -725,7 +733,7 @@ describe("Reserve all", () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
     adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: new Error("boom") }]);
     await reserve();
-    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(confirmations()).toEqual([]);
     expect(sections(sent())[0]).toContain("Tech Set 2 · Sat 10/24 · couldn't save (boom), may already be booked, please check before booking again");
     expect(stored().lines).toEqual([]);
   });
@@ -734,7 +742,7 @@ describe("Reserve all", () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2"), line("L3", { item: "MPR" })] }));
     adapters.rms.bookMany.mockResolvedValue([{ status: "error", error: new Error("socket hang up") }]);
     await reserve();
-    const text = sections(publicPosts()[0]).join("\n");
+    const text = sections(confirmations()[0]).join("\n");
     expect(text).toContain("Tech Set 2 · Sat 10/24 · couldn't be saved, may already be booked, please check before booking again");
     expect(text).not.toContain("socket hang up");
   });
@@ -760,7 +768,7 @@ describe("Reserve all", () => {
   it("failures after a write are logged, never thrown", async () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
     const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
-    client.chat.postMessage.mockRejectedValue(new Error("slack down"));
+    client.chat.postEphemeral.mockImplementation(async (m) => { if (String(m.text).startsWith("✅ Reserved:")) throw new Error("slack down"); return { ok: true }; });
     ledger.recordBooking.mockRejectedValue(new Error("ddb down"));
     livingDigest.refresh.mockRejectedValue(new Error("digest down"));
     fetchSpy.mockRejectedValue(new Error("net"));
@@ -785,7 +793,7 @@ describe("Reserve all", () => {
     trayStore.rows.set("U9", trayRow({ lines: [line("L2")] }));
     await reserve(handler({ connect: null }));
     expect(adapters.rms.bookMany).toHaveBeenCalledWith([expect.objectContaining({ date: "2026-10-24" })], {});
-    expect(publicPosts()).toHaveLength(1);
+    expect(confirmations()).toHaveLength(1);
   });
 
   describe("final review fixes", () => {
@@ -848,7 +856,7 @@ describe("Reserve all", () => {
       await expect(reserve()).resolves.toBeUndefined();
       expect(ephemerals().at(-1)).toMatchObject({ text: "⚠️ Something went wrong. Please try again." });
       for (const a of Object.values(adapters)) expect(a.bookMany).not.toHaveBeenCalled();
-      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(confirmations()).toEqual([]);
       err.mockRestore();
     });
 

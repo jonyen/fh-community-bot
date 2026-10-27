@@ -104,12 +104,23 @@ export function createSeriesFlow({
     return -1;
   }
 
-  // Appends `text` to line `index`; its Cancel stays only while `keep`.
-  async function markLine(client, { channel, ts, post, index, text, keep }) {
+  // Appends `text` to line `index`; its Cancel stays only while `keep`. A
+  // private post (Reserve all's) can't be chat.update'd: it is replaced
+  // through the press's response_url instead.
+  async function markLine(client, { channel, ts, post, index, text, keep, responseUrl = null }) {
     const message = markLineCancelled(post, index, text, { done: !keep });
     const accessory = post.blocks[index + 1]?.accessory;
     if (keep && accessory) message.blocks[index + 1] = { ...message.blocks[index + 1], accessory };
     try {
+      if (responseUrl) {
+        const res = await fetch(responseUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ replace_original: true, ...message }),
+        });
+        if (!res.ok) throw new Error(`response_url ${res.status}`);
+        return true;
+      }
       await client.chat.update({ channel, ts, ...message });
       return true;
     } catch (error) {
@@ -202,11 +213,13 @@ export function createSeriesFlow({
     return refs.filter((r) => results.has(r)).map((ref) => ({ ref, ...results.get(ref) }));
   }
 
-  // A single date's Cancel on the post (it already had Slack's confirm).
-  async function cancelLine({ client, user, channel, postTs, index, ref, where }) {
+  // A single date's Cancel on the post (it already had Slack's confirm). A
+  // private post can't be read back from history: privatePost is the copy
+  // that came with the press, when Slack sent one, edited via responseUrl.
+  async function cancelLine({ client, user, channel, postTs, index, ref, where, isPrivate = false, privatePost = null, responseUrl = null }) {
     if (!adapters[ref?.backend]) return;
     if (hasEnded(ref)) return ephemeral(client, where, ENDED_TEXT);
-    const post = await readPost(client, channel, postTs);
+    const post = isPrivate ? privatePost : await readPost(client, channel, postTs);
     // A second press, or a redelivery after the line was marked: its Cancel is gone.
     if (post && !lineHasRef(post, index, ref, user)) {
       log.info("stale reserved-post cancel press", { channel, postTs, index });
@@ -222,7 +235,9 @@ export function createSeriesFlow({
     if (out.status !== "cancelled") return ephemeral(client, where, cancelText(ref, out, user));
     // Cancelled: a failed post edit or reply is logged, so an SQS retry
     // doesn't run the cancel again.
-    const marked = post ? await markLine(client, { channel, ts: postTs, post, index, text: `🚫 Cancelled by <@${user}>.`, keep: false }) : false;
+    const marked = post
+      ? await markLine(client, { channel, ts: postTs, post, index, text: `🚫 Cancelled by <@${user}>.`, keep: false, responseUrl: isPrivate ? responseUrl : null })
+      : false;
     if (!marked) {
       try {
         await ephemeral(client, where, cancelText(ref, out, user));
@@ -329,7 +344,9 @@ export function createSeriesFlow({
       if (!v?.u) return;
       if (user !== v.u) return refuse(v.u);
       const postTs = payload.container?.message_ts || payload.message?.ts;
-      if (v.r && Number.isInteger(v.i)) return cancelLine({ client, user, channel: where.channel, postTs, index: v.i, ref: v.r, where });
+      const isPrivate = !!payload.container?.is_ephemeral;
+      const privatePost = isPrivate && Array.isArray(payload.message?.blocks) ? payload.message : null;
+      if (v.r && Number.isInteger(v.i)) return cancelLine({ client, user, channel: where.channel, postTs, index: v.i, ref: v.r, where, isPrivate, privatePost, responseUrl });
       if (typeof v.s === "string") return offerChooser({ client, user, seriesId: v.s, channel: where.channel, postTs, where, responseUrl: null });
       return;
     }

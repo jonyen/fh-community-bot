@@ -1,7 +1,8 @@
 // src/events/reservations-reserve-all.js
 // Reserve all: one press books every free date of every line in the member's
 // tray, through the same adapters, account rules, ledger and digest as a
-// card's Book, then posts one combined message in the channel.
+// card's Book, then shows one combined message privately to the member. The
+// channel sees the bookings in its digest, not here.
 //
 // Nothing may be written twice, and nothing written may go unposted:
 // - The run holds the tray (`running`) while it books. A press made while
@@ -10,7 +11,7 @@
 //   run's id in `claims`, in the stored tray (version-checked); after, "done"
 //   with the booking's ref. Only the run that claimed a date posts it, records
 //   it and tidies it away; other runs leave it alone.
-// - Right after the public post the run saves a `posts[runId]` record, so a
+// - Right after the private post the run saves a `posts[runId]` record, so a
 //   redelivery of the same press finishes the ledger and tray without posting
 //   again.
 // - A date whose write may or may not have happened (an error, or a crash
@@ -599,7 +600,7 @@ export function createReserveAll({
       const total = entries.reduce((n, e) => n + e.refs.length, 0);
       if (total) metric("ReservationBooked", total, { dimensions: { Flow: "reservations" }, fields: { reserveAll: true, asMember: !!clients } });
 
-      // 8. One public post, remembered at once so it is never posted twice.
+      // 8. One private post, remembered at once so it is never posted twice.
       if (entries.length) {
         let ts = null;
         try {
@@ -608,8 +609,8 @@ export function createReserveAll({
           booked.forEach((b, i) => {
             if (!message.blocks[i + 1]?.accessory) log.warn("booked line has no Cancel button: its ref is too big", { summary: b.summary });
           });
-          const res = await client.chat.postMessage({ channel, ...BOT_PERSONA, ...message });
-          ts = res?.ts ?? null;
+          const res = await client.chat.postEphemeral({ channel, user, ...BOT_PERSONA, ...message });
+          ts = res?.message_ts ?? null;
         } catch (error) {
           log.error("reserve all post failed", { error });
         }
@@ -676,8 +677,8 @@ export function createReserveAll({
     try {
       const n = `${total} booking${total === 1 ? "" : "s"}`;
       const head = !total ? "Nothing could be booked."
-        : record.ts ? `✅ Reserved ${n}. It's posted in the channel.`
-          : `✅ Reserved ${n}, but I couldn't post them in the channel.`;
+        : record.ts ? `✅ Reserved ${n}. The details, with Cancel, are in the message below.`
+          : `✅ Reserved ${n}, but I couldn't show the details. \`/reserve what do I have booked?\` lists them, with Cancel.`;
       const lines = problems.length ? [problemsText(problems)] : [];
       lines.push(...skipped.slice(0, NOTICE_SKIPS).map((s) => `• ${esc(String(s.detail ?? s.text).slice(0, NOTICE_SKIP_MAX))}`));
       if (skipped.length > NOTICE_SKIPS) lines.push(`…and ${skipped.length - NOTICE_SKIPS} more.`);
