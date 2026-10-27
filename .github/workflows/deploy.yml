@@ -93,6 +93,7 @@ jobs:
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.GOOGLE_WEB_CLIENT_SECRET }}
           GOOGLE_BOT_EMAIL: ${{ vars.GOOGLE_BOT_EMAIL }}
+          BBALL_CHANNEL_IDS: ${{ vars.BBALL_CHANNEL_IDS }}
         run: |
           # Only pass optional overrides when set — SAM rejects an empty `Key=`
           # value rather than falling back to the template Default.
@@ -138,6 +139,9 @@ jobs:
           fi
           if [ -n "$GOOGLE_BOT_EMAIL" ]; then
             OPTIONAL_PARAMS+=("GoogleBotEmail=$GOOGLE_BOT_EMAIL")
+          fi
+          if [ -n "$BBALL_CHANNEL_IDS" ]; then
+            OPTIONAL_PARAMS+=("BballChannelIds=$BBALL_CHANNEL_IDS")
           fi
           sam deploy \
             --no-confirm-changeset \

@@ -15,7 +15,7 @@ function shouldSkip(event) {
   return true;
 }
 
-export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler, client }) {
+export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler, slashRefreshHandler, maintenanceFormHandler, creaTicketHandler, reservationsHandler, bballHandler, client }) {
   if (slackEnvelope.type === "slash_command") {
     if (slashRefreshHandler && slackEnvelope.command === "/refresh-genders") {
       await slashRefreshHandler({ envelope: slackEnvelope, client });
@@ -70,8 +70,24 @@ export async function dispatchSlackEvent({ slackEnvelope, handler, genderHandler
     return;
   }
 
-  if (event.type === "reaction_added") {
-    if (creaTicketHandler) await creaTicketHandler.handleReaction({ event, client });
+  // A reaction goes to CREA (ticket emoji on a maintenance report) and to the
+  // basketball roll-call (any emoji in a bball channel); each ignores what
+  // isn't its own. One failing doesn't stop the other; the first error is
+  // rethrown afterwards so SQS still retries. Both are safe to repeat: CREA
+  // claims a report with a reaction, and the roll-call rebuilds from scratch.
+  if (event.type === "reaction_added" || event.type === "reaction_removed") {
+    const steps = [];
+    if (event.type === "reaction_added" && creaTicketHandler) steps.push(() => creaTicketHandler.handleReaction({ event, client }));
+    if (bballHandler?.handles(event)) steps.push(() => bballHandler.handleReaction({ event, client }));
+    let firstError;
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (firstError) throw firstError;
     return;
   }
 

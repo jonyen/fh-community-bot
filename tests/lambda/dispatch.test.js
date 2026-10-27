@@ -364,6 +364,63 @@ describe("dispatchSlackEvent — CREA ticket reactions", () => {
   });
 });
 
+describe("dispatchSlackEvent — basketball roll-call reactions", () => {
+  const makeBball = () => ({
+    handles: vi.fn((event) => event.item?.channel === "CB"),
+    handleReaction: vi.fn().mockResolvedValue(),
+  });
+  const reaction = (type, channel) => ({ type, user: "U1", reaction: "basketball", item: { type: "message", channel, ts: "1.2" } });
+
+  it("routes reaction_added to both CREA and bball in a bball channel", async () => {
+    const creaTicketHandler = { handleReaction: vi.fn().mockResolvedValue() };
+    const bballHandler = makeBball();
+    const event = reaction("reaction_added", "CB");
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler: vi.fn(), creaTicketHandler, bballHandler, client: {} });
+    expect(creaTicketHandler.handleReaction).toHaveBeenCalledWith({ event, client: {} });
+    expect(bballHandler.handleReaction).toHaveBeenCalledWith({ event, client: {} });
+  });
+
+  it("routes reaction_removed to bball only", async () => {
+    const creaTicketHandler = { handleReaction: vi.fn() };
+    const bballHandler = makeBball();
+    const event = reaction("reaction_removed", "CB");
+    await dispatchSlackEvent({ slackEnvelope: { event }, handler: vi.fn(), creaTicketHandler, bballHandler, client: {} });
+    expect(bballHandler.handleReaction).toHaveBeenCalledWith({ event, client: {} });
+    expect(creaTicketHandler.handleReaction).not.toHaveBeenCalled();
+  });
+
+  it("doesn't call bball for reactions outside its channels", async () => {
+    const creaTicketHandler = { handleReaction: vi.fn().mockResolvedValue() };
+    const bballHandler = makeBball();
+    await dispatchSlackEvent({ slackEnvelope: { event: reaction("reaction_added", "COTHER") }, handler: vi.fn(), creaTicketHandler, bballHandler, client: {} });
+    expect(creaTicketHandler.handleReaction).toHaveBeenCalled();
+    expect(bballHandler.handleReaction).not.toHaveBeenCalled();
+  });
+
+  it("still updates the roll-call when CREA fails, then rethrows", async () => {
+    const creaTicketHandler = { handleReaction: vi.fn().mockRejectedValue(new Error("crea down")) };
+    const bballHandler = makeBball();
+    await expect(
+      dispatchSlackEvent({ slackEnvelope: { event: reaction("reaction_added", "CB") }, handler: vi.fn(), creaTicketHandler, bballHandler, client: {} })
+    ).rejects.toThrow("crea down");
+    expect(bballHandler.handleReaction).toHaveBeenCalled();
+  });
+
+  it("rethrows a bball failure so SQS retries", async () => {
+    const bballHandler = makeBball();
+    bballHandler.handleReaction.mockRejectedValue(new Error("ratelimited"));
+    await expect(
+      dispatchSlackEvent({ slackEnvelope: { event: reaction("reaction_removed", "CB") }, handler: vi.fn(), bballHandler, client: {} })
+    ).rejects.toThrow("ratelimited");
+  });
+
+  it("drops reaction_removed when bball is off", async () => {
+    const handler = vi.fn();
+    await dispatchSlackEvent({ slackEnvelope: { event: reaction("reaction_removed", "CB") }, handler, client: {} });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
 describe("dispatch to #reservations", () => {
   const reservationsHandler = { channelId: "CRES", handleMessage: vi.fn().mockResolvedValue() };
 

@@ -10,6 +10,7 @@ A Slack bot for managing facilities maintenance issue reporting and tracking. Me
 - **Issue management** — list open issues, close/resolve by ID or description
 - **Photo attachments** — photos on a report or thread reply are copied to Google Drive and linked in the sheet's Photos column (internal links)
 - **Reservations** — members book, check and list rooms, the kitchen and RMS equipment privately with `/reserve` in #reservations; booking requests go into a private tray booked with **Reserve all**. First come, first served. #reservations also holds the weekday and weekend digests (see below)
+- **Basketball roll-call** — Tuesday and Thursday mornings a "🏀 today?" post with the Nottoway Park forecast; reactions build the In / Maybe / Out roster (see below)
 
 ## Architecture
 
@@ -129,10 +130,27 @@ Rent Manager's REST API would be cleaner, but CREA's instance isn't licensed for
 Setup:
 
 1. Store the portal login as repo secrets `CREA_TWA_USERNAME` / `CREA_TWA_PASSWORD`, and the contact phone the portal requires as repo variable `CREA_TWA_PHONE`. Set repo variable `CREA_TICKET_USER_IDS` to the comma-separated Slack member IDs allowed to file (empty means nobody). Optional variable `CREA_TWA_ALLOW_ENTRY` (`true`/`false`, default `false`) answers "Is technician allowed to enter if tenant is not present?".
-2. Slack app: add the `reactions:read` bot scope, subscribe to the `reaction_added` bot event, and reinstall.
+2. Slack app: add the `reactions:read` bot scope, subscribe to the `reaction_added` bot event, and reinstall. The receiver drops every reaction except the ticket emoji, apart from reactions in basketball channels (see [Basketball roll-call](#basketball-roll-call)).
 3. Check the login without filing anything: run the `crea-login-check` workflow (`gh workflow run crea-login-check`), or locally `doppler run -- node scripts/crea-twa-login-check.mjs`.
 
 The feature is switched by repo variable `CREA_TICKETS_ENABLED` (`true`/`false`, default `false`). Unless it is `true` and the portal login is set, ticket reactions are ignored. Changing it takes effect on the next deploy.
+
+## Basketball roll-call
+
+Folded in from the old `ffx-bball-bot` Slack app, which can be uninstalled once this is live.
+
+- **Tuesday and Thursday at 8:00 AM New York time** the `RollCallFn` Lambda posts "🏀 today?" to every channel in `BBALL_CHANNEL_IDS`, with the National Weather Service forecast for Nottoway Park at noon. If NWS is down after three tries, the weather line from the last roll-call is reused and marked "(cached)"; failing that, the post goes out without weather.
+- **RSVP by reacting.** In: :basketball: :+1: :white_check_mark:. Out: :x: :-1: :nope:. Any other emoji: Maybe. Someone with both In and Out emoji counts as In. Every reaction added or removed rewrites the post with the roster.
+- Posts appear as **FFX BBall** with a :basketball: icon (`chat:write.customize`). The bot recognises its own roll-calls by message metadata (`event_type: bball_rollcall`), so other messages in the channel are never rewritten.
+- A post that can no longer be edited (deleted) is left alone. Posting fails per channel; the Lambda errors only when every channel failed, which fires `fh-community-rollcall-failed`.
+
+Setup:
+
+1. Set repo variable `BBALL_CHANNEL_IDS` to the comma-separated channel IDs and redeploy. Empty (the default) turns the feature off: the schedule still runs but posts nothing, and reactions in those channels aren't processed.
+2. Slack app: subscribe to the `reaction_added` and `reaction_removed` bot events, make sure the bot has `reactions:read`, `channels:history` (`groups:history` for private channels), `chat:write` and `chat:write.customize`, and reinstall.
+3. Invite the bot to each basketball channel.
+
+Reactions travel the same receiver → SQS → worker path as everything else. All reactions on one roll-call share a FIFO group, so they are applied in order.
 
 ## Usage
 
@@ -386,6 +404,7 @@ because somebody filed an issue and nobody will see it.
 | `issue-write-failed` | An issue could not be written to the Sheet |
 | `receiver-slow` | Receiver p99 above 2s against Slack's 3s deadline |
 | `digest-failed` | The reservations digest errored and posted nothing |
+| `rollcall-failed` | The basketball roll-call failed in every channel |
 
 See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for diagnosis steps and the DLQ
 redrive procedure.
@@ -402,6 +421,7 @@ src/
   lambda/
     receiver.js              # entry: verify Slack sig, enqueue to SQS
     worker.js                # entry: SQS → dispatch
+    rollCall.js              # entry: Tue/Thu basketball roll-call post
     dispatch.js              # SQS record → (event, say, client) → mention handler
     clients.js               # cold-start dep wiring
     slack-signature.js       # HMAC verification
