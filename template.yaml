@@ -39,6 +39,9 @@ Parameters:
   # The Google account behind GoogleRefreshToken. Members' tokens are revoked
   # on disconnect only when they are not this account; empty means never.
   GoogleBotEmail:        { Type: String, Default: "" }
+  # Basketball roll-call channels, comma-separated. Empty turns it off: the
+  # schedule still fires but posts nothing, and reactions aren't enqueued.
+  BballChannelIds:       { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -89,6 +92,8 @@ Resources:
           RESERVATIONS_CHANNEL_ID: !Ref ReservationsChannelId
           ROOM_REQUESTS_SHEET_ID:  !Ref RoomRequestsSheetId
           KITCHEN_SHEET_ID:        !Ref KitchenSheetId
+          # Any reaction in these channels is a roll-call RSVP.
+          BBALL_CHANNEL_IDS:       !Ref BballChannelIds
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
@@ -139,6 +144,7 @@ Resources:
           OAUTH_REDIRECT_URI:       !Sub "${OAuthCallbackFnUrl.FunctionUrl}oauth/google/callback"
           AUTH_TABLE:               !Ref AuthTable
           AUTH_KMS_KEY_ID:          !Ref AuthKey
+          BBALL_CHANNEL_IDS:        !Ref BballChannelIds
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AuthTable }
         - KMSDecryptPolicy: { KeyId: !Ref AuthKey }
@@ -210,6 +216,52 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref DigestFn
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # Tuesday and Thursday 8 AM New York time: the basketball roll-call.
+  # Needs only the Slack token and its channels; it never calls loadConfig().
+  RollCallFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda/rollCall.handler
+      Description: Posts the Tue/Thu basketball roll-call with the Nottoway Park forecast
+      MemorySize: 128
+      Timeout: 60
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN:   !Ref SlackBotToken
+          BBALL_CHANNEL_IDS: !Ref BballChannelIds
+      Events:
+        TueThu:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 8 ? * TUE,THU *)
+            ScheduleExpressionTimezone: America/New_York
+
+  RollCallLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${RollCallFn}
+      RetentionInDays: 14
+
+  # Throws only when the post failed in every channel.
+  RollCallFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: fh-community-rollcall-failed
+      AlarmDescription: The basketball roll-call Lambda errored and no roll-call was posted.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RollCallFn
       Statistic: Sum
       Period: 3600
       EvaluationPeriods: 1

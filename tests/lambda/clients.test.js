@@ -1,5 +1,5 @@
 // tests/lambda/clients.test.js
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const loadConfig = vi.fn();
 const createReservationsHandler = vi.fn(() => ({}));
@@ -37,5 +37,23 @@ describe("getDeps reservations wiring", () => {
     getDeps();
     expect(createReservationsHandler.mock.calls[0][0].ledger).toBeNull();
     expect(createReservationsHandler.mock.calls[0][0].trayStore).toBeNull();
+  });
+});
+
+describe("getDeps basketball wiring", () => {
+  beforeEach(() => { _resetForTests(); loadConfig.mockReturnValue({ ...BASE, googleConnect: null, reservations: null }); });
+  afterEach(() => { delete process.env.BBALL_CHANNEL_IDS; });
+
+  it("has no bball handler when BBALL_CHANNEL_IDS is unset", () => {
+    delete process.env.BBALL_CHANNEL_IDS;
+    expect(getDeps().bballHandler).toBeUndefined();
+  });
+
+  it("builds one for the configured channels", () => {
+    process.env.BBALL_CHANNEL_IDS = "CB1,CB2";
+    const { bballHandler } = getDeps();
+    expect([...bballHandler.channelIds]).toEqual(["CB1", "CB2"]);
+    expect(bballHandler.handles({ type: "reaction_removed", item: { channel: "CB2" } })).toBe(true);
+    expect(bballHandler.handles({ type: "reaction_added", item: { channel: "C" } })).toBe(false);
   });
 });

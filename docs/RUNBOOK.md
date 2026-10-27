@@ -145,6 +145,21 @@ Google refresh token (`invalid_grant`) or a Slack token problem
 aws lambda invoke --function-name <DigestFn physical name> /dev/stdout
 ```
 
+## `fh-community-rollcall-failed`
+
+The basketball roll-call Lambda (`RollCallFn`, runs Tuesday and Thursday 08:00
+New York time) failed to post in every channel in `BBALL_CHANNEL_IDS`. A
+failure in only some channels doesn't fire this; look for `bball: roll call
+post failed` in its log group, `/aws/lambda/<RollCallFn>`, or the
+`RollCallFailed` metric (dimension `Flow=bball`). The usual causes are the bot
+not being in the channel (`not_in_channel`, invite it), a wrong channel id
+(`channel_not_found`) or a Slack token problem (`invalid_auth`). After fixing,
+post by hand:
+
+```bash
+aws lambda invoke --function-name <RollCallFn physical name> /dev/stdout
+```
+
 ## Digest DM: "couldn't read some sources"
 
 The digest posted, but one backend could not be read, so the post says it may

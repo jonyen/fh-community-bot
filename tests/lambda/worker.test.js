@@ -6,6 +6,7 @@ const genderHandlerMock = vi.fn().mockResolvedValue();
 const slashRefreshHandlerMock = vi.fn().mockResolvedValue();
 const maintenanceFormHandlerMock = vi.fn().mockResolvedValue();
 const fakeClient = { id: "slack" };
+const bballHandlerMock = { handleReaction: vi.fn(), handles: vi.fn() };
 
 vi.mock("../../src/lambda/dispatch.js", () => ({
   dispatchSlackEvent: dispatchMock,
@@ -18,6 +19,7 @@ vi.mock("../../src/lambda/clients.js", () => ({
     genderHandler: genderHandlerMock,
     slashRefreshHandler: slashRefreshHandlerMock,
     maintenanceFormHandler: maintenanceFormHandlerMock,
+    bballHandler: bballHandlerMock,
   }),
 }));
 
@@ -47,6 +49,7 @@ describe("worker.handler", () => {
     expect(dispatchMock.mock.calls[0][0].genderHandler).toBe(genderHandlerMock);
     expect(dispatchMock.mock.calls[0][0].slashRefreshHandler).toBe(slashRefreshHandlerMock);
     expect(dispatchMock.mock.calls[0][0].maintenanceFormHandler).toBe(maintenanceFormHandlerMock);
+    expect(dispatchMock.mock.calls[0][0].bballHandler).toBe(bballHandlerMock);
     expect(dispatchMock.mock.calls[0][0].client).toBe(fakeClient);
   });
 

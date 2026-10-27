@@ -28,6 +28,8 @@ import { KMSClient } from "@aws-sdk/client-kms";
 import { createAuthStore } from "../services/authStore.js";
 import { createMemberGoogle } from "../services/memberGoogle.js";
 import { buildConsentUrl } from "../lib/google-oauth.js";
+import { createBballHandler } from "../events/bball.js";
+import { parseBballChannelIds } from "../lib/bball-format.js";
 
 let cached;
 
@@ -156,7 +158,11 @@ export function getDeps() {
     });
   }
 
-  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters, livingDigest };
+  // Basketball roll-call reactions. Off unless BBALL_CHANNEL_IDS is set.
+  const bballChannelIds = parseBballChannelIds(process.env.BBALL_CHANNEL_IDS);
+  const bballHandler = bballChannelIds.length ? createBballHandler({ channelIds: bballChannelIds }) : undefined;
+
+  cached = { config, client: slack, handler, maintenanceFormHandler, creaTicketHandler, genderHandler, slashRefreshHandler, reservationsHandler, reservationAdapters, livingDigest, bballHandler };
   return cached;
 }
 

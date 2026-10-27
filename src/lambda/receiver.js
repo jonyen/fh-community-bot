@@ -2,6 +2,7 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { verifySlackSignature } from "./slack-signature.js";
 import { matchesGenderEvent } from "../lib/gender-triggers.js";
 import { isCreaTicketReaction } from "../lib/crea-ticket.js";
+import { parseBballChannelIds } from "../lib/bball-format.js";
 import { loadReservations } from "../config.js";
 import { buildCatalog } from "../lib/reservation-catalog.js";
 import { buildRmsCatalog } from "../lib/rms-catalog.js";
@@ -87,20 +88,34 @@ function readBody(event) {
   return event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
 }
 
+// A reaction on a message in a basketball roll-call channel. Any emoji counts
+// there: it's someone's RSVP.
+function isBballReaction(event) {
+  if (event.type !== "reaction_added" && event.type !== "reaction_removed") return false;
+  const channel = event.item?.channel;
+  return !!channel && parseBballChannelIds(process.env.BBALL_CHANNEL_IDS).includes(channel);
+}
+
 // The event queue is FIFO. Grouping by the Slack user means one member's
 // messages are handled one at a time, in order, so two quick messages can't
 // both pass a conflict check. Different members still run in parallel.
+// Reactions on a roll-call are grouped by the message instead, so everyone's
+// RSVPs to one post are applied in order and two rewrites of it can't race.
 export function messageGroup(parsed) {
   const event = parsed.event || {};
+  if (isBballReaction(event)) return `bball:${event.item.channel}:${event.item.ts}`;
   return event.user || event.channel || "slack";
 }
 
 export function shouldEnqueueEvent(parsed) {
   const event = parsed.event;
   if (!event) return false;
-  // Every reaction in every channel the bot is in arrives here; only the
-  // ticket emoji means anything, so drop the rest before they cost a Lambda.
+  // Every reaction in every channel the bot is in arrives here. In a
+  // basketball channel any emoji is an RSVP; elsewhere only the ticket emoji
+  // means anything, so drop the rest before they cost a Lambda.
+  if (isBballReaction(event)) return true;
   if (event.type === "reaction_added") return isCreaTicketReaction(event.reaction);
+  if (event.type === "reaction_removed") return false;
   if (event.type !== "message") return true;
   if (event.bot_id) return false; // never enqueue our own / other bots' messages
   // #reservations: every top-level message is a possible request. Thread

@@ -389,6 +389,68 @@ describe("shouldEnqueueEvent — reactions", () => {
   });
 });
 
+describe("basketball roll-call reactions", () => {
+  beforeEach(() => {
+    process.env.BBALL_CHANNEL_IDS = "CB1, CB2";
+    sendMock.mockReset();
+    sendMock.mockResolvedValue({});
+    process.env.SLACK_SIGNING_SECRET = SECRET;
+    process.env.EVENT_QUEUE_URL = "https://sqs.example/q";
+  });
+  afterEach(() => {
+    delete process.env.BBALL_CHANNEL_IDS;
+  });
+
+  const reaction = (type, channel, name = "basketball") => ({
+    event: { type, user: "U1", reaction: name, item: { type: "message", channel, ts: "1.2" } },
+  });
+
+  it("enqueues added and removed reactions with any emoji in a bball channel", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    for (const name of ["basketball", "x", "thinking_face", "+1::skin-tone-2"]) {
+      expect(shouldEnqueueEvent(reaction("reaction_added", "CB1", name))).toBe(true);
+      expect(shouldEnqueueEvent(reaction("reaction_removed", "CB2", name))).toBe(true);
+    }
+  });
+
+  it("drops reaction_removed everywhere else", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent(reaction("reaction_removed", "COTHER"))).toBe(false);
+    expect(shouldEnqueueEvent(reaction("reaction_removed", "COTHER", "ticket"))).toBe(false);
+  });
+
+  it("keeps the CREA ticket rule outside bball channels", async () => {
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent(reaction("reaction_added", "COTHER", "ticket"))).toBe(true);
+    expect(shouldEnqueueEvent(reaction("reaction_added", "COTHER", "basketball"))).toBe(false);
+  });
+
+  it("drops bball-channel reactions when the feature is off", async () => {
+    delete process.env.BBALL_CHANNEL_IDS;
+    const { shouldEnqueueEvent } = await import("../../src/lambda/receiver.js");
+    expect(shouldEnqueueEvent(reaction("reaction_added", "CB1"))).toBe(false);
+    expect(shouldEnqueueEvent(reaction("reaction_removed", "CB1"))).toBe(false);
+  });
+
+  it("groups bball reactions by the reacted message, other events as before", async () => {
+    const { messageGroup } = await import("../../src/lambda/receiver.js");
+    expect(messageGroup(reaction("reaction_added", "CB1"))).toBe("bball:CB1:1.2");
+    expect(messageGroup(reaction("reaction_removed", "CB1"))).toBe("bball:CB1:1.2");
+    expect(messageGroup(reaction("reaction_added", "COTHER", "ticket"))).toBe("U1");
+    expect(messageGroup({ event: { type: "message", user: "U7", channel: "CB1" } })).toBe("U7");
+  });
+
+  it("enqueues a bball reaction under its message group", async () => {
+    const { handler } = await import("../../src/lambda/receiver.js");
+    const body = JSON.stringify({ type: "event_callback", ...reaction("reaction_removed", "CB2", "x") });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const res = await handler(buildEvent({ body, timestamp: ts, signature: sign(body, ts) }));
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock.mock.calls[0][0].input.MessageGroupId).toBe("bball:CB2:1.2");
+  });
+});
+
 describe("shouldEnqueueEvent for #reservations", () => {
   beforeEach(() => {
     process.env.RESERVATIONS_CHANNEL_ID = "CRES";
