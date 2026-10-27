@@ -6,7 +6,7 @@ const PAYLOAD = { email: "deandra.shim@acts2.network", email_verified: true, hd:
 const FULL_SCOPE = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/spreadsheets";
 const REDIRECT = "https://cb.lambda-url.us-east-1.on.aws/oauth/google/callback";
 
-function setup({ state = { pendingId: "P1", slackUserId: "U9", slackEmail: "deandra.shim@acts2.network" }, pending = { slackUserId: "U9" }, payload = PAYLOAD } = {}) {
+function setup({ state = { pendingId: "P1", slackUserId: "U9", slackEmail: "deandra.shim@acts2.network" }, pending = { slackUserId: "U9" }, payload = PAYLOAD, botEmail = "bot@acts2.network" } = {}) {
   const authStore = {
     consumeState: vi.fn().mockResolvedValue(state),
     getPending: vi.fn().mockResolvedValue(pending),
@@ -19,7 +19,7 @@ function setup({ state = { pendingId: "P1", slackUserId: "U9", slackEmail: "dean
     revokeToken: vi.fn().mockResolvedValue({}),
   };
   const enqueue = vi.fn().mockResolvedValue();
-  const cb = createOAuthCallback({ authStore, oauth2Client, clientId: "CID", enqueue });
+  const cb = createOAuthCallback({ authStore, oauth2Client, clientId: "CID", botEmail, enqueue });
   return { cb, authStore, oauth2Client, enqueue };
 }
 
@@ -115,6 +115,32 @@ describe("OAuth callback", () => {
     expect(oauth2Client.revokeToken).toHaveBeenCalledWith("1//R");
     expect(authStore.saveUser).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("never revokes the bot's own account on a wrong-account sign-in", async () => {
+    const { cb, oauth2Client, authStore } = setup({ payload: { ...PAYLOAD, email: "Bot@acts2.network" } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.statusCode).toBe(403);
+    expect(oauth2Client.revokeToken).not.toHaveBeenCalled();
+    expect(authStore.saveUser).not.toHaveBeenCalled();
+  });
+
+  it("never revokes the bot's own account on a partial grant", async () => {
+    const { cb, oauth2Client } = setup({
+      state: { pendingId: "P1", slackUserId: "U9", slackEmail: "bot@acts2.network" },
+      payload: { ...PAYLOAD, email: "bot@acts2.network" },
+    });
+    oauth2Client.getToken.mockResolvedValue({ tokens: { refresh_token: "1//R", access_token: "A", id_token: "ID",
+      scope: "openid https://www.googleapis.com/auth/calendar.events" } });
+    const page = await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(page.statusCode).toBe(403);
+    expect(oauth2Client.revokeToken).not.toHaveBeenCalled();
+  });
+
+  it("never revokes while the bot's account is unknown", async () => {
+    const { cb, oauth2Client } = setup({ botEmail: "", payload: { ...PAYLOAD, email: "alan.chow@acts2.network" } });
+    await cb({ query: { code: "CODE", state: "N" }, redirectUri: REDIRECT });
+    expect(oauth2Client.revokeToken).not.toHaveBeenCalled();
   });
 
   it("tells a personal-account sign-in to use acts2.network", async () => {

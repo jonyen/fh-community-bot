@@ -36,6 +36,9 @@ Parameters:
   # acts2.network GCP project, Internal consent screen). Off while empty.
   GoogleWebClientId:     { Type: String, Default: "", NoEcho: true }
   GoogleWebClientSecret: { Type: String, Default: "", NoEcho: true }
+  # The Google account behind GoogleRefreshToken. Members' tokens are revoked
+  # on disconnect only when they are not this account; empty means never.
+  GoogleBotEmail:        { Type: String, Default: "" }
 
 Globals:
   Function:
@@ -132,6 +135,7 @@ Resources:
           RMS_BOOKING_ENABLED:    !Ref RmsBookingEnabled
           GOOGLE_WEB_CLIENT_ID:     !Ref GoogleWebClientId
           GOOGLE_WEB_CLIENT_SECRET: !Ref GoogleWebClientSecret
+          GOOGLE_BOT_EMAIL:         !Ref GoogleBotEmail
           OAUTH_REDIRECT_URI:       !Sub "${OAuthCallbackFnUrl.FunctionUrl}oauth/google/callback"
           AUTH_TABLE:               !Ref AuthTable
           AUTH_KMS_KEY_ID:          !Ref AuthKey
@@ -259,6 +263,7 @@ Resources:
         Variables:
           GOOGLE_WEB_CLIENT_ID:     !Ref GoogleWebClientId
           GOOGLE_WEB_CLIENT_SECRET: !Ref GoogleWebClientSecret
+          GOOGLE_BOT_EMAIL:         !Ref GoogleBotEmail
           AUTH_TABLE:               !Ref AuthTable
           AUTH_KMS_KEY_ID:          !Ref AuthKey
           EVENT_QUEUE_URL:          !Ref EventQueue

@@ -105,7 +105,10 @@ export function loadReservations() {
 function loadGoogleConnect() {
   const { GOOGLE_WEB_CLIENT_ID, GOOGLE_WEB_CLIENT_SECRET, OAUTH_REDIRECT_URI, AUTH_TABLE, AUTH_KMS_KEY_ID } = process.env;
   if (!GOOGLE_WEB_CLIENT_ID || !GOOGLE_WEB_CLIENT_SECRET || !OAUTH_REDIRECT_URI || !AUTH_TABLE || !AUTH_KMS_KEY_ID) return null;
-  return { clientId: GOOGLE_WEB_CLIENT_ID, clientSecret: GOOGLE_WEB_CLIENT_SECRET, redirectUri: OAUTH_REDIRECT_URI, tableName: AUTH_TABLE, keyId: AUTH_KMS_KEY_ID };
+  return {
+    clientId: GOOGLE_WEB_CLIENT_ID, clientSecret: GOOGLE_WEB_CLIENT_SECRET, redirectUri: OAUTH_REDIRECT_URI, tableName: AUTH_TABLE, keyId: AUTH_KMS_KEY_ID,
+    botEmail: process.env.GOOGLE_BOT_EMAIL || null,
+  };
 }
 
 export function loadConfig() {
