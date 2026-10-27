@@ -178,6 +178,45 @@ describe("cancelling from the combined post", () => {
     expect(ephemerals()).toEqual([expect.objectContaining({ user: "U9", text: "That booking was already cancelled." })]);
   });
 
+  describe("on the private confirmation", () => {
+    const privatePress = (button, o = {}) => ({
+      ...postPress(button),
+      container: { type: "message", message_ts: POST_TS, channel_id: "CRES", is_ephemeral: true },
+      response_url: "https://hooks.slack/actions/p1",
+      ...o,
+    });
+
+    it("cancels the line and marks it through the press's response_url, without reading history", async () => {
+      await make().handleCardAction({ payload: privatePress(postButton(0)), client });
+      expect(adapters.rms.cancel.mock.calls).toEqual([[RMS_REF]]);
+      expect(client.conversations.history).not.toHaveBeenCalled();
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(fetchSpy.mock.calls.at(-1)[0]).toBe("https://hooks.slack/actions/p1");
+      const body = JSON.parse(fetchSpy.mock.calls.at(-1)[1].body);
+      expect(body.replace_original).toBe(true);
+      expect(body.blocks[1].text.text).toBe("• ~Tech Set 2 · Sat 10/24 · 10:00 AM–12:00 PM · Youth night~\n🚫 Cancelled by <@U9>.");
+      expect(body.blocks[1].accessory).toBeUndefined();
+      expect(ephemerals()).toEqual([]);
+      expect(livingDigest.refresh).toHaveBeenCalledWith("2026-10-24");
+    });
+
+    it("tells the member privately when the response_url can't be used", async () => {
+      const spy = vi.spyOn(log, "warn").mockImplementation(() => {});
+      fetchSpy.mockResolvedValue({ ok: false, status: 404 });
+      await make().handleCardAction({ payload: privatePress(postButton(0)), client });
+      expect(adapters.rms.cancel).toHaveBeenCalledTimes(1);
+      expect(ephemerals()).toEqual([expect.objectContaining({ user: "U9", text: "🚫 Booking cancelled by <@U9>." })]);
+      spy.mockRestore();
+    });
+
+    it("without the message in the press, still cancels and tells the member privately", async () => {
+      await make().handleCardAction({ payload: privatePress(postButton(0), { message: undefined }), client });
+      expect(adapters.rms.cancel).toHaveBeenCalledTimes(1);
+      expect(client.chat.update).not.toHaveBeenCalled();
+      expect(ephemerals()).toEqual([expect.objectContaining({ user: "U9", text: "🚫 Booking cancelled by <@U9>." })]);
+    });
+  });
+
   it("still cancels when the post can't be read, and tells the member privately", async () => {
     const spy = vi.spyOn(log, "warn").mockImplementation(() => {});
     client.conversations.history.mockRejectedValue(new Error("ratelimited"));

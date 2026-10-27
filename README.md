@@ -296,19 +296,21 @@ with a search, such as `list speakers to reserve`.
   all. It is kept for 24 hours; if you leave it untouched longer, it clears.
   Asking for the list again shows your existing tray.
 - **Reserve all.** The bot books every date that is still free, across the
-  rooms sheet, the kitchen sheet and the calendars, and posts one combined
-  message in the channel. The message lists what was booked and, under
+  rooms sheet, the kitchen sheet and the calendars, and shows you one combined
+  message, visible only to you. The channel sees the bookings in its digest.
+  The message lists what was booked and, under
   "Not booked", what wasn't and why (already claimed by someone, kitchen sheet
   not open for that date yet, a calendar that declined, and so on). Dates that
   weren't booked stay in your tray so you can change them and try again. A date
   marked "may already be booked, please check" is removed from the tray: look
   at the sheet or calendar before booking it again.
-- **Cancelling.** Each booked line in the combined post has its own **Cancel**.
+- **Cancelling.** Each booked line in the combined message has its own
+  **Cancel**, which marks the line cancelled in place. Slack only keeps that
+  message until you reload, so afterwards cancel from "What do I have booked?".
   For a repeat, the bot asks whether to cancel the whole series or one date.
   "What do I have booked?" shows a series as one line with the same choice.
 
-Typed requests still work as before. The bot now posts in #reservations as
-"Reservations (beta)".
+The bot posts in #reservations as "Reservations (beta)".
 
 The request rides in the card's buttons, so the bot stores nothing. A second
 press, or a press on a card that was edited since, does nothing. Bookings are
