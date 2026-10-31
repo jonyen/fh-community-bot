@@ -80,7 +80,7 @@ export function listingMessage({ items, total, view, categories, tray, lineStatu
   const close = button(LIST_CLOSE_ACTION, "Close", "close");
   if (items.length === 0) {
     const overview = categoryCounts(catalog);
-    const none = q ? `Nothing matches "${esc(q)}".` : `Nothing to reserve in ${CATEGORY_NAMES[view.c] || "this category"}.`;
+    const none = q ? `Nothing matches "${esc(q)}" in any of the reservation lists. Here's what can be reserved:` : `Nothing to reserve in ${CATEGORY_NAMES[view.c] || "this category"}.`;
     blocks.push(section(`${none}${overview ? `\n${overview}` : ""}`));
     blocks.push({ type: "actions", block_id: "list_nav", elements: [close] });
   } else {

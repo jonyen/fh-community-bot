@@ -21,6 +21,8 @@ export function normalizeRequest(raw, catalog) {
     } else if (str(label)) unmatched.push(str(label));
   }
   for (const phrase of Array.isArray(r.unmatched) ? r.unmatched : []) if (str(phrase)) unmatched.push(str(phrase));
+  // The model can name the same unknown thing in both lists.
+  const unknown = unmatched.filter((u, i) => unmatched.findIndex((v) => v.toLowerCase() === u.toLowerCase()) === i);
 
   const ambiguous = (Array.isArray(r.ambiguous) ? r.ambiguous : [])
     .map((a) => ({ phrase: str(a?.phrase) || "that", options: (a?.options || []).map((o) => findItem(catalog, o)).filter(Boolean) }))
@@ -44,7 +46,7 @@ export function normalizeRequest(raw, catalog) {
   return {
     intent: INTENTS.has(r.intent) ? r.intent : "other",
     items,
-    unmatched,
+    unmatched: unknown,
     ambiguous,
     date: ISO.test(r.date || "") ? r.date : null,
     toDate: ISO.test(r.toDate || "") ? r.toDate : null,
