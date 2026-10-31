@@ -594,6 +594,12 @@ describe("reservations handler", () => {
       expect(ephemerals()).toEqual([expect.objectContaining({ channel: "CRES", user: "U1", text: "Sorry, I couldn't read that. Please try again.", username: "Reservations (beta)" })]);
     });
 
+    it("says when it doesn't know an item the model calls chatter", async () => {
+      llm.parseReservationRequest.mockResolvedValue({ intent: "other", unmatched: ["jackery"] });
+      await command("jackery");
+      expect(ephemerals()[0].text).toMatch(/^I don't know "jackery"\./);
+    });
+
     it("says when it doesn't know an item", async () => {
       llm.parseReservationRequest.mockResolvedValue({ intent: "book", items: ["Hologram"] });
       await command("book the hologram sat 2-4");

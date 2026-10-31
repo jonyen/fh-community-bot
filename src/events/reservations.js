@@ -743,7 +743,7 @@ export function createReservationsHandler({ llm, adapters, catalog, channelId, n
     const raw = await parse(text);
     if (!raw) return say.done("Sorry, I couldn't read that. Please try again.");
     const req = normalizeRequest(raw, catalog);
-    if (req.intent === "other") return say.done(COMMAND_HELP);
+    if (req.intent === "other" && !req.unmatched.length) return say.done(COMMAND_HELP);
     if (req.intent === "mine") return postMine({ channel, user, client });
     if (req.intent === "browse") return listing.post({ channel, user, search: req.search, client });
     // "Sat 2-4" is afternoon. The model is told so, but a small-hours time

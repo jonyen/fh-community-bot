@@ -82,7 +82,7 @@ describe("listingMessage", () => {
 
   it("says nothing matches, with what exists", () => {
     const m = msg({ items: [], total: 0, view: view({ q: "zzz" }), catalog: CATALOG });
-    expect(sections(m).map((b) => b.text.text).join("\n")).toContain('Nothing matches "zzz".');
+    expect(sections(m).map((b) => b.text.text).join("\n")).toContain('Nothing matches "zzz" in any of the reservation lists.');
     expect(sections(m).map((b) => b.text.text).join("\n")).toContain("Rooms (2) · Kitchen (1) · Tech (21)");
   });
 

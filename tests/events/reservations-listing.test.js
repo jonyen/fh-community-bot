@@ -135,7 +135,7 @@ describe("listing flow", () => {
     it("shows nothing matches when the model has no answer, and asks again next time", async () => {
       trayStore.rows.set("U9", trayRow());
       await act({ action_id: LIST_SEARCH_ACTION, value: "speaker" });
-      expect(sections(sent()).some((t) => t.startsWith('Nothing matches "speaker".'))).toBe(true);
+      expect(sections(sent()).some((t) => t.startsWith('Nothing matches "speaker" in any of the reservation lists.'))).toBe(true);
       expect(sections(sent()).join("\n")).toContain(categoryCounts(CATALOG));
       await act({ action_id: LIST_SEARCH_ACTION, value: "speaker" });
       expect(llm.matchItems).toHaveBeenCalledTimes(2);
@@ -145,7 +145,7 @@ describe("listing flow", () => {
       llm.matchItems.mockRejectedValueOnce(new Error("overloaded")).mockResolvedValueOnce(["Tech Set 1"]);
       trayStore.rows.set("U9", trayRow());
       await act({ action_id: LIST_SEARCH_ACTION, value: "Speaker" });
-      expect(sections(sent()).some((t) => t.startsWith('Nothing matches "Speaker".'))).toBe(true);
+      expect(sections(sent()).some((t) => t.startsWith('Nothing matches "Speaker" in any of the reservation lists.'))).toBe(true);
       await act({ action_id: LIST_SEARCH_ACTION, value: "speaker" });
       expect(sections(sent())[0]).toBe('📋 1 items match "speaker"');
       expect(llm.matchItems).toHaveBeenCalledTimes(2);
